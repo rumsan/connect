@@ -1,0 +1,24 @@
+{
+  "name": "connect",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/connect/src",
+  "projectType": "application",
+  "tags": [],
+  "targets": {
+    "serve": {
+      "executor": "@nx/js:node",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "connect:build"
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "connect:build:development"
+        },
+        "production": {
+          "buildTarget": "connect:build:production"
+        }
+      }
+    }
+  }
+}
