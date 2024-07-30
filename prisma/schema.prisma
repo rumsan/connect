@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ApplicationEnvironment {
+  PRODUCTION
+  STAGING
+  DEVELOPMENT
+  TEST
+}
+
+enum TransportType {
+  SMTP
+  VOICE
+  API
+  SES
+  ECHO
+}
+
+enum SessionStatus {
+  NEW
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum TriggerType {
+  IMMEDIATE
+  SCHEDULED
+  MANUAL
+}
+
+enum BroadcastStatus {
+  PENDING
+  SUCCESS
+  FAIL
+}
+
+model Application {
+  cuid        String                 @id @default(cuid())
+  name        String
+  publicKey   String
+  description String?
+  environment ApplicationEnvironment
+
+  Transport Transport[]
+  Session   Session[]
+  Broadcast Broadcast[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+//TODO https://socket.dev/npm/package/prisma-extension-cuid2
+
+model Transport {
+  id     Int           @id @default(autoincrement())
+  cuid   String        @unique @default(cuid())
+  app    String
+  name   String
+  type   TransportType
+  config Json          @db.JsonB()
+
+  Application Application @relation(fields: [app], references: [cuid])
+  Session     Session[]
+  Broadcast   Broadcast[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt()
+  deletedAt DateTime?
+
+  @@map("tbl_transports")
+}
+
+model Session {
+  id             Int           @id @default(autoincrement())
+  cuid           String        @unique @default(cuid())
+  app            String
+  transport      String
+  message        Json          @db.JsonB()
+  addresses      Json          @db.JsonB()
+  maxAttempts    Int           @default(1)
+  triggerType    TriggerType   @default(IMMEDIATE)
+  webhook        String?
+  options        Json?         @db.JsonB()
+  status         SessionStatus @default(NEW)
+  totalAddresses Int
+  stats          Json?         @db.JsonB()
+
+  Application Application @relation(fields: [app], references: [cuid])
+  Transport   Transport   @relation(fields: [transport], references: [cuid])
+  Broadcast   Broadcast[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt()
+  deletedAt DateTime?
+
+  @@map("tbl_sessions")
+}
+
+model Broadcast {
+  id          Int             @id @default(autoincrement())
+  cuid        String          @unique @default(cuid())
+  app         String
+  session     String
+  transport   String
+  address     String
+  status      BroadcastStatus @default(PENDING)
+  maxAttempts    Int           @default(1)
+  attempts    Int             @default(0)
+  lastAttempt DateTime?
+  isComplete  Boolean         @default(false)
+  queuedAt    DateTime?
+
+  Application Application @relation(fields: [app], references: [cuid])
+  Session     Session     @relation(fields: [session], references: [cuid])
+  Transport   Transport   @relation(fields: [transport], references: [cuid])
+
+  Log BroadcastLog[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt()
+
+  @@map("tbl_broadcasts")
+}
+
+model BroadcastLog {
+  cuid      String  @unique @default(cuid())
+  broadcast String
+  status    BroadcastStatus
+  attempt   Int
+  details   Json?   @db.JsonB()
+  notes     String?
+
+  Broadcast Broadcast @relation(fields: [broadcast], references: [cuid])
+  createdAt DateTime  @default(now())
+
+  @@map("tbl_broadcastLogs")
+}

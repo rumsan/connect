@@ -13,8 +13,16 @@
     "lib": ["es2020", "dom"],
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
+    "strictPropertyInitialization": false,
     "baseUrl": ".",
-    "paths": {}
+    "paths": {
+      "@rsconnect/connect/*": ["apps/connect/src/*"],
+      "@rsconnect/sdk": ["libs/sdk/src/index.ts"],
+      "@rsconnect/sdk/*": ["libs/sdk/src/*"],
+      "@rsconnect/transports": ["libs/transports/src/index.ts"],
+      "@rsconnect/transports/*": ["libs/transports/src/*"],
+      "@rumsan/app": ["libs/rsapp/src/index.ts"]
+    }
   },
   "exclude": ["node_modules", "tmp"]
 }

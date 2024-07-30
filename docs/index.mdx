@@ -1,0 +1,29 @@
+# RS Communications
+
+## Introduction
+
+RS Communications is application that integrates various external services and
+provides a unified interface to interact with them. It can be implemented as a
+standalone application or as a library. Here are few service types that can be
+integrated with RS Communications:
+
+- Email
+- SMS
+- Push Notifications
+- WhatsApp
+- Voice Broadcast
+- Interactive Voice Response (IVR)
+
+## System Architecture
+
+RS Communications is designed to be modular and extensible. Each external
+service is registered as transport implementing a common interface. It
+encaupsulates the logic and authentication secrets to interact with the external
+service. The application can be configured to use one or more transports to send
+messages.
+
+![System Architecture](./diagrams/rsconnect--system-architecture.svg)
+
+## Table of Contents
+
+- [Input Interface](./interface-input.mdx)

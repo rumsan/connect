@@ -4,6 +4,8 @@
 dist
 tmp
 /out-tsc
+/logs
+/play
 
 # dependencies
 node_modules
@@ -40,3 +42,6 @@ Thumbs.db
 
 .nx/cache
 .nx/workspace-data
+.env
+dev.ts
+.npmrc

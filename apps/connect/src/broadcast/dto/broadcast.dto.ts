@@ -1,0 +1,81 @@
+import {
+  IsNotEmpty,
+  IsString,
+  IsOptional,
+  IsEnum,
+  IsDate,
+} from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { TriggerType } from '@prisma/client';
+
+export class MessageDto {
+  @ApiProperty({ description: 'Message content', example: 'Hello World' })
+  @IsNotEmpty()
+  @IsString()
+  content: string;
+
+  @ApiProperty({ description: 'Meta data for the message' })
+  @IsOptional()
+  meta?: Record<string, any>;
+}
+
+export class BroadcastOptionsDto {
+  @ApiProperty({
+    description: 'Timestamp for scheduled message',
+    example: '2021-09-01T00:00:00Z',
+  })
+  @IsOptional()
+  @IsDate()
+  scheduledTimestamp?: Date;
+
+  @ApiProperty({
+    description: 'Interval between attempts in minutes',
+    example: '5',
+  })
+  @IsOptional()
+  attemptIntervalMinutes?: string;
+}
+
+export class BroadcastDto {
+  @ApiProperty({ description: 'Application ID', example: '' })
+  @IsNotEmpty()
+  @IsString()
+  app: string;
+
+  @ApiProperty({ description: 'Transport', example: '' })
+  @IsNotEmpty()
+  @IsString()
+  transport: string;
+
+  @ApiProperty({ description: 'Message content' })
+  @IsNotEmpty()
+  message: MessageDto;
+
+  @ApiProperty({
+    description: 'List of addresses to send the message to',
+    example: [''],
+  })
+  @IsNotEmpty()
+  @IsString({ each: true })
+  addresses: string[];
+
+  @ApiProperty({
+    description: 'Maximum number of attempts to send the message',
+    example: 3,
+  })
+  @IsOptional()
+  maxAttempts?: number;
+
+  @ApiProperty({ description: 'Trigger type', example: TriggerType.IMMEDIATE })
+  @IsNotEmpty()
+  @IsEnum(TriggerType)
+  trigger: TriggerType;
+
+  @ApiProperty({ description: 'Webhook url', example: '' })
+  @IsOptional()
+  webhook?: string;
+
+  @ApiProperty({ description: 'Options for scheduled message' })
+  @IsOptional()
+  options?: BroadcastOptionsDto;
+}
