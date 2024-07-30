@@ -20,8 +20,7 @@
       "@rsconnect/sdk": ["libs/sdk/src/index.ts"],
       "@rsconnect/sdk/*": ["libs/sdk/src/*"],
       "@rsconnect/transports": ["libs/transports/src/index.ts"],
-      "@rsconnect/transports/*": ["libs/transports/src/*"],
-      "@rumsan/app": ["libs/rsapp/src/index.ts"]
+      "@rsconnect/transports/*": ["libs/transports/src/*"]
     }
   },
   "exclude": ["node_modules", "tmp"]

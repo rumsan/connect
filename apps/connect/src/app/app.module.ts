@@ -3,7 +3,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { EmailProcessor } from '../processors/email.processor';
-import { RsappModule } from '@rumsan/app';
 import { PrismaModule } from '@rumsan/prisma';
 import { BroadcastModule } from '../broadcast/broadcast.module';
 import { TransportModule } from '../transport/transport.module';
@@ -13,11 +12,12 @@ import { RabbitMQModule } from '../queues/queue.module';
 import amqp from 'amqp-connection-manager';
 import { QUEUES } from '@rsconnect/sdk';
 import { Channel } from 'amqplib';
+import { RumsanAppModule } from '@rumsan/app';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    RsappModule,
+    RumsanAppModule,
     PrismaModule,
     BroadcastModule,
     TransportModule,
