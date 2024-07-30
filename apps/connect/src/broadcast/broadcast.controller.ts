@@ -1,36 +1,35 @@
-import { Controller, Get, Post, Body, Param, Delete } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { AppId } from '@rumsan/app';
 import { BroadcastService } from './broadcast.service';
-import { BroadcastDto } from './dto/broadcast.dto';
-import { ApiTags } from '@nestjs/swagger';
+import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
 
-@Controller('broadcast')
-@ApiTags('Broadcast')
+@Controller('broadcasts')
+@ApiTags('Broadcasts')
 export class BroadcastController {
   constructor(private readonly broadcastService: BroadcastService) {}
 
   @Post()
-  create(@Body() dto: BroadcastDto) {
-    return this.broadcastService.create(dto);
-  }
-
-  @Post('test')
-  createTest(@Body() dto: any) {
-    console.log('test---post', dto);
-    return {};
+  @ApiOperation({
+    summary: 'Create a new broadcast',
+  })
+  create(@AppId() appId: string, @Body() dto: BroadcastDto) {
+    return this.broadcastService.create(appId, dto);
   }
 
   @Get()
-  findAll() {
-    return this.broadcastService.findAll();
+  @ApiOperation({
+    summary: 'Get all broadcasts for the registered app',
+  })
+  findAll(@AppId() appId: string, @Query() dto: ListBroadcastDto) {
+    return this.broadcastService.findAll(appId, dto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.broadcastService.findOne(+id);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.broadcastService.remove(+id);
+  @Get(':cuid')
+  @ApiOperation({
+    summary: 'Get a broadcast details with logs by broadcast id',
+  })
+  findOne(@Param('cuid') cuid: string) {
+    return this.broadcastService.findOne(cuid);
   }
 }

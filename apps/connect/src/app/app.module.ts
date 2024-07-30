@@ -13,14 +13,18 @@ import amqp from 'amqp-connection-manager';
 import { QUEUES } from '@rsconnect/sdk';
 import { Channel } from 'amqplib';
 import { RumsanAppModule } from '@rumsan/app';
+import { SessionModule } from '../session/session.module';
+import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     RumsanAppModule,
     PrismaModule,
-    BroadcastModule,
+    SessionModule,
     TransportModule,
+    BroadcastModule,
+    BroadcastLogModule,
     RabbitMQModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -37,20 +41,6 @@ import { RumsanAppModule } from '@rumsan/app';
         });
       },
     }),
-
-    // SmtpModule.forRootAsync({
-    //   imports: [ConfigModule],
-    //   inject: [ConfigService],
-    //   useFactory: (configService: ConfigService) => ({
-    //     host: configService.get('SMTP_HOST'),
-    //     port: +configService.get('SMTP_PORT'),
-    //     secure: false,
-    //     auth: {
-    //       user: configService.get('SMTP_USER'),
-    //       pass: configService.get('SMTP_PASS'),
-    //     },
-    //   }),
-    // }),
 
     BullModule.forRootAsync({
       imports: [ConfigModule],

@@ -1,42 +1,48 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-} from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { AppId } from '@rumsan/app';
+import { ListBroadcastDto } from '../broadcast/dto/broadcast.dto';
+import { ListBroadcastLogDto } from '../broadcastLog/dto/list-broadcast-log.dto';
+import { ListSessionDto } from './dto/list-session.dto';
 import { SessionService } from './session.service';
-import { CreateSessionDto } from './dto/create-session.dto';
-import { UpdateSessionDto } from './dto/update-session.dto';
 
-@Controller('session')
+@Controller('sessions')
+@ApiTags('Sessions')
 export class SessionController {
   constructor(private readonly sessionService: SessionService) {}
 
-  @Post()
-  create(@Body() createSessionDto: CreateSessionDto) {
-    return this.sessionService.create(createSessionDto);
-  }
-
   @Get()
-  findAll() {
-    return this.sessionService.findAll();
+  @ApiOperation({
+    summary: 'Get all sessions for the app',
+  })
+  findAll(@AppId() appId: string, @Query() dto: ListSessionDto) {
+    return this.sessionService.findAll(appId, dto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.sessionService.findOne(+id);
+  @Get(':cuid')
+  @ApiOperation({
+    summary: 'Get a session by session id',
+  })
+  findOne(@Param('cuid') cuid: string) {
+    return this.sessionService.findOne(cuid);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateSessionDto: UpdateSessionDto) {
-    return this.sessionService.update(+id, updateSessionDto);
+  @Get(':cuid/broadcasts')
+  @ApiOperation({
+    summary: 'Get all broadcasted messages for a session',
+  })
+  listBroadcasts(@Param('cuid') cuid: string, @Query() dto: ListBroadcastDto) {
+    return this.sessionService.listBroadcasts(cuid, dto);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.sessionService.remove(+id);
+  @Get(':cuid/logs')
+  @ApiOperation({
+    summary: 'Get all logs for a session',
+  })
+  listLogs(
+    @Param('cuid') sessionId: string,
+    @Query() dto: ListBroadcastLogDto
+  ) {
+    return this.sessionService.listLogs(sessionId, dto);
   }
 }

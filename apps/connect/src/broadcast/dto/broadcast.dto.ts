@@ -1,12 +1,12 @@
-import {
-  IsNotEmpty,
-  IsString,
-  IsOptional,
-  IsEnum,
-  IsDate,
-} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { TriggerType } from '@prisma/client';
+import {
+  IsDate,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class MessageDto {
   @ApiProperty({ description: 'Message content', example: 'Hello World' })
@@ -37,11 +37,6 @@ export class BroadcastOptionsDto {
 }
 
 export class BroadcastDto {
-  @ApiProperty({ description: 'Application ID', example: '' })
-  @IsNotEmpty()
-  @IsString()
-  app: string;
-
   @ApiProperty({ description: 'Transport', example: '' })
   @IsNotEmpty()
   @IsString()
@@ -78,4 +73,14 @@ export class BroadcastDto {
   @ApiProperty({ description: 'Options for scheduled message' })
   @IsOptional()
   options?: BroadcastOptionsDto;
+}
+
+import { IsIn } from 'class-validator';
+import { PaginationDto } from '../../utils/pagination.dto';
+
+export class ListBroadcastDto extends PaginationDto {
+  @IsIn(['createdAt'])
+  override sort: string = 'createdAt';
+
+  override order: 'asc' | 'desc' = 'desc';
 }

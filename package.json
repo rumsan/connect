@@ -17,7 +17,7 @@
     "@nestjs/swagger": "^7.4.0",
     "@paralleldrive/cuid2": "^2.2.2",
     "@prisma/client": "5.17.0",
-    "@rumsan/app": "^0.0.1",
+    "@rumsan/app": "^0.0.3",
     "@rumsan/core": "^3.0.140",
     "@rumsan/extensions": "^0.0.28",
     "@rumsan/prisma": "^1.0.130",

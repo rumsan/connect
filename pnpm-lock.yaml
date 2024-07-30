@@ -45,8 +45,8 @@ importers:
         specifier: 5.17.0
         version: 5.17.0(prisma@5.17.0)
       '@rumsan/app':
-        specifier: ^0.0.1
-        version: 0.0.1(class-transformer@0.5.1)(class-validator@0.14.1)(prisma@5.17.0)(reflect-metadata@0.1.14)(rxjs@7.8.1)
+        specifier: ^0.0.3
+        version: 0.0.3(class-transformer@0.5.1)(class-validator@0.14.1)(prisma@5.17.0)(reflect-metadata@0.1.14)(rxjs@7.8.1)
       '@rumsan/core':
         specifier: ^3.0.140
         version: 3.0.140
@@ -1523,8 +1523,8 @@ packages:
   '@prisma/get-platform@5.17.0':
     resolution: {integrity: sha512-UlDgbRozCP1rfJ5Tlkf3Cnftb6srGrEQ4Nm3og+1Se2gWmCZ0hmPIi+tQikGDUVLlvOWx3Gyi9LzgRP+HTXV9w==}
 
-  '@rumsan/app@0.0.1':
-    resolution: {integrity: sha512-3dZKZ+lyPbykJr0p4JgScd2pKlVbcFkrKZNaaH656kDIOFG5Lpwihg23saNIqrGGoeJlGm2iudCarr3vp/euxA==, tarball: https://npm.pkg.github.com/download/@rumsan/app/0.0.1/cd1a1c1d1aae3c467743e8f568602e46577eddb3}
+  '@rumsan/app@0.0.3':
+    resolution: {integrity: sha512-KOGa18W0LfzqPbimknyAYBvWP0Fjx2Tc+wdEjBJx5y0M/pE3XCo4q46XicftgXVG5kPNXPqp/P1Hl12HhA9Sxw==, tarball: https://npm.pkg.github.com/download/@rumsan/app/0.0.3/8f8e5c5a59e008800f7a142583b34555a7a7a5ae}
 
   '@rumsan/core@3.0.140':
     resolution: {integrity: sha512-c+7YC8WXPvYTsNWcTYt1JaNOYM8K2Z7RQEf88W4N1k7ABFS+2DQrNuTCI+57GhfHE+eX+JKwTN8NsZUIVqrxCg==, tarball: https://npm.pkg.github.com/download/@rumsan/core/3.0.140/a6f2299c8356d2823da36fcaddd9b4b083997b61}
@@ -8296,7 +8296,7 @@ snapshots:
     dependencies:
       '@prisma/debug': 5.17.0
 
-  '@rumsan/app@0.0.1(class-transformer@0.5.1)(class-validator@0.14.1)(prisma@5.17.0)(reflect-metadata@0.1.14)(rxjs@7.8.1)':
+  '@rumsan/app@0.0.3(class-transformer@0.5.1)(class-validator@0.14.1)(prisma@5.17.0)(reflect-metadata@0.1.14)(rxjs@7.8.1)':
     dependencies:
       '@rumsan/prisma': 1.0.130(class-transformer@0.5.1)(class-validator@0.14.1)(prisma@5.17.0)(reflect-metadata@0.1.14)(rxjs@7.8.1)
       '@rumsan/sdk': 0.0.45

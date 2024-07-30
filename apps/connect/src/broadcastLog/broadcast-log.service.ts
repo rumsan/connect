@@ -1,35 +1,32 @@
-import { Injectable, Session } from '@nestjs/common';
-import { CreateBroadcastLogDto } from './dto/create-broadcast-log.dto';
+import { Injectable } from '@nestjs/common';
+import { SessionStatus } from '@prisma/client';
 import {
   BroadcastLog,
   BroadcastStatus,
   QueueBroadcastLog,
 } from '@rsconnect/sdk/types';
-import { PrismaService } from '@rumsan/prisma';
-import { QueueService } from '../queues/queue.service';
-import { SessionStatus } from '@prisma/client';
+import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
+import { CreateBroadcastLogDto } from './dto/create-broadcast-log.dto';
+import { ListBroadcastLogDto } from './dto/list-broadcast-log.dto';
 
+const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 @Injectable()
 export class BroadcastLogService {
   constructor(
     private readonly prisma: PrismaService //private readonly queueService: QueueService
   ) {}
-  createUsingDto(createBroadcastLogDto: CreateBroadcastLogDto) {
-    return 'This action adds a new broadcastLog';
-  }
-
   async createViaQueue(data: QueueBroadcastLog, addToQueue?: any) {
     const { queue, ...logData } = data;
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.broadcastLog.create({
-        data: logData,
-      });
-
       const broadcast = await tx.broadcast.findUnique({
         where: {
           cuid: data.broadcast,
         },
+      });
+
+      await tx.broadcastLog.create({
+        data: { app: broadcast.app, session: broadcast.session, ...logData },
       });
 
       if (data.status === BroadcastStatus.FAIL) {
@@ -105,15 +102,24 @@ export class BroadcastLogService {
     }
   }
 
-  findAll() {
-    return `This action returns all broadcastLog`;
-  }
-
-  findOne(id: number) {
-    return `This action returns a #${id} broadcastLog`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} broadcastLog`;
+  findAll(
+    appId: string,
+    dto: ListBroadcastLogDto
+  ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
+    const orderBy: Record<string, 'asc' | 'desc'> = {};
+    orderBy[dto.sort] = dto.order;
+    return paginate(
+      this.prisma.broadcastLog,
+      {
+        where: {
+          app: appId,
+        },
+        orderBy,
+      },
+      {
+        page: dto.page,
+        perPage: dto.limit,
+      }
+    );
   }
 }

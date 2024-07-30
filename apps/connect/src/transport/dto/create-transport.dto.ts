@@ -3,11 +3,6 @@ import { TransportType } from '@rsconnect/sdk/types';
 import { IsEnum, IsNotEmpty, IsString } from 'class-validator';
 
 export class CreateTransportDto {
-  @ApiProperty({ description: 'Application ID', example: '' })
-  @IsNotEmpty()
-  @IsString()
-  app: string;
-
   @ApiProperty({ description: 'Transport name', example: 'Email Sender' })
   @IsNotEmpty()
   @IsString()
