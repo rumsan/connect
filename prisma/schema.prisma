@@ -7,13 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum ApplicationEnvironment {
-  PRODUCTION
-  STAGING
-  DEVELOPMENT
-  TEST
-}
-
 enum TransportType {
   SMTP
   VOICE
@@ -41,22 +34,6 @@ enum BroadcastStatus {
   FAIL
 }
 
-model Application {
-  cuid        String                 @id @default(cuid())
-  name        String
-  publicKey   String
-  description String?
-  environment ApplicationEnvironment
-
-  Transport Transport[]
-  Session   Session[]
-  Broadcast Broadcast[]
-
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
-}
-
 //TODO https://socket.dev/npm/package/prisma-extension-cuid2
 
 model Transport {
@@ -66,10 +43,10 @@ model Transport {
   name   String
   type   TransportType
   config Json          @db.JsonB()
+  stats          Json?         @db.JsonB()
 
-  Application Application @relation(fields: [app], references: [cuid])
-  Session     Session[]
-  Broadcast   Broadcast[]
+  Sessions   Session[]
+  Broadcasts Broadcast[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
@@ -93,9 +70,9 @@ model Session {
   totalAddresses Int
   stats          Json?         @db.JsonB()
 
-  Application Application @relation(fields: [app], references: [cuid])
-  Transport   Transport   @relation(fields: [transport], references: [cuid])
-  Broadcast   Broadcast[]
+  Transport  Transport      @relation(fields: [transport], references: [cuid])
+  Broadcasts Broadcast[]
+  Logs       BroadcastLog[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
@@ -112,17 +89,16 @@ model Broadcast {
   transport   String
   address     String
   status      BroadcastStatus @default(PENDING)
-  maxAttempts    Int           @default(1)
+  maxAttempts Int             @default(1)
   attempts    Int             @default(0)
   lastAttempt DateTime?
   isComplete  Boolean         @default(false)
   queuedAt    DateTime?
 
-  Application Application @relation(fields: [app], references: [cuid])
-  Session     Session     @relation(fields: [session], references: [cuid])
-  Transport   Transport   @relation(fields: [transport], references: [cuid])
+  Session   Session   @relation(fields: [session], references: [cuid])
+  Transport Transport @relation(fields: [transport], references: [cuid])
 
-  Log BroadcastLog[]
+  Logs BroadcastLog[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
@@ -131,15 +107,40 @@ model Broadcast {
 }
 
 model BroadcastLog {
-  cuid      String  @unique @default(cuid())
+  cuid      String          @unique @default(cuid())
+  app       String
+  session   String
   broadcast String
   status    BroadcastStatus
   attempt   Int
-  details   Json?   @db.JsonB()
+  details   Json?           @db.JsonB()
   notes     String?
 
   Broadcast Broadcast @relation(fields: [broadcast], references: [cuid])
+  Session   Session   @relation(fields: [session], references: [cuid])
   createdAt DateTime  @default(now())
 
   @@map("tbl_broadcastLogs")
 }
+
+// ++++++++++++++++++ START: @rumsan/extensions/apps +++++++++++++++++++++++++++
+enum ApplicationEnvironment {
+  PRODUCTION
+  STAGING
+  DEVELOPMENT
+  TEST
+}
+
+model Application {
+  cuid        String                 @id @default(cuid())
+  name        String
+  publicKey   String
+  description String?
+  environment ApplicationEnvironment
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+// ++++++++++++++++++ END: @rumsan/extensions/apps ++++++++++++++++++++++++++++++++

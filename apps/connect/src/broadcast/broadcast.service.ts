@@ -1,13 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { BroadcastDto } from './dto/broadcast.dto';
-import { PrismaService } from '@rumsan/prisma';
-import { SessionStatus } from '@rsconnect/sdk/types';
-import { createId } from '@paralleldrive/cuid2';
 import { InjectQueue } from '@nestjs/bull';
+import { Injectable } from '@nestjs/common';
+import { createId } from '@paralleldrive/cuid2';
+import { BroadcastLog, Transport, TransportType } from '@prisma/client';
 import { QUEUES } from '@rsconnect/sdk';
+import { SessionStatus } from '@rsconnect/sdk/types';
+import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
-import { Transport, TransportType } from '@prisma/client';
 import { QueueService } from '../queues/queue.service';
+import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
+
+const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
 @Injectable()
 export class BroadcastService {
@@ -19,12 +21,12 @@ export class BroadcastService {
     @InjectQueue(QUEUES.TRANSPORT_VOICE) private readonly VoiceQueue: Queue,
     private readonly queueService: QueueService
   ) {}
-  async create(dto: BroadcastDto) {
+  async create(appId: string, dto: BroadcastDto) {
     const broadcastData = [];
     let transport: Transport = null;
     const sessionData = {
       cuid: createId(),
-      app: dto.app,
+      app: appId,
       transport: dto.transport,
       message: dto.message as Record<string, any>,
       addresses: dto.addresses,
@@ -56,7 +58,7 @@ export class BroadcastService {
           cuid: createId(),
           transport: dto.transport,
           session: session.cuid,
-          app: dto.app,
+          app: appId,
           maxAttempts: sessionData.maxAttempts,
           address,
         });
@@ -137,15 +139,51 @@ export class BroadcastService {
     }
   }
 
-  findAll() {
-    return `This action returns all broadcast`;
+  findAll(
+    appId: string,
+    dto: ListBroadcastDto
+  ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
+    const orderBy: Record<string, 'asc' | 'desc'> = {};
+    orderBy[dto.sort] = dto.order;
+    return paginate(
+      this.prisma.broadcast,
+      {
+        where: {
+          app: appId,
+        },
+        orderBy,
+      },
+      {
+        page: dto.page,
+        perPage: dto.limit,
+      }
+    );
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} broadcast`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} broadcast`;
+  findOne(cuid: string) {
+    return this.prisma.broadcast.findUnique({
+      where: {
+        cuid,
+      },
+      include: {
+        Transport: { select: { name: true, type: true } },
+        Session: {
+          select: {
+            message: true,
+            maxAttempts: true,
+            triggerType: true,
+            webhook: true,
+            options: true,
+            stats: true,
+            totalAddresses: true,
+            status: true,
+            createdAt: true,
+            updatedAt: true,
+            deletedAt: true,
+          },
+        },
+        Logs: true,
+      },
+    });
   }
 }

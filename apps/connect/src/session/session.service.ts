@@ -1,26 +1,84 @@
 import { Injectable } from '@nestjs/common';
-import { CreateSessionDto } from './dto/create-session.dto';
-import { UpdateSessionDto } from './dto/update-session.dto';
+import { BroadcastLog, Session } from '@prisma/client';
+import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
+import { ListBroadcastDto } from '../broadcast/dto/broadcast.dto';
+import { ListBroadcastLogDto } from '../broadcastLog/dto/list-broadcast-log.dto';
+import { ListSessionDto } from './dto/list-session.dto';
+
+const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 100 });
 
 @Injectable()
 export class SessionService {
-  create(createSessionDto: CreateSessionDto) {
-    return 'This action adds a new session';
+  constructor(private readonly prisma: PrismaService) {}
+
+  findAll(
+    appId: string,
+    dto: ListSessionDto
+  ): Promise<PaginatorTypes.PaginatedResult<Session>> {
+    const orderBy: Record<string, 'asc' | 'desc'> = {};
+    orderBy[dto.sort] = dto.order;
+    return paginate(
+      this.prisma.session,
+      {
+        where: {
+          app: appId,
+        },
+        orderBy,
+      },
+      {
+        page: dto.page,
+        perPage: dto.limit,
+      }
+    );
   }
 
-  findAll() {
-    return `This action returns all session`;
+  findOne(cuid: string) {
+    return this.prisma.session.findUnique({
+      where: {
+        cuid,
+      },
+    });
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} session`;
+  listBroadcasts(
+    cuid: string,
+    dto: ListBroadcastDto
+  ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
+    const orderBy: Record<string, 'asc' | 'desc'> = {};
+    orderBy[dto.sort] = dto.order;
+    return paginate(
+      this.prisma.broadcast,
+      {
+        where: {
+          session: cuid,
+        },
+        orderBy,
+      },
+      {
+        page: dto.page,
+        perPage: dto.limit,
+      }
+    );
   }
 
-  update(id: number, updateSessionDto: UpdateSessionDto) {
-    return `This action updates a #${id} session`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} session`;
+  listLogs(
+    cuid: string,
+    dto: ListBroadcastLogDto
+  ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
+    const orderBy: Record<string, 'asc' | 'desc'> = {};
+    orderBy[dto.sort] = dto.order;
+    return paginate(
+      this.prisma.broadcastLog,
+      {
+        where: {
+          session: cuid,
+        },
+        orderBy,
+      },
+      {
+        page: dto.page,
+        perPage: dto.limit,
+      }
+    );
   }
 }

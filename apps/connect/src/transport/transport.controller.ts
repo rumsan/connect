@@ -1,22 +1,25 @@
 import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
   BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
 } from '@nestjs/common';
-import { TransportService } from './transport.service';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CreateTransportDto } from './dto/create-transport.dto';
 import { UpdateTransportDto } from './dto/update-transport.dto';
-import { ApiTags } from '@nestjs/swagger';
+import { TransportService } from './transport.service';
 
-import { validate } from 'class-validator';
-import { ClassConstructor, plainToInstance } from 'class-transformer';
-import { TransportSMTPConfigDto } from './dto/smtp-transport-config.dto';
 import { TransportType } from '@rsconnect/sdk/types';
+import { AppId } from '@rumsan/app';
+import { ClassConstructor, plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { ListTransportDto } from './dto/list-transport.dto';
+import { TransportSMTPConfigDto } from './dto/smtp-transport-config.dto';
 
 @Controller('transports')
 @ApiTags('Transport')
@@ -24,38 +27,51 @@ export class TransportController {
   constructor(private readonly transportService: TransportService) {}
 
   @Post()
-  async create(@Body() dto: CreateTransportDto) {
-    // console.log(dto);
-
+  @ApiOperation({
+    summary: 'Create a new transport. Valid types: SMTP,API,SES,ECHO,VOICE',
+  })
+  async create(@AppId() appId: string, @Body() dto: CreateTransportDto) {
     if (dto.type === TransportType.SMTP)
       await this.validateTransportConfig<TransportSMTPConfigDto>(
         dto.config,
         TransportSMTPConfigDto
       );
-    return this.transportService.create(dto);
+    return this.transportService.create(appId, dto);
   }
 
   @Get()
-  findAll() {
-    return this.transportService.findAll();
+  @ApiOperation({
+    summary: 'Get all transports for the app',
+  })
+  findAll(@AppId() appId: string, @Query() dto: ListTransportDto) {
+    return this.transportService.findAll(appId, dto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.transportService.findOne(+id);
+  @Get(':cuid')
+  @ApiOperation({
+    summary: 'Get a transport by transport id',
+  })
+  findOne(@Param('cuid') cuid: string) {
+    return this.transportService.findOne(cuid);
   }
 
-  @Patch(':id')
+  @Patch(':cuid')
+  @ApiOperation({
+    summary: 'Update a transport by transport id',
+  })
   update(
-    @Param('id') id: string,
+    @Param('cuid') cuid: string,
     @Body() updateTransportDto: UpdateTransportDto
   ) {
-    return this.transportService.update(+id, updateTransportDto);
+    return this.transportService.update(cuid, updateTransportDto);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.transportService.remove(+id);
+  @Delete(':cuid')
+  @ApiOperation({
+    summary: 'Remove a transport by transport id',
+  })
+  remove(@Param('cuid') cuid: string) {
+    return this.transportService.remove(cuid);
   }
 
   async validateTransportConfig<T extends object>(

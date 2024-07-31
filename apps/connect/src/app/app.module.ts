@@ -3,7 +3,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { EmailProcessor } from '../processors/email.processor';
-import { RsappModule } from '@rumsan/app';
 import { PrismaModule } from '@rumsan/prisma';
 import { BroadcastModule } from '../broadcast/broadcast.module';
 import { TransportModule } from '../transport/transport.module';
@@ -13,14 +12,19 @@ import { RabbitMQModule } from '../queues/queue.module';
 import amqp from 'amqp-connection-manager';
 import { QUEUES } from '@rsconnect/sdk';
 import { Channel } from 'amqplib';
+import { RumsanAppModule } from '@rumsan/app';
+import { SessionModule } from '../session/session.module';
+import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    RsappModule,
+    RumsanAppModule,
     PrismaModule,
-    BroadcastModule,
+    SessionModule,
     TransportModule,
+    BroadcastModule,
+    BroadcastLogModule,
     RabbitMQModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -37,20 +41,6 @@ import { Channel } from 'amqplib';
         });
       },
     }),
-
-    // SmtpModule.forRootAsync({
-    //   imports: [ConfigModule],
-    //   inject: [ConfigService],
-    //   useFactory: (configService: ConfigService) => ({
-    //     host: configService.get('SMTP_HOST'),
-    //     port: +configService.get('SMTP_PORT'),
-    //     secure: false,
-    //     auth: {
-    //       user: configService.get('SMTP_USER'),
-    //       pass: configService.get('SMTP_PASS'),
-    //     },
-    //   }),
-    // }),
 
     BullModule.forRootAsync({
       imports: [ConfigModule],
