@@ -13,6 +13,7 @@ export type Transport = {
   config: Record<string, any>;
   id?: number;
   cuid?: string;
+  stats?: Record<string, any>;
   createdAt?: Date;
   updatedAt?: Date | null;
   deletedAt?: Date | null;

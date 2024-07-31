@@ -2,7 +2,9 @@
   "name": "@rsconnect/source",
   "version": "0.0.0",
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "start:dev": "nx serve connect"
+  },
   "private": true,
   "dependencies": {
     "@nestjs/bull": "^10.1.1",
