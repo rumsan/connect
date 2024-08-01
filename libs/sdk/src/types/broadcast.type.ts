@@ -1,4 +1,6 @@
-import { TriggerType } from './session.type';
+import { BroadcastLog } from './broadcastLog.type';
+import { Session, TriggerType } from './session.type';
+import { Transport } from './transport.type';
 
 export enum BroadcastStatus {
   PENDING = 'PENDING',
@@ -36,7 +38,7 @@ export interface EmailMessage extends Message {
 export type Broadcast = {
   id: number;
   cuid: string;
-  app: string;
+  app?: string;
   session: string;
   transport: string;
   address: string;
@@ -47,4 +49,7 @@ export type Broadcast = {
   isComplete: boolean;
   createdAt?: Date;
   updatedAt?: Date | null;
+  Transport?: Partial<Transport> | null;
+  Session?: Partial<Session> | null;
+  Logs?: BroadcastLog[];
 };

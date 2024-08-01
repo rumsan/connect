@@ -166,9 +166,13 @@ export class BroadcastService {
         cuid,
       },
       include: {
-        Transport: { select: { name: true, type: true } },
+        Transport: {
+          select: { cuid: true, app: true, name: true, type: true },
+        },
         Session: {
           select: {
+            cuid: true,
+            app: true,
             message: true,
             maxAttempts: true,
             triggerType: true,

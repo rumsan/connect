@@ -17,7 +17,7 @@ export enum SessionStatus {
 export type Session = {
   id: number;
   cuid: string;
-  app: string;
+  app?: string;
   transport: string;
   message: Message;
   addresses: Record<string, any>;
@@ -31,5 +31,5 @@ export type Session = {
   createdAt?: Date;
   updatedAt?: Date | null;
   deletedAt?: Date | null;
-  Transport?: Transport;
+  Transport?: Transport | null;
 };
