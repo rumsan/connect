@@ -21,6 +21,7 @@
     "@rumsan/core": "^3.0.140",
     "@rumsan/extensions": "^0.0.28",
     "@rumsan/prisma": "^1.0.130",
+    "@rumsan/sdk": "^0.0.45",
     "@types/amqplib": "^0.10.5",
     "amqp-connection-manager": "^4.1.14",
     "amqplib": "^0.10.4",

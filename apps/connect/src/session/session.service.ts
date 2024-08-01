@@ -37,6 +37,9 @@ export class SessionService {
       where: {
         cuid,
       },
+      include: {
+        Transport: true,
+      },
     });
   }
 
