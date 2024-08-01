@@ -6,6 +6,7 @@ import {
   TransportApiConfig,
   TransportConfig,
   TransportEchoConfig,
+  TransportSmtpConfig,
   TransportType,
 } from '../types';
 import { ApiClient } from './api.client';
@@ -69,7 +70,7 @@ export class TransportClient {
   }
 
   async createSMTP(
-    data: Omit<TransportConfig<TransportEchoConfig>, 'type'>,
+    data: Omit<TransportConfig<TransportSmtpConfig>, 'type'>,
     config?: AxiosRequestConfig
   ) {
     const payload: Transport = { ...data, type: TransportType.SMTP };

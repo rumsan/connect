@@ -1,6 +1,6 @@
 import { formatResponse } from '@rumsan/sdk/utils';
 import { AxiosInstance, AxiosRequestConfig } from 'axios';
-import { Broadcast } from '../types';
+import { Broadcast, MessageBroadcast } from '../types';
 import { ApiClient } from './api.client';
 
 export class BroadcastClient {
@@ -17,5 +17,10 @@ export class BroadcastClient {
   async list(config?: AxiosRequestConfig) {
     const response = await this._client.get(`${this._prefix}`, config);
     return formatResponse<Broadcast[]>(response);
+  }
+
+  async create(data: MessageBroadcast, config?: AxiosRequestConfig) {
+    const response = await this._client.post(`${this._prefix}`, data, config);
+    return formatResponse<Broadcast>(response);
   }
 }
