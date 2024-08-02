@@ -8,14 +8,17 @@ import {
 import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
 import { CreateBroadcastLogDto } from './dto/create-broadcast-log.dto';
 import { ListBroadcastLogDto } from './dto/list-broadcast-log.dto';
+import { QueueService } from '../queues/queue.service';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 @Injectable()
 export class BroadcastLogService {
   constructor(
-    private readonly prisma: PrismaService //private readonly queueService: QueueService
-  ) {}
-  async createViaQueue(data: QueueBroadcastLog, addToQueue?: any) {
+    private readonly prisma: PrismaService,
+    private readonly queueService: QueueService
+  ) { }
+
+  async createViaQueue(data: QueueBroadcastLog, retryDelay = 2000) {
     const { queue, ...logData } = data;
 
     await this.prisma.$transaction(async (tx) => {
@@ -41,11 +44,10 @@ export class BroadcastLogService {
               attempt: data.attempt,
             },
           };
-          if (addToQueue) {
-            setTimeout(async () => {
-              addToQueue(queue, job);
-            }, 2000);
-          }
+          setTimeout(async () => {
+            this.queueService.add(queue, job);
+          }, retryDelay);
+
         } else {
           await this.completeBroadcast(
             tx,

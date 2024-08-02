@@ -13,7 +13,7 @@ export class LogWorker implements OnModuleInit {
     private readonly broadcastLogService: BroadcastLogService,
     @Inject('AMQP_CONNECTION')
     private readonly channel: ChannelWrapper
-  ) {}
+  ) { }
 
   public async onModuleInit() {
     try {
@@ -33,20 +33,18 @@ export class LogWorker implements OnModuleInit {
     }
   }
 
-  async add(queue: QUEUES, data: any) {
-    try {
-      await this.channel.sendToQueue(queue, Buffer.from(JSON.stringify(data)), {
-        persistent: true,
-      });
-      Logger.log('Sent To Queue');
-    } catch (error) {
-      console.log(error);
-    }
-  }
+  // async add(queue: QUEUES, data: any) {
+  //   try {
+  //     await this.channel.sendToQueue(queue, Buffer.from(JSON.stringify(data)), {
+  //       persistent: true,
+  //     });
+  //     Logger.log('Sent To Queue');
+  //   } catch (error) {
+  //     console.log(error);
+  //   }
+  // }
 
   async process(data: QueueBroadcastLog) {
-    await this.broadcastLogService.createViaQueue(data, (queue, job) => {
-      return this.add(queue, job);
-    });
+    await this.broadcastLogService.createViaQueue(data);
   }
 }
