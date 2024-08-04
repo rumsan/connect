@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, OnModuleInit } from '@nestjs/common';
 import { QUEUES } from '@rsconnect/sdk';
 import {
   QueueBroadcastJob,
@@ -6,15 +6,15 @@ import {
   QueueBroadcastLog,
   Session,
 } from '@rsconnect/sdk/types';
-import { PrismaService } from '@rumsan/prisma';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
+import { IDataProvider } from '../data-providers/data-provider.interface';
 
-@Injectable()
 export abstract class TransportWorker implements OnModuleInit {
   abstract TransportQueue: QUEUES;
   constructor(
-    protected readonly prisma: PrismaService,
+    @Inject('IDataProvider')
+    protected readonly dataProvider: IDataProvider,
     @Inject('AMQP_CONNECTION')
     protected readonly channel: ChannelWrapper
   ) {}
@@ -58,15 +58,7 @@ export abstract class TransportWorker implements OnModuleInit {
   private async _process(
     data: QueueBroadcastJobData
   ): Promise<QueueBroadcastLog> {
-    const session: Session = (await this.prisma.session.findUnique({
-      where: {
-        cuid: data.sessionId,
-      },
-      include: {
-        Transport: true,
-      },
-    })) as Session;
-
+    const session: Session = await this.dataProvider.getSession(data.sessionId);
     return this.process(session, data);
   }
 

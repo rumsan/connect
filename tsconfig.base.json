@@ -20,7 +20,9 @@
       "@rsconnect/sdk": ["libs/sdk/src/index.ts"],
       "@rsconnect/sdk/*": ["libs/sdk/src/*"],
       "@rsconnect/transports": ["libs/transports/src/index.ts"],
-      "@rsconnect/transports/*": ["libs/transports/src/*"]
+      "@rsconnect/transports/*": ["libs/transports/src/*"],
+      "@rsconnect/workers": ["libs/workers/src/index.ts"],
+      "@rsconnect/workers/*": ["libs/workers/src/*"]
     }
   },
   "exclude": ["node_modules", "tmp"]

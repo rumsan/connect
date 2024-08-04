@@ -7,7 +7,7 @@ import {
   Session,
 } from '@rsconnect/sdk/types';
 import axios from 'axios';
-import { TransportWorker } from './transport.worker';
+import { TransportWorker } from '../transport.worker';
 @Injectable()
 export class EchoWorker extends TransportWorker {
   TransportQueue: QUEUES = QUEUES.TRANSPORT_ECHO;
@@ -26,14 +26,15 @@ export class EchoWorker extends TransportWorker {
     if (status === BroadcastStatus.SUCCESS) {
       try {
         if (
-          session.Transport.config['slack_url'] &&
-          session.Transport.config['slack_email']
+          session.Transport?.config['slack_url'] &&
+          session.Transport?.config['slack_email']
         )
           await axios.post(session.Transport.config['slack_url'], {
             email: session.Transport.config['slack_email'],
             message: `${addr[0]} -- ${session.message['content']}`,
           });
       } catch (e) {
+        console.log(e);
         status = BroadcastStatus.FAIL;
       }
     }

@@ -6,25 +6,26 @@ import {
   QueueBroadcastJobData,
   QueueBroadcastLog,
   Session,
-  TransportSmtpConfig,
+  TransportApiConfig,
 } from '@rsconnect/sdk/types';
-import { TransportWorker } from './transport.worker';
-import { PrismaService } from '@rumsan/prisma';
+import { ApiTransport } from '@rsconnect/transports';
 import { ChannelWrapper } from 'amqp-connection-manager';
-import { SmtpTransport } from '@rsconnect/transports/smtp/smtp.transport';
+import { IDataProvider } from '../../data-providers/data-provider.interface';
+import { TransportWorker } from '../transport.worker';
 
 @Injectable()
-export class SmtpWorker extends TransportWorker {
+export class ApiWorker extends TransportWorker {
   constructor(
-    protected readonly prisma: PrismaService,
+    @Inject('IDataProvider')
+    override readonly dataProvider: IDataProvider,
     @Inject('AMQP_CONNECTION')
-    protected readonly channel: ChannelWrapper,
-    private readonly transport: SmtpTransport
+    override readonly channel: ChannelWrapper,
+    private readonly transport: ApiTransport
   ) {
-    super(prisma, channel);
+    super(dataProvider, channel);
   }
-  TransportQueue: QUEUES = QUEUES.TRANSPORT_SMTP;
-  private readonly logger = new Logger(SmtpWorker.name);
+  TransportQueue: QUEUES = QUEUES.TRANSPORT_API;
+  private readonly logger = new Logger(ApiWorker.name);
 
   async process(
     session: Session,
@@ -38,15 +39,15 @@ export class SmtpWorker extends TransportWorker {
     };
 
     try {
-      this.transport.init(session.Transport.config as TransportSmtpConfig);
+      this.transport.init(session.Transport?.config as TransportApiConfig);
       const res = await this.transport.send(
         data.address,
         session.message as EmailMessage
       );
 
       logData.status = BroadcastStatus.SUCCESS;
-      logData.details = { messageId: res.messageId };
-    } catch (e) {
+      logData.details = { messageId: res };
+    } catch (e: any) {
       logData.status = BroadcastStatus.FAIL;
       logData.details = { error: e.message };
     }
