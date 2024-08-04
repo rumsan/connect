@@ -1,0 +1,15 @@
+meta {
+  name: list-broadcasts
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{url}}/sessions/{{session-id}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}

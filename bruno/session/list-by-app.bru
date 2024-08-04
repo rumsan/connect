@@ -1,0 +1,15 @@
+meta {
+  name: list-by-app
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{url}}/sessions
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}

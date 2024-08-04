@@ -1,0 +1,42 @@
+meta {
+  name: send-echo
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-echo}}",
+    "message": {
+      "content":"Manjik Raghav Demoxxxx",
+      "meta": {
+          "subject": "Manjik Raghav Demo"
+      }
+    },
+    "addresses": [
+      "{{dev-email}}|2", "test@gmail.com"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+      "scheduledTimestamp": "2021-09-01T00:00:00Z",
+      "attemptIntervalMinutes": "4"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  bru.setVar("session-id", data.cuid);
+}

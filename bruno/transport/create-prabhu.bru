@@ -1,0 +1,38 @@
+meta {
+  name: create-prabhu
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{url}}/transports
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+      "app": "{{app-id}}",
+      "name": "Prabhu SMS",
+      "type": "API",
+      "config": {
+          "url": "https://smsml.creationsoftnepal.com/SendBulkV1?token={{prabhu-sms-token}}",
+          "body": [
+              {
+                  "Message": "{%message.content%}",
+                  "MobileNumber": "{%address%}"
+              }
+          ]
+      }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  bru.setVar("transport-id-prabhu", data.cuid);
+  bru.setVar("transport-id", data.cuid);
+}

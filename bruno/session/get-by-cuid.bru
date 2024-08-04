@@ -1,0 +1,15 @@
+meta {
+  name: get-by-cuid
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{url}}/sessions/{{session-id}}
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}

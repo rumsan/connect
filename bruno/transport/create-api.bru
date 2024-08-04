@@ -1,0 +1,44 @@
+meta {
+  name: create-api
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{url}}/transports
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+      "app": "{{app-id}}",
+      "name": "Slack API",
+      "type": "API",
+      "config": {
+          "url": "{{slack-url}}",
+          "body": {
+              "message": "{%message.content%}",
+              "email": "{%address%}"
+          }
+      }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  if(data.type==='ECHO')
+      bru.setVar("transport-id-echo", data.cuid);
+  else if(data.type==='SMTP')
+      bru.setVar("transport-id-smtp", data.cuid);
+  else if(data.type==='VOICE')
+      bru.setVar("transport-id-voice", data.cuid);
+  else if(data.type==='API')
+      bru.setVar("transport-id-api", data.cuid);
+  
+   bru.setVar("transport-id", data.cuid);
+}
