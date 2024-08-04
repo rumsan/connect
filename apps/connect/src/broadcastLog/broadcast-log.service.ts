@@ -4,7 +4,7 @@ import {
   BroadcastLog,
   BroadcastStatus,
   QueueBroadcastLog,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
 import { CreateBroadcastLogDto } from './dto/create-broadcast-log.dto';
 import { ListBroadcastLogDto } from './dto/list-broadcast-log.dto';

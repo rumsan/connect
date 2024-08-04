@@ -1,11 +1,11 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import {
   QueueBroadcastJob,
   QueueBroadcastJobData,
   QueueBroadcastLog,
   Session,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
@@ -17,7 +17,7 @@ export abstract class TransportWorker implements OnModuleInit {
     protected readonly prisma: PrismaService,
     @Inject('AMQP_CONNECTION')
     protected readonly channel: ChannelWrapper
-  ) {}
+  ) { }
 
   public async onModuleInit() {
     try {

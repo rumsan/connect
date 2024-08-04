@@ -1,6 +1,6 @@
 import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import { BroadcastController } from './broadcast.controller';
 import { BroadcastService } from './broadcast.service';
 import { RabbitMQModule } from '../queues/queue.module';
@@ -25,4 +25,4 @@ import { QueueService } from '../queues/queue.service';
   controllers: [BroadcastController],
   providers: [BroadcastService, QueueService],
 })
-export class BroadcastModule {}
+export class BroadcastModule { }

@@ -6,7 +6,7 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
-import { BroadcastStatus } from '@rsconnect/sdk/types';
+import { BroadcastStatus } from '@rumsan/connect/types';
 
 export class CreateBroadcastLogDto {
   @ApiProperty({ description: 'Broadcast ID' })

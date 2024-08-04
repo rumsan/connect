@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
-import { QueueBroadcastLog } from '@rsconnect/sdk/types';
+import { QUEUES } from '@rumsan/connect';
+import { QueueBroadcastLog } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
 import { BroadcastLogService } from '../broadcastLog/broadcast-log.service';

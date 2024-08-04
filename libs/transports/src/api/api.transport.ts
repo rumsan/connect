@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { IService, Message, TransportApiConfig } from '@rsconnect/sdk/types';
+import { IService, Message, TransportApiConfig } from '@rumsan/connect/types';
 import axios, { AxiosInstance } from 'axios';
 import { url } from 'inspector';
 

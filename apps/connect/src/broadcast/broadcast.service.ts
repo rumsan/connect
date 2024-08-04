@@ -2,8 +2,8 @@ import { InjectQueue } from '@nestjs/bull';
 import { Injectable } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
 import { BroadcastLog, Transport, TransportType } from '@prisma/client';
-import { QUEUES } from '@rsconnect/sdk';
-import { SessionStatus } from '@rsconnect/sdk/types';
+import { QUEUES } from '@rumsan/connect';
+import { SessionStatus } from '@rumsan/connect/types';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
 import { QueueService } from '../queues/queue.service';
@@ -20,7 +20,7 @@ export class BroadcastService {
     @InjectQueue(QUEUES.TRANSPORT_SMTP) private readonly SmtpQueue: Queue,
     @InjectQueue(QUEUES.TRANSPORT_VOICE) private readonly VoiceQueue: Queue,
     private readonly queueService: QueueService
-  ) {}
+  ) { }
   async create(appId: string, dto: BroadcastDto) {
     const broadcastData = [];
     let transport: Transport = null;

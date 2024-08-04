@@ -1,6 +1,6 @@
 import { DynamicModule, Global, Module, ValueProvider } from '@nestjs/common';
 import { ApiService } from './api.service';
-import { AsyncOptions, TransportApiConfig } from '@rsconnect/sdk/types';
+import { AsyncOptions, TransportApiConfig } from '@rumsan/connect/types';
 
 @Global()
 @Module({

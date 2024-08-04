@@ -1,11 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import {
   BroadcastStatus,
   QueueBroadcastJobData,
   QueueBroadcastLog,
   Session,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import axios from 'axios';
 import { TransportWorker } from './transport.worker';
 @Injectable()

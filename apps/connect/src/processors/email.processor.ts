@@ -5,8 +5,8 @@ import {
   Processor,
 } from '@nestjs/bull';
 import { Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
-import { EmailMessage, MessageBroadcast } from '@rsconnect/sdk/types';
+import { QUEUES } from '@rumsan/connect';
+import { EmailMessage, MessageBroadcast } from '@rumsan/connect/types';
 import { Job } from 'bull';
 
 @Injectable()

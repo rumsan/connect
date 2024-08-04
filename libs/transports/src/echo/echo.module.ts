@@ -1,7 +1,7 @@
 import { DynamicModule, Module, ValueProvider } from '@nestjs/common';
 import { EchoService } from './echo.service';
 import { EchoOptions } from './echo.interface';
-import { AsyncOptions } from '@rsconnect/sdk/types';
+import { AsyncOptions } from '@rumsan/connect/types';
 
 @Module({
   providers: [EchoService],

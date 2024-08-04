@@ -4,7 +4,7 @@ import {
   EmailMessage,
   IService,
   TransportSmtpConfig,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import { createTransport, Transporter } from 'nodemailer';
 import { MailOptions } from 'nodemailer/lib/json-transport';
 

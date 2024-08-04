@@ -1,5 +1,5 @@
 import { DynamicModule, Global, Module } from '@nestjs/common';
-import { AsyncOptions } from '@rsconnect/sdk/types';
+import { AsyncOptions } from '@rumsan/connect/types';
 import { ApiTransportModule, SmtpTransportModule } from '@rsconnect/transports';
 import { PrismaModule } from '@rumsan/prisma';
 import { ChannelWrapper } from 'amqp-connection-manager';

@@ -17,8 +17,8 @@
     "baseUrl": ".",
     "paths": {
       "@rsconnect/connect/*": ["apps/connect/src/*"],
-      "@rsconnect/sdk": ["libs/sdk/src/index.ts"],
-      "@rsconnect/sdk/*": ["libs/sdk/src/*"],
+      "@rumsan/connect": ["libs/sdk/src/index.ts"],
+      "@rumsan/connect/*": ["libs/sdk/src/*"],
       "@rsconnect/transports": ["libs/transports/src/index.ts"],
       "@rsconnect/transports/*": ["libs/transports/src/*"]
     }

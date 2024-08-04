@@ -10,7 +10,7 @@ import { BullModule } from '@nestjs/bull';
 import { EchoProcessor } from '../processors/echo.processor';
 import { RabbitMQModule } from '../queues/queue.module';
 import amqp from 'amqp-connection-manager';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import { Channel } from 'amqplib';
 import { RumsanAppModule } from '@rumsan/app';
 import { SessionModule } from '../session/session.module';
@@ -66,4 +66,4 @@ import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
   controllers: [AppController],
   providers: [AppService, EmailProcessor, EchoProcessor],
 })
-export class AppModule {}
+export class AppModule { }

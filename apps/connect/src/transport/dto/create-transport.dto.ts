@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { TransportType } from '@rsconnect/sdk/types';
+import { TransportType } from '@rumsan/connect/types';
 import { IsEnum, IsNotEmpty, IsString } from 'class-validator';
 
 export class CreateTransportDto {

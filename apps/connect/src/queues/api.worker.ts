@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import {
   BroadcastStatus,
   EmailMessage,
@@ -7,7 +7,7 @@ import {
   QueueBroadcastLog,
   Session,
   TransportApiConfig,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import { TransportWorker } from './transport.worker';
 import { PrismaService } from '@rumsan/prisma';
 import { ChannelWrapper } from 'amqp-connection-manager';

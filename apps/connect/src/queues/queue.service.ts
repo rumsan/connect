@@ -5,8 +5,8 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
-import { QueueBroadcastJob } from '@rsconnect/sdk/types';
+import { QUEUES } from '@rumsan/connect';
+import { QueueBroadcastJob } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 
 @Injectable()
@@ -14,7 +14,7 @@ export class QueueService {
   constructor(
     @Inject('AMQP_CONNECTION')
     private readonly _channel: ChannelWrapper
-  ) {}
+  ) { }
 
   async add(queue: QUEUES, data: QueueBroadcastJob) {
     const result = await this._channel.sendToQueue(
