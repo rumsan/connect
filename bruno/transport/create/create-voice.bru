@@ -1,0 +1,31 @@
+meta {
+  name: create-voice
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{url}}/transports
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+      "app": "{{app-id}}",
+      "name": "Asterisk",
+      "type": "VOICE",
+      "config": {}
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+    
+  bru.setVar("transport-id-voice", data.cuid);
+  bru.setVar("transport-id", data.cuid);
+}

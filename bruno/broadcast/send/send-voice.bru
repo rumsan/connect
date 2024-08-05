@@ -1,0 +1,40 @@
+meta {
+  name: send-voice
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-voice}}",
+    "message": {
+      "content": "https://rahat-rumsan.s3.us-east-1.amazonaws.com/aa/dev/QmavHqFK88getdySAC1v8bnYasbmW9aBWEGp9429Qw2nZv",
+      "meta": {}
+    },
+    "addresses": [
+      "{{dev-phone}}"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+      "scheduledTimestamp": "2021-09-01T00:00:00Z",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  bru.setVar("session-id", data.cuid);
+}
