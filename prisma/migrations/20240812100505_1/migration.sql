@@ -11,6 +11,12 @@ CREATE TYPE "TriggerType" AS ENUM ('IMMEDIATE', 'SCHEDULED', 'MANUAL');
 CREATE TYPE "BroadcastStatus" AS ENUM ('PENDING', 'SUCCESS', 'FAIL');
 
 -- CreateEnum
+CREATE TYPE "ValidationContent" AS ENUM ('URL', 'TEXT');
+
+-- CreateEnum
+CREATE TYPE "ValidationAddress" AS ENUM ('ANY', 'EMAIL', 'PHONE');
+
+-- CreateEnum
 CREATE TYPE "ApplicationEnvironment" AS ENUM ('PRODUCTION', 'STAGING', 'DEVELOPMENT', 'TEST');
 
 -- CreateTable
@@ -22,6 +28,8 @@ CREATE TABLE "tbl_transports" (
     "type" "TransportType" NOT NULL,
     "config" JSONB NOT NULL,
     "stats" JSONB,
+    "validationContent" "ValidationContent" NOT NULL DEFAULT 'TEXT',
+    "validationAddress" "ValidationAddress" NOT NULL DEFAULT 'ANY',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
     "deletedAt" TIMESTAMP(3),

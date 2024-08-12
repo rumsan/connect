@@ -34,6 +34,17 @@ enum BroadcastStatus {
   FAIL
 }
 
+enum ValidationContent {
+  URL
+  TEXT
+}
+
+enum ValidationAddress {
+  ANY
+  EMAIL
+  PHONE
+}
+
 //TODO https://socket.dev/npm/package/prisma-extension-cuid2
 
 model Transport {
@@ -44,6 +55,9 @@ model Transport {
   type   TransportType
   config Json          @db.JsonB()
   stats          Json?         @db.JsonB()
+  
+  validationContent ValidationContent @default(TEXT)
+  validationAddress ValidationAddress @default(ANY)
 
   Sessions   Session[]
   Broadcasts Broadcast[]

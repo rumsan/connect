@@ -14,6 +14,8 @@ export type Transport = {
   id?: number;
   cuid?: string;
   stats?: Record<string, any> | null;
+  validationContent?: string;
+  validationAddress?: string;
   createdAt?: Date;
   updatedAt?: Date | null;
   deletedAt?: Date | null;

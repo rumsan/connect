@@ -190,4 +190,8 @@ export class BroadcastService {
       },
     });
   }
+
+  // validateBroadcast(){
+  //   this.prisma.transport.findUnique()
+  // }
 }
