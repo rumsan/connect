@@ -5,6 +5,6 @@ export enum ValidationContent {
 
 export enum ValidationAddress {
   ANY = 'ANY',
-  EMAIL = 'URL',
+  EMAIL = 'EMAIL',
   PHONE = 'PHONE',
 }
