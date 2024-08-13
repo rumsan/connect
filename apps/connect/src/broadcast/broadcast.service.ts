@@ -7,7 +7,12 @@ import { SessionStatus } from '@rumsan/connect/types';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
 import { QueueService } from '../queues/queue.service';
-import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
+import {
+  BroadcastDto,
+  ListBroadcastDto,
+  MessageDto,
+} from './dto/broadcast.dto';
+import { getAddressValidator, getContentValidator } from './validators';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
@@ -15,13 +20,12 @@ const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 export class BroadcastService {
   constructor(
     private readonly prisma: PrismaService,
-    @InjectQueue(QUEUES.TRANSPORT_ECHO) private readonly EchoQueue: Queue,
-    @InjectQueue(QUEUES.TRANSPORT_API) private readonly ApiQueue: Queue,
-    @InjectQueue(QUEUES.TRANSPORT_SMTP) private readonly SmtpQueue: Queue,
-    @InjectQueue(QUEUES.TRANSPORT_VOICE) private readonly VoiceQueue: Queue,
     private readonly queueService: QueueService
-  ) { }
+  ) {}
   async create(appId: string, dto: BroadcastDto) {
+    const { transport: transportId, message, addresses } = dto;
+    await this.validateBroadcastData(transportId, message, addresses);
+
     const broadcastData = [];
     let transport: Transport = null;
     const sessionData = {
@@ -191,7 +195,24 @@ export class BroadcastService {
     });
   }
 
-  // validateBroadcast(){
-  //   this.prisma.transport.findUnique()
-  // }
+  async validateBroadcastData(
+    transportId: string,
+    message: MessageDto,
+    addresses: string[]
+  ) {
+    const t = await this.prisma.transport.findUnique({
+      where: {
+        cuid: transportId,
+      },
+    });
+    if (!t) throw new Error('Transport not found.');
+    const contentValidator = getContentValidator(t.validationContent);
+    const addressValidator = getAddressValidator(t.validationAddress);
+
+    if(!contentValidator(message.content)) throw new Error(`Content: ${message.content} validation failed.`)
+    for(const address of addresses){
+      if(!addressValidator(address)) throw new Error(`Address: ${address} validation failed.`)
+    }
+    return true;
+  }
 }
