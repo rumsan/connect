@@ -1,0 +1,42 @@
+meta {
+  name: send-prabhu
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-prabhu}}",
+    "message": {
+      "content": "Hello jjjj",
+      "meta": {
+          "info": "test"
+      }
+    },
+    "addresses": [
+      "{{dev-phone}}"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+      "scheduledTimestamp": "2021-09-01T00:00:00Z",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  bru.setVar("session-id", data.cuid);
+}

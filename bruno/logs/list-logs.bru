@@ -1,0 +1,19 @@
+meta {
+  name: list-logs
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{url}}/logs?limit=5
+  body: json
+  auth: none
+}
+
+params:query {
+  limit: 5
+}
+
+headers {
+  app-id: {{app-id}}
+}

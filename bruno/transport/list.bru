@@ -1,0 +1,19 @@
+meta {
+  name: list
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{url}}/transports?includeDeleted=true
+  body: json
+  auth: none
+}
+
+params:query {
+  includeDeleted: true
+}
+
+headers {
+  app-id: {{app-id}}
+}

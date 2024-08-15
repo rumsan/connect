@@ -3,7 +3,7 @@ import { Module } from '@nestjs/common';
 import { QUEUES } from '@rumsan/connect';
 import { BroadcastController } from './broadcast.controller';
 import { BroadcastService } from './broadcast.service';
-import { RabbitMQModule } from '../queues/queue.module';
+import { QueueModule } from '../queues/queue.module';
 import { QueueService } from '../queues/queue.service';
 
 @Module({
@@ -20,7 +20,7 @@ import { QueueService } from '../queues/queue.service';
     BullModule.registerQueue({
       name: QUEUES.TRANSPORT_VOICE,
     }),
-    RabbitMQModule,
+    QueueModule,
   ],
   controllers: [BroadcastController],
   providers: [BroadcastService, QueueService],

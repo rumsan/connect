@@ -1,20 +1,25 @@
+import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { QUEUES } from '@rsconnect/sdk';
+import {
+  AmqpModule,
+  ApiWorkerModule,
+  DataProviderModule,
+  EchoWorkerModule,
+  SmtpWorkerModule,
+} from '@rsconnect/workers';
+import { RumsanAppModule } from '@rumsan/app';
+import { PrismaModule } from '@rumsan/prisma';
+import amqp from 'amqp-connection-manager';
+import { Channel } from 'amqplib';
+import { BroadcastModule } from '../broadcast/broadcast.module';
+import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
+import { QueueModule } from '../queues/queue.module';
+import { SessionModule } from '../session/session.module';
+import { TransportModule } from '../transport/transport.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { EmailProcessor } from '../processors/email.processor';
-import { PrismaModule } from '@rumsan/prisma';
-import { BroadcastModule } from '../broadcast/broadcast.module';
-import { TransportModule } from '../transport/transport.module';
-import { BullModule } from '@nestjs/bull';
-import { EchoProcessor } from '../processors/echo.processor';
-import { RabbitMQModule } from '../queues/queue.module';
-import amqp from 'amqp-connection-manager';
-import { QUEUES } from '@rumsan/connect';
-import { Channel } from 'amqplib';
-import { RumsanAppModule } from '@rumsan/app';
-import { SessionModule } from '../session/session.module';
-import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
 
 @Module({
   imports: [
@@ -25,22 +30,7 @@ import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
     TransportModule,
     BroadcastModule,
     BroadcastLogModule,
-    RabbitMQModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
-        const connection = amqp.connect(configService.get('AMQP_URL'));
-        return connection.createChannel({
-          setup: (channel: Channel) => {
-            channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
-            channel.assertQueue(QUEUES.TRANSPORT_SMTP, { durable: true });
-            channel.assertQueue(QUEUES.TRANSPORT_VOICE, { durable: true });
-            channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
-            channel.assertQueue(QUEUES.LOG_TRANSPORT, { durable: true });
-          },
-        });
-      },
-    }),
+    QueueModule,
 
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -62,8 +52,29 @@ import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
         },
       }),
     }),
+
+    AmqpModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => {
+        const connection = amqp.connect(configService.get('AMQP_URL'));
+        return connection.createChannel({
+          setup: (channel: Channel) => {
+            channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
+            channel.assertQueue(QUEUES.TRANSPORT_SMTP, { durable: true });
+            channel.assertQueue(QUEUES.TRANSPORT_VOICE, { durable: true });
+            channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
+            channel.assertQueue(QUEUES.LOG_TRANSPORT, { durable: true });
+          },
+        });
+      },
+    }),
+    DataProviderModule.forRootAsync('prisma'),
+    ApiWorkerModule,
+    EchoWorkerModule,
+    SmtpWorkerModule,
   ],
   controllers: [AppController],
-  providers: [AppService, EmailProcessor, EchoProcessor],
+  providers: [AppService],
 })
 export class AppModule { }

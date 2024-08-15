@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import { Injectable, Logger } from '@nestjs/common';
 import ffmpeg from 'fluent-ffmpeg';
 import Client from 'ssh2-sftp-client';
+import { dirname } from 'path';
 
 interface SFTPConfig {
   host: string;
@@ -19,6 +20,24 @@ export class AudioHelper {
     this.sftp = new Client();
   }
 
+  async downloadFile(url: string, outputPath: string) {
+    this.logger.log('Fetching file from media URL.');
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch audio file: ${response.statusText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Ensure the directory exists
+    await fs.mkdir(dirname(outputPath), { recursive: true });
+
+    await fs.writeFile(outputPath, buffer);
+    this.logger.log('Audio file fetch complete.');
+  }
+
   async convertAudio(inputFilePath: string, outputFilePath: string) {
     this.logger.log('Starting audio conversion to .wav');
 
@@ -29,6 +48,7 @@ export class AudioHelper {
         .toFormat('wav')
         .on('end', () => {
           this.logger.log('Audio conversion complete');
+
           resolve(outputFilePath);
         })
         .on('error', (err) => {
@@ -39,20 +59,6 @@ export class AudioHelper {
         })
         .save(outputFilePath);
     });
-  }
-
-  async getS3File(url: string, outputPath: string) {
-    this.logger.log('Fetching file from media URL.');
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch file from S3: ${response.statusText}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    await fs.writeFile(outputPath, buffer);
-    this.logger.log('Fetch complete.');
   }
 
   async uploadFileToRemote(
@@ -72,7 +78,13 @@ export class AudioHelper {
     }
   }
 
-  async removeFile(path: string) {
-    return fs.unlink(path);
+  async removeFiles(path: string[]) {
+    for (const file of path) {
+      try {
+        await fs.unlink(file);
+      } catch (err) {
+        this.logger.error(`Failed to delete file: ${file}`);
+      }
+    }
   }
 }

@@ -1,9 +1,9 @@
 import { InjectQueue } from '@nestjs/bull';
 import { Injectable } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
-import { BroadcastLog, Transport, TransportType } from '@prisma/client';
-import { QUEUES } from '@rumsan/connect';
-import { SessionStatus } from '@rumsan/connect/types';
+import { BroadcastLog, Session, Transport } from '@prisma/client';
+import { QUEUES } from '@rsconnect/sdk';
+import { SessionStatus, TransportType } from '@rsconnect/sdk/types';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
 import { QueueService } from '../queues/queue.service';
@@ -41,7 +41,7 @@ export class BroadcastService {
       totalAddresses: dto.addresses.length,
     };
 
-    const retVal = await this.prisma.$transaction(async (tx) => {
+    const newSession = await this.prisma.$transaction(async (tx) => {
       transport = await tx.transport.findUnique({
         where: {
           cuid: dto.transport,
@@ -50,35 +50,67 @@ export class BroadcastService {
 
       sessionData.maxAttempts = this._enforceMaxAttempts(
         transport.type,
-        dto.maxAttempts
+        dto.maxAttempts,
       );
 
       const session = await tx.session.create({
         data: sessionData,
+        include: {
+          Transport: true,
+        },
       });
 
-      for (const address of dto.addresses) {
-        broadcastData.push({
-          cuid: createId(),
-          transport: dto.transport,
-          session: session.cuid,
-          app: appId,
-          maxAttempts: sessionData.maxAttempts,
-          address,
-        });
-      }
+      // for (const address of dto.addresses) {
+      //   broadcastData.push({
+      //     cuid: createId(),
+      //     transport: dto.transport,
+      //     session: session.cuid,
+      //     app: appId,
+      //     maxAttempts: sessionData.maxAttempts,
+      //     address,
+      //   });
+      // }
 
-      await tx.broadcast.createMany({
-        data: broadcastData,
-      });
+      // await tx.broadcast.createMany({
+      //   data: broadcastData,
+      // });
 
       return session;
     });
 
-    if (retVal.id) {
-      this._addToQueue(transport, broadcastData);
+    if (newSession.id) {
+      this.verifyTransport(
+        newSession,
+        newSession.Transport.type as TransportType,
+      );
     }
-    return retVal;
+    return newSession;
+  }
+
+  async verifyTransport(session: Session, transportType: TransportType) {
+    this.queueService
+      .queueTransportReadiness(this._getQueueName(transportType), {
+        sessionId: session.cuid,
+      })
+      .then(async (res) => {
+        if (res) {
+          await this.prisma.session.update({
+            where: {
+              cuid: session.cuid,
+            },
+            data: {
+              status: SessionStatus.PENDING,
+            },
+          });
+        }
+      })
+      .catch((err) => {
+        console.log(err);
+      });
+  }
+
+  broadcastToQueue(transport: Transport, broadcastData: any) {
+    this._addToQueue(transport, broadcastData);
   }
 
   _enforceMaxAttempts(transportType, dtoMaxAttempts) {
@@ -94,37 +126,42 @@ export class BroadcastService {
     }
   }
 
-  private async _addToQueue(transport: Transport, broadcastData: any) {
-    let queueTransport: QUEUES = QUEUES.TRANSPORT_ECHO;
-
-    switch (transport.type) {
+  _getQueueName(transportType: TransportType): QUEUES {
+    switch (transportType) {
       case TransportType.ECHO:
-        queueTransport = QUEUES.TRANSPORT_ECHO;
-        break;
+        return QUEUES.TRANSPORT_ECHO;
       case TransportType.API:
-        queueTransport = QUEUES.TRANSPORT_API;
-        break;
+        return QUEUES.TRANSPORT_API;
       case TransportType.SMTP:
-        queueTransport = QUEUES.TRANSPORT_SMTP;
-        break;
+        return QUEUES.TRANSPORT_SMTP;
       case TransportType.VOICE:
-        queueTransport = QUEUES.TRANSPORT_VOICE;
-        break;
+        return QUEUES.TRANSPORT_VOICE;
+
+      default:
+        return QUEUES.TRANSPORT_ECHO;
     }
+  }
+
+  private async _addToQueue(
+    transport: Transport,
+    broadcastData: {
+      cuid: string;
+      session: string;
+      address: string;
+    }[],
+  ) {
+    const queueTransport = this._getQueueName(transport.type as TransportType);
 
     for (const broadcast of broadcastData) {
-      const job = {
-        name: 'broadcast',
-        data: {
-          transportId: transport.cuid,
-          broadcastId: broadcast.cuid,
-          sessionId: broadcast.session,
-          address: broadcast.address,
-          attempt: 0,
-        },
+      const data = {
+        transportId: transport.cuid,
+        broadcastId: broadcast.cuid,
+        sessionId: broadcast.session,
+        address: broadcast.address,
+        attempt: 0,
       };
       this.queueService
-        .add(queueTransport, job)
+        .queueBroadcast(queueTransport, data)
         .then(async (res) => {
           if (res) {
             await this.prisma.broadcast.update({
@@ -145,7 +182,7 @@ export class BroadcastService {
 
   findAll(
     appId: string,
-    dto: ListBroadcastDto
+    dto: ListBroadcastDto,
   ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
     const orderBy: Record<string, 'asc' | 'desc'> = {};
     orderBy[dto.sort] = dto.order;
@@ -160,7 +197,7 @@ export class BroadcastService {
       {
         page: dto.page,
         perPage: dto.limit,
-      }
+      },
     );
   }
 

@@ -1,0 +1,42 @@
+meta {
+  name: send-smtp
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-smtp}}",
+    "message": {
+      "content": "Rahat OTP mmmm",
+      "meta": {
+          "subject": "Test Message"
+      }
+    },
+    "addresses": [
+      "{{dev-email}}", "rumsan@mailinator.com"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+      "scheduledTimestamp": "2021-09-01T00:00:00Z",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  bru.setVar("session-id", data.cuid);
+}

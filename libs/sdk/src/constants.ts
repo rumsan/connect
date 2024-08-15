@@ -4,4 +4,5 @@ export enum QUEUES {
   TRANSPORT_VOICE = 'rsconnect.transport.voice',
   TRANSPORT_API = 'rsconnect.transport.api',
   LOG_TRANSPORT = 'rsconnect.log.transport',
+  READY_TRANSPORT = 'rsconnect.readiness.transport',
 }

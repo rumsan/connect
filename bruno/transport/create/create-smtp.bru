@@ -1,0 +1,39 @@
+meta {
+  name: create-smtp
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{url}}/transports
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+      "app": "{{app-id}}",
+      "name": "Email Broadcast",
+      "type": "SMTP",
+      "config": {
+          "host": "{{smtp-host}}",
+          "port": {{smtp-port}},
+          "secure": false,
+          "username": "{{smtp-username}}",
+          "password": "{{smtp-password}}",
+          "defaultFrom": "{{smtp-username}}",
+          "defaultSubject": "This is email broadcast"
+      }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  bru.setVar("transport-id-smtp", data.cuid);
+  bru.setVar("transport-id", data.cuid);
+}
