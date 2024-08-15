@@ -1,7 +1,7 @@
 import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import {
   AmqpModule,
   ApiWorkerModule,

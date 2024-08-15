@@ -1,12 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import {
   Broadcast,
   BroadcastStatus,
   QueueBroadcastJobData,
   QueueBroadcastLog,
   Session,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import { IDataProvider, TransportWorker } from '@rsconnect/workers';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { AudioHelper } from '../helpers/audio.helper';

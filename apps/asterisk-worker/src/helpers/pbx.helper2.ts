@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Broadcast, QueueBroadcastLog } from '@rsconnect/sdk/types';
+import { Broadcast, QueueBroadcastLog } from '@rumsan/connect/types';
 import * as ariClient from 'ari-client';
 
 @Injectable()

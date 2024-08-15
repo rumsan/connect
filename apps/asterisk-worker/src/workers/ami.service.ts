@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
-import { BroadcastStatus, QueueBroadcastLog } from '@rsconnect/sdk/types';
+import { QUEUES } from '@rumsan/connect';
+import { BroadcastStatus, QueueBroadcastLog } from '@rumsan/connect/types';
 import { IDataProvider } from '@rsconnect/workers';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import AsteriskManager from 'asterisk-manager';

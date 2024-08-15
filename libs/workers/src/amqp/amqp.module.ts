@@ -1,5 +1,5 @@
 import { DynamicModule, Global, Module } from '@nestjs/common';
-import { AsyncOptions } from '@rsconnect/sdk/types';
+import { AsyncOptions } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 
 export type ampqConfig = {

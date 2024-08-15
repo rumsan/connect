@@ -1,6 +1,6 @@
 import { Inject, OnModuleInit } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import {
   Broadcast,
   BroadcastStatus,
@@ -8,7 +8,7 @@ import {
   QueueBroadcastLog,
   QueueJobData,
   Session,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
 import { IDataProvider } from '../data-providers/data-provider.interface';

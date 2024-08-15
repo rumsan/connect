@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import {
   Broadcast,
   BroadcastStatus,
@@ -8,7 +8,7 @@ import {
   QueueBroadcastLog,
   Session,
   TransportSmtpConfig,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import { SmtpTransport } from '@rsconnect/transports/smtp/smtp.transport';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { IDataProvider } from '../../data-providers/data-provider.interface';

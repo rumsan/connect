@@ -1,4 +1,4 @@
-import { CallDisposition } from '@rsconnect/sdk/types';
+import { CallDisposition } from '@rumsan/connect/types';
 
 export function getAsteriskDisposition(
   hangupCause: number,

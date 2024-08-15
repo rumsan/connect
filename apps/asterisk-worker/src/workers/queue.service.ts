@@ -1,11 +1,11 @@
 // write a nestjs service class named QueueHelper
 
 import { Inject, Injectable } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import {
   QueueBroadcastLog,
   QueueBroadcastVoiceLog,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 
 @Injectable()

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
-import { QueueBroadcastJobData, QueueJobData } from '@rsconnect/sdk/types';
+import { QUEUES } from '@rumsan/connect';
+import { QueueBroadcastJobData, QueueJobData } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 
 @Injectable()

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { IDataProvider } from './data-provider.interface';
-import { getClient } from '@rsconnect/sdk/clients';
-import { Session } from '@rsconnect/sdk/types';
+import { getClient } from '@rumsan/connect/clients';
+import { Session } from '@rumsan/connect/types';
 
 @Injectable()
 export class ApiProvider implements IDataProvider {

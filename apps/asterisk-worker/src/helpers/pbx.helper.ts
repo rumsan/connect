@@ -4,7 +4,7 @@ import {
   CallDisposition,
   QueueBroadcastLog,
   QueueBroadcastVoiceLog,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
 import ari from 'ari-client';
 import { AMIService } from '../workers/ami.service';
 import { QueueService } from '../workers/queue.service';

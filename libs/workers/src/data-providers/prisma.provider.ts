@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Broadcast, Session } from '@rsconnect/sdk/types';
+import { Broadcast, Session } from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
 import { IDataProvider } from './data-provider.interface';
 

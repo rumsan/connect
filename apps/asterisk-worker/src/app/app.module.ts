@@ -6,7 +6,7 @@ import { AppService } from './app.service';
 import { AsteriskWorkerModule } from '../workers/asterisk.module';
 import { AmqpModule, DataProviderModule } from '@rsconnect/workers';
 import amqp, { Channel } from 'amqp-connection-manager';
-import { QUEUES } from '@rsconnect/sdk';
+import { QUEUES } from '@rumsan/connect';
 import { SequelizeModule } from '@nestjs/sequelize';
 
 @Module({

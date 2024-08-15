@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { Broadcast, QueueBroadcastLog } from '@rsconnect/sdk/types';
+import { Broadcast, QueueBroadcastLog } from '@rumsan/connect/types';
 import ari from 'ari-client';
 
 export class PBXHelper {
