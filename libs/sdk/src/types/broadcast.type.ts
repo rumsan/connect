@@ -47,6 +47,7 @@ export type Broadcast = {
   attempts?: number;
   lastAttempt?: Date | null;
   isComplete: boolean;
+  queuedAt?: Date;
   createdAt?: Date;
   updatedAt?: Date | null;
   Transport?: Partial<Transport> | null;

@@ -1,17 +1,30 @@
 import { QUEUES } from '../constants';
 import { BroadcastStatus } from './broadcast.type';
+import { CallDetails } from './voice.type';
 
-export type QueueBroadcastLog = {
+export interface QueueBroadcastLog {
+  cuid?: string;
   queue: QUEUES;
   broadcast: string;
   status: BroadcastStatus;
   attempt: number;
   details?: Record<string, any>;
-};
+  notes?: string;
+}
 
-export type QueueBroadcastJob = {
+export interface QueueBroadcastVoiceLog extends QueueBroadcastLog {
+  queue: QUEUES.TRANSPORT_VOICE;
+  details?: CallDetails;
+}
+
+// export type QueueBroadcastJob = {
+//   name: string;
+//   data: QueueBroadcastJobData;
+// };
+
+export type QueueJobData<T> = {
   name: string;
-  data: QueueBroadcastJobData;
+  data: T;
 };
 
 export type QueueBroadcastJobData = {

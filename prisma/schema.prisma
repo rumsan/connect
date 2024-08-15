@@ -50,6 +50,7 @@ model Transport {
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
+  updatedBy String   @default("system")
   deletedAt DateTime?
 
   @@map("tbl_transports")
@@ -76,6 +77,7 @@ model Session {
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
+  updatedBy String   @default("system")
   deletedAt DateTime?
 
   @@map("tbl_sessions")
@@ -107,20 +109,23 @@ model Broadcast {
 }
 
 model BroadcastLog {
+  id          Int          @id @default(autoincrement())
   cuid      String          @unique @default(cuid())
   app       String
   session   String
   broadcast String
-  status    BroadcastStatus
+  status    BroadcastStatus @default(PENDING)
   attempt   Int
   details   Json?           @db.JsonB()
   notes     String?
 
   Broadcast Broadcast @relation(fields: [broadcast], references: [cuid])
   Session   Session   @relation(fields: [session], references: [cuid])
-  createdAt DateTime  @default(now())
 
-  @@map("tbl_broadcastLogs")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt()
+
+  @@map("tbl_broadcast_logs")
 }
 
 // ++++++++++++++++++ START: @rumsan/extensions/apps +++++++++++++++++++++++++++
@@ -140,7 +145,10 @@ model Application {
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  updatedBy String   @default("system")
   deletedAt DateTime?
+
+  @@map("tbl_applications")
 }
 
 // ++++++++++++++++++ END: @rumsan/extensions/apps ++++++++++++++++++++++++++++++++

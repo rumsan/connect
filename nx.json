@@ -37,7 +37,7 @@
       "exclude": ["apps/connect-e2e/**/*", "apps/asterisk-worker-e2e/**/*"]
     }
   ],
-  "nxCloudAccessToken": "Y2FlY2FmZmEtYmU3Yi00NTNmLTg3M2YtMDU5MDYyMWQ1NzlhfHJlYWQtd3JpdGU=",
+  //"nxCloudAccessToken": "Y2FlY2FmZmEtYmU3Yi00NTNmLTg3M2YtMDU5MDYyMWQ1NzlhfHJlYWQtd3JpdGU=",
   "targetDefaults": {
     "@nx/js:tsc": {
       "cache": true,

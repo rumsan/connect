@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { QUEUES } from '@rsconnect/sdk';
 import {
+  Broadcast,
   BroadcastStatus,
   EmailMessage,
   QueueBroadcastJobData,
@@ -27,33 +28,30 @@ export class ApiWorker extends TransportWorker {
   TransportQueue: QUEUES = QUEUES.TRANSPORT_API;
   private readonly logger = new Logger(ApiWorker.name);
 
-  async process(
-    session: Session,
-    data: QueueBroadcastJobData
-  ): Promise<QueueBroadcastLog> {
-    const logData: QueueBroadcastLog = {
-      broadcast: data.broadcastId,
-      attempt: +data.attempt + 1,
-      status: BroadcastStatus.SUCCESS,
-      queue: this.TransportQueue,
-    };
+  async process(data: {
+    session: Session;
+    broadcast: Broadcast;
+    jobData: QueueBroadcastJobData;
+    broadcastLog: QueueBroadcastLog;
+  }): Promise<QueueBroadcastLog> {
+    const { session, broadcast, broadcastLog, jobData } = data;
 
     try {
       this.transport.init(session.Transport?.config as TransportApiConfig);
       const res = await this.transport.send(
-        data.address,
+        jobData.address,
         session.message as EmailMessage
       );
 
-      logData.status = BroadcastStatus.SUCCESS;
-      logData.details = { messageId: res };
+      broadcastLog.status = BroadcastStatus.SUCCESS;
+      broadcastLog.details = { messageId: res };
     } catch (e: any) {
-      logData.status = BroadcastStatus.FAIL;
-      logData.details = { error: e.message };
+      broadcastLog.status = BroadcastStatus.FAIL;
+      broadcastLog.details = { error: e.message };
     }
 
     // this.smtpService.send();
 
-    return logData;
+    return broadcastLog;
   }
 }

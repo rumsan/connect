@@ -12,8 +12,13 @@ export class ApiProvider implements IDataProvider {
     });
   }
 
-  async getSession(cuid: string): Promise<Session> {
-    const { data } = await this._client.session.get(cuid);
+  async getSession(sessionCuid: string): Promise<Session> {
+    const { data } = await this._client.session.get(sessionCuid);
+    return data;
+  }
+
+  async getBroadcast(broadcastCuid: string) {
+    const { data } = await this._client.broadcast.get(broadcastCuid);
     return data;
   }
 }

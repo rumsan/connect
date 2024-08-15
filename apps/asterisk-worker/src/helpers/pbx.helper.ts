@@ -1,305 +1,170 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as ariClient from 'ari-client';
-
-interface TransportDetails {
-  transportId: number;
-  ariHost: string;
-  ariPort: string;
-  sftpPort: string;
-  ariFolder: string;
-  ariPassword: string;
-  ariProtocol: string;
-  ariUsername: string;
-  ariBaseEndpoint: string;
-}
-
-interface ConsumerDetails {
-  discordId: string | null;
-  discordToken: string | null;
-  name: string;
-  email: string;
-  phone: string;
-}
-
-interface CommunicationLog {}
-
-interface IVRRequestData {
-  id: number;
-  details: ConsumerDetails;
-  appId: string;
-  notifiedInbound: boolean;
-  createdAt: string;
-  updatedAt: string;
-  deletedAt: string | null;
-  CommunicationLog: CommunicationLog[];
-  transportDetails: TransportDetails;
-  campaignId: number;
-  body: string;
-  trunk: string;
-  route: string;
-  callerNo: string;
-}
+import {
+  Broadcast,
+  CallDisposition,
+  QueueBroadcastLog,
+  QueueBroadcastVoiceLog,
+} from '@rsconnect/sdk/types';
+import ari from 'ari-client';
+import { AMIService } from '../workers/ami.service';
+import { QueueService } from '../workers/queue.service';
+import {
+  AsteriskHangupCause,
+  getHangupCause,
+} from '../definitions/hangup-cause';
 
 @Injectable()
 export class PBXHelper {
   private readonly logger = new Logger(PBXHelper.name);
+  private isChannelDestroyed = false;
 
-  private NTCARIServer = {
-    ariServer: process.env.NTC_ARI_CONN_STRING,
-    ariUser: process.env.NTC_ARI_USER,
-    ariPass: process.env.NTC_ARI_PASS,
+  private AriServer = {
+    appName: process.env.ASTERISK_APP_NAME,
+    ariServer: process.env.ASTERISK_ARI,
+    ariUser: process.env.ASTERISK_ARI_USER,
+    ariPass: process.env.ASTERISK_ARI_PASS,
+    trunk: process.env.ASTERISK_TRUNK,
+    timeout: +process.env.ASTERISK_TIMEOUT,
+    audioPath: process.env.ASTERISK_AUDIO_PATH,
+    callerId: process.env.ASTERISK_CALLER_ID,
   };
 
-  private GOIPARIServer = {
-    ariServer: process.env.GOIP_ARI_CONN_STRING,
-    ariUser: process.env.GOIP_ARI_USER,
-    ariPass: process.env.GOIP_ARI_PASS,
-  };
+  constructor(private readonly queue: QueueService) {}
 
-  async sendNTCIVR(data: IVRRequestData): Promise<void> {
+  async broadcastAudio(broadcast: Broadcast, broadcastLog: QueueBroadcastLog) {
+    const {
+      appName,
+      ariServer,
+      ariUser,
+      ariPass,
+      trunk,
+      timeout,
+      audioPath,
+      callerId,
+    } = this.AriServer;
+
+    const callEndpoint = `${broadcast.address}`;
+    //const callEndpoint = `${trunk}/${broadcast.address}`;
+    //const callEndpoint = 'SIP/704';
+
     try {
-      const { ariServer, ariUser, ariPass } = this.NTCARIServer;
+      const client = await ari.connect(ariServer, ariUser, ariPass, appName);
+      await client.start(appName);
 
-      const phone = data.details.phone;
-      const sanitizedPhone = phone.substring(phone.length - 10);
-      const callEndpoint = `SIP/${process.env.NTC_TRUNK}/${sanitizedPhone}`;
-      const audio = data.body.split('.')[0];
-      const mappedFolder = 'recording';
-
-      const client = await this.connectToAri(ariServer, ariUser, ariPass);
-
-      const appName = (
-        Math.floor(Math.random() * (99999 - 10000 + 1)) + 10000
-      ).toString();
-      client.start(appName);
-
-      this.logger.log('Connected to Ari.');
-      this.logger.log('Call endpoint', callEndpoint);
-
-      const channel = await this.originateCall(
-        appName,
-        client,
-        callEndpoint,
-        data.callerNo,
-      );
-      const { id: channelId } = channel;
-
-      return new Promise((resolve, reject) => {
-        let callTimeout: NodeJS.Timeout;
-
-        channel.on('StasisStart', async (event) => {
-          this.logger.log('StasisStart');
-          clearTimeout(callTimeout);
-          try {
-            if (channel && channel.id === channelId) {
-              await this.playSound(channel, client, audio, mappedFolder);
-              await this.hangupChannel(client, channel, channelId);
-            }
-            resolve();
-          } catch (err) {
-            this.logger.error('Error during playback or hangup:', err);
-            reject();
-          }
-        });
-
-        channel.on('StasisEnd', async (event) => {
-          this.logger.log('StasisEnd');
-          clearTimeout(callTimeout);
-          try {
-            this.clearEventListeners(channel);
-            resolve();
-          } catch (err) {
-            reject();
-            this.logger.error('StatisEnd Error:', err);
-          }
-        });
-
-        callTimeout = setTimeout(() => {
-          this.logger.error('Call timed out', channelId);
-          this.clearEventListeners(channel);
-          reject();
-        }, 25000); //default nepal timeout
+      const channel = await client.channels.originate({
+        endpoint: callEndpoint,
+        context: 'from-internal',
+        channelId: broadcastLog.cuid,
+        priority: 1,
+        callerId,
+        app: appName,
       });
+
+      const hangupTimeout = setTimeout(async () => {
+        console.log('=====Timeout=====', channel.id);
+        await this.hangupCall(channel, 'timeout');
+      }, timeout * 1000);
+
+      this.onStatisStart(client, broadcast.session, hangupTimeout);
+      this.onStatisEnd(client);
+      this.onChannelDestroyed(client, broadcastLog);
+
+      this.logger.log(`Call originated, channel ID: ${channel.id}`);
     } catch (err) {
-      this.logger.error('IVR Error', err);
-      console.log(err);
+      this.logger.error(`Error: ${err}`);
     }
   }
 
-  async sendIVR(data: IVRRequestData): Promise<void> {
-    try {
-      const { ariServer, ariUser, ariPass } = this.GOIPARIServer;
-
-      const callEndpoint = `SIP/${data.trunk}/${data.route}${data.details.phone}`;
-      const audio = data.body.split('.')[0];
-      const mappedFolder = 'recording';
-
-      const client = await this.connectToAri(ariServer, ariUser, ariPass);
-
-      const appName = (
-        Math.floor(Math.random() * (99999 - 10000 + 1)) + 10000
-      ).toString();
-      client.start(appName);
-
-      this.logger.log('Connected to Ari.');
-      this.logger.log('Call endpoint', callEndpoint);
-
-      const channel = await this.originateCall(
-        appName,
-        client,
-        callEndpoint,
-        data.callerNo,
-      );
-
-      const { id: channelId } = channel;
-
-      return new Promise((resolve, reject) => {
-        let callTimeout: NodeJS.Timeout;
-
-        channel.on('StasisStart', async (event) => {
-          this.logger.log('StasisStart');
-          clearTimeout(callTimeout);
-          try {
-            if (channel && channel.id === channelId) {
-              await this.playSound(channel, client, audio, mappedFolder);
-              await this.hangupChannel(client, channel, channelId);
-            }
-            resolve();
-          } catch (err) {
-            this.logger.error('Error during playback or hangup:', err);
-            reject();
-          }
-        });
-
-        channel.on('StasisEnd', async (event) => {
-          this.logger.log('StasisEnd');
-          clearTimeout(callTimeout);
-          try {
-            this.clearEventListeners(channel);
-            resolve();
-          } catch (err) {
-            reject();
-            this.logger.error('StatisEnd Error:', err);
-          }
-        });
-
-        callTimeout = setTimeout(() => {
-          this.logger.error('Call timed out', channelId);
-          this.clearEventListeners(channel);
-          reject();
-        }, 25000); //default nepal timeout
-      });
-    } catch (err) {
-      this.logger.error('IVR Error', err);
-      console.log(err);
-    }
-  }
-
-  async connectToAri(
-    ariServer: string,
-    ariUsername: string,
-    ariPassword: string,
-  ): Promise<ariClient.Client> {
-    this.logger.log('Connecting to Ari.');
-    return new Promise((resolve, reject) => {
-      ariClient.connect(ariServer, ariUsername, ariPassword, (err, client) => {
-        if (err) {
-          console.log('Ari connection err:', err);
-          reject(err);
-        } else {
-          resolve(client);
-        }
-      });
-    });
-  }
-
-  async originateCall(
-    appName: string,
-    client: ariClient.Client,
-    callEndpoint: string,
-    callerNo: string,
-  ): Promise<ariClient.Channel> {
-    return new Promise((resolve, reject) => {
-      client.channels.originate(
-        {
-          endpoint: callEndpoint,
-          app: appName,
-          context: 'from-internal',
-          callerId: `Rahat <${callerNo}>`,
-          // timeout: 30,
-        },
-        (err, channel) => {
-          if (err) {
-            this.logger.error('Call origiate err:', err);
-            reject(err);
-          } else {
-            resolve(channel);
-          }
-        },
-      );
-    });
-  }
-
-  async playSound(
-    channel: ariClient.Channel,
-    client: ariClient.Client,
-    audioFile: string,
-    mappedFolder?: string,
+  onStatisStart(
+    client: ari.Client,
+    sessionCuid: string,
+    hangupTimeout: NodeJS.Timeout,
   ) {
-    return new Promise((resolve, reject) => {
-      const playback = client.Playback();
-      channel.play(
-        {
-          media: mappedFolder ? `${mappedFolder}:${audioFile}` : `${audioFile}`,
-        },
-        playback,
-        (err) => {
-          if (err) {
-            reject(err);
-          }
-        },
-      );
+    client.on('StasisStart', async (event, channel) => {
+      console.log('=====StasisStart=====', channel.id);
+      this.logger.log(`Channel ${channel.id} entered Stasis`);
 
-      playback.once('PlaybackFinished', (r) => {
-        console.log(r);
+      try {
+        clearTimeout(hangupTimeout); // Clear the timeout since the call was answered
 
-        resolve(playback);
-      });
-    });
-  }
-
-  async hangupChannel(
-    client: ariClient.Client,
-    channel: ariClient.Channel,
-    channelId: string,
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (channel && channel.id === channelId) {
-        channel.hangup((err) => {
-          if (err) {
-            console.log('hangup err', err);
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
-      } else {
-        resolve();
+        await this.playRecordingAndHangup(
+          channel,
+          client,
+          //TODO `${audioPath}/${broadcast.session}`
+          //`${audioPath}/wcnm3u5bbbhs97991hpfcam9`
+          `${this.AriServer.audioPath}/j4t6ia9uvopqp20zm47ewyka`,
+        );
+      } catch (err) {
+        this.logger.error(`Error in StasisStart handler: ${err}`);
       }
-      // channel.hangup();
-      // client.channels.hangup({ channelId }, (err) => {
-      //   if (err) {
-      //     reject(err);
-      //   } else {
-      //     resolve();
-      //   }
-      // });
     });
   }
 
-  clearEventListeners(channel: ariClient.Channel) {
+  onStatisEnd(client: ari.Client) {
+    client.on('StasisEnd', async (event, channel) => {
+      console.log('=====StasisEnd=====', channel.id);
+      this.logger.log(`Channel ${channel.id} left Stasis`);
+      //this.clearEventListeners();
+    });
+  }
+
+  private async playRecordingAndHangup(channel, client, audio) {
+    try {
+      const playback = client.Playback();
+      await channel.play({ media: `sound:${audio}` }, playback);
+      this.logger.log('Playing recording...');
+
+      playback.on('PlaybackFinished', async (event, media) => {
+        this.hangupCall(channel, 'PlaybackFinished');
+        console.log('=====PlaybackFinished=====');
+      });
+    } catch (err) {
+      this.logger.error(`Error in playRecordingAndHangup: ${err}`);
+    }
+  }
+
+  clearEventListeners(channel) {
     channel.removeAllListeners('StasisStart');
     channel.removeAllListeners('StasisEnd');
     channel.removeAllListeners('ChannelHangupRequest');
   }
+
+  hangupCall(channel: ari.Channel, reason = 'normal') {
+    setTimeout(async () => {
+      try {
+        if (!this.isChannelDestroyed) await channel.hangup();
+        this.logger.log(`Call hung up by system. reason: ${reason}`);
+      } catch (err) {
+        this.logger.error(`Error in hangupCall: ${err}`);
+      }
+    }, 500);
+  }
+
+  onChannelDestroyed(client: ari.Client, broadcastLog: QueueBroadcastLog) {
+    client.on('ChannelDestroyed', async (event, channel) => {
+      console.log('=====ChannelDestroyed=====', channel.id);
+      const logData = broadcastLog as QueueBroadcastVoiceLog;
+      logData.details = {
+        trunk: this.AriServer.trunk,
+        disposition: CallDisposition.ANSWERED,
+        uniqueId: channel.id,
+        hangupCode: getHangupCause(event.cause).toString(),
+      };
+      this.queue.addLog(logData);
+      this.logger.log(`Channel ${channel.id} destroyed`);
+      this.clearEventListeners(channel);
+      this.isChannelDestroyed = true;
+      await client.stop();
+    });
+  }
 }
+
+// trunk: string;
+// disposition: CallDisposition;
+// answerTime?: Date;
+// endTime?: Date;
+// duration?: number;
+// uniqueId?: string;
+// hangupCode?: string;
+// hangupDetails?: Record<string, string>;
+// cdr?: Record<string, string>;

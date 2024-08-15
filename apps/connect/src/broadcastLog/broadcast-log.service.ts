@@ -122,4 +122,27 @@ export class BroadcastLogService {
       }
     );
   }
+
+  async updateDetails(
+    data: Pick<BroadcastLog, 'cuid' | 'details' | 'status' | 'notes'>
+  ) {
+    const existingData = await this.prisma.broadcastLog.findUnique({
+      where: {
+        cuid: data.cuid,
+      },
+    });
+
+    const existingDetails = (existingData.details as object) || {};
+    const details = { ...existingDetails, ...data.details };
+    return this.prisma.broadcastLog.update({
+      where: {
+        cuid: data.cuid,
+      },
+      data: {
+        details,
+        status: data.status,
+        notes: data.notes,
+      },
+    });
+  }
 }

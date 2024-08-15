@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { QUEUES } from '@rsconnect/sdk';
 import {
+  Broadcast,
   BroadcastStatus,
   QueueBroadcastJobData,
   QueueBroadcastLog,
@@ -13,17 +14,20 @@ export class EchoWorker extends TransportWorker {
   TransportQueue: QUEUES = QUEUES.TRANSPORT_ECHO;
   private readonly logger = new Logger(EchoWorker.name);
 
-  async process(
-    session: Session,
-    data: QueueBroadcastJobData
-  ): Promise<QueueBroadcastLog> {
-    const addr = data.address.split('|');
-    let status = BroadcastStatus.SUCCESS;
+  async process(data: {
+    session: Session;
+    broadcast: Broadcast;
+    jobData: QueueBroadcastJobData;
+    broadcastLog: QueueBroadcastLog;
+  }): Promise<QueueBroadcastLog> {
+    const { session, broadcast, broadcastLog, jobData } = data;
+    const addr = jobData.address.split('|');
 
     if (!isNaN(+addr[1])) {
-      if (+data.attempt + 1 < +addr[1]) status = BroadcastStatus.FAIL;
+      if (+jobData.attempt + 1 < +addr[1])
+        broadcastLog.status = BroadcastStatus.FAIL;
     }
-    if (status === BroadcastStatus.SUCCESS) {
+    if (broadcastLog.status === BroadcastStatus.SUCCESS) {
       try {
         if (
           session.Transport?.config['slack_url'] &&
@@ -35,14 +39,9 @@ export class EchoWorker extends TransportWorker {
           });
       } catch (e) {
         console.log(e);
-        status = BroadcastStatus.FAIL;
+        broadcastLog.status = BroadcastStatus.FAIL;
       }
     }
-    return {
-      broadcast: data.broadcastId,
-      attempt: +data.attempt + 1,
-      status,
-      queue: this.TransportQueue,
-    };
+    return broadcastLog;
   }
 }

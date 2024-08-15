@@ -22,7 +22,7 @@ export class LogWorker implements OnModuleInit {
         await channel.consume(QUEUES.LOG_TRANSPORT, async (message) => {
           if (message) {
             const content = JSON.parse(message.content.toString());
-            await this.process(content);
+            await this.process(content.action, content.data);
             channel.ack(message);
           }
         });
@@ -44,9 +44,25 @@ export class LogWorker implements OnModuleInit {
     }
   }
 
-  async process(data: QueueBroadcastLog) {
-    await this.broadcastLogService.createViaQueue(data, (queue, job) => {
-      return this.add(queue, job);
-    });
+  async process(action: string, data: QueueBroadcastLog) {
+    console.log(action);
+    if (action === 'create') {
+      await this.broadcastLogService.createViaQueue(data, (queue, job) => {
+        return this.add(queue, job);
+      });
+    }
+
+    if (action === 'update') {
+      try {
+        await this.broadcastLogService.updateDetails({
+          cuid: data.cuid,
+          details: data.details,
+          notes: data.notes,
+          status: data.status,
+        });
+      } catch (error) {
+        console.log(error);
+      }
+    }
   }
 }
