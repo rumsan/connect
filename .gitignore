@@ -2,7 +2,7 @@
 
 # compiled output
 dist
-.data/
+/.data
 tmp
 /out-tsc
 /logs
