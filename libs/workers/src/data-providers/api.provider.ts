@@ -6,9 +6,12 @@ import { Session } from '@rumsan/connect/types';
 @Injectable()
 export class ApiProvider implements IDataProvider {
   private _client;
-  constructor() {
+  constructor(params: { url?: string }) {
+    if (!params.url) {
+      throw new Error('RS Connect api url is required for DataProvider');
+    }
     this._client = getClient({
-      baseURL: 'http://localhost:3333/v1',
+      baseURL: params.url,
     });
   }
 

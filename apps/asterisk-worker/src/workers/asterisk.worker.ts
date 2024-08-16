@@ -13,6 +13,7 @@ import { AudioHelper } from '../helpers/audio.helper';
 import { PBXHelper } from '../helpers/pbx.helper';
 import { InjectModel } from '@nestjs/sequelize';
 import { SessionModel } from '../entities/session.entity';
+import { wait } from '../utils';
 
 const sftpConfig = {
   host: process.env.ASTERISK_HOST,
@@ -39,13 +40,13 @@ export class AsteriskWorker extends TransportWorker {
   TransportQueue: QUEUES = QUEUES.TRANSPORT_VOICE;
   private readonly logger = new Logger(AsteriskWorker.name);
 
-  async process(data: {
+  async sendBroadcast(data: {
     session: Session;
     broadcast: Broadcast;
     jobData: QueueBroadcastJobData;
     broadcastLog: QueueBroadcastLog;
-  }): Promise<QueueBroadcastLog> {
-    const { session, broadcast, broadcastLog, jobData } = data;
+  }): Promise<{ sendLog: boolean; log: QueueBroadcastLog }> {
+    const { session, broadcast, broadcastLog } = data;
     broadcastLog.status = BroadcastStatus.PENDING;
 
     try {
@@ -54,7 +55,6 @@ export class AsteriskWorker extends TransportWorker {
       });
 
       if (!cacheSession) {
-        await this.setupAudioFile(session);
         await this.sessionCache.create({
           cuid: session.cuid,
           hasAudio: true,
@@ -67,30 +67,35 @@ export class AsteriskWorker extends TransportWorker {
       broadcastLog.status = BroadcastStatus.FAIL;
       broadcastLog.details = { error: e.message };
     }
-    return null;
+    return { sendLog: false, log: broadcastLog };
   }
 
-  async setupAudioFile(session: Session) {
-    const rawFile = `.data/${session.cuid}-raw.wav`;
-    const convertedFile = `.data/${session.cuid}.wav`;
-    const asteriskFile = `${sftpConfig.audioPath}/${session.cuid}.wav`;
+  async makeTransportReady(session: Session) {
+    try {
+      const rawFile = `.data/${session.cuid}-raw.wav`;
+      const convertedFile = `.data/${session.cuid}.wav`;
+      const asteriskFile = `${sftpConfig.audioPath}/${session.cuid}.wav`;
 
-    console.log(asteriskFile);
+      // download file from message.content
+      await this.audioHelper.downloadFile(session.message.content, rawFile);
 
-    // download file from message.content
-    await this.audioHelper.downloadFile(session.message.content, rawFile);
+      //convert file bitrate using ffmpeg
+      await this.audioHelper.convertAudio(rawFile, convertedFile);
 
-    //convert file bitrate using ffmpeg
-    await this.audioHelper.convertAudio(rawFile, convertedFile);
+      // upload file to asterisk server
+      await this.audioHelper.uploadFileToRemote(
+        convertedFile,
+        asteriskFile,
+        sftpConfig,
+      );
 
-    // upload file to asterisk server
-    await this.audioHelper.uploadFileToRemote(
-      convertedFile,
-      asteriskFile,
-      sftpConfig,
-    );
-
-    // delete local files
-    await this.audioHelper.removeFiles([rawFile, convertedFile]);
+      // delete local files
+      await this.audioHelper.removeFiles([rawFile, convertedFile]);
+      await wait(1500);
+      return true;
+    } catch (e: any) {
+      this.logger.error(e.message);
+      return false;
+    }
   }
 }

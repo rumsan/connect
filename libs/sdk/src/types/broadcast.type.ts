@@ -46,8 +46,7 @@ export type Broadcast = {
   maxAttempts: number;
   attempts?: number;
   lastAttempt?: Date | null;
-  isComplete: boolean;
-  queuedAt?: Date;
+  disposition?: Record<string, any>;
   createdAt?: Date;
   updatedAt?: Date | null;
   Transport?: Partial<Transport> | null;

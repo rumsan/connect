@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rumsan/connect';
+import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
 import { QueueBroadcastJobData, QueueJobData } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 
@@ -10,14 +10,14 @@ export class QueueService {
     private readonly _channel: ChannelWrapper,
   ) {}
 
-  async queueTransportReadiness(queue: QUEUES, data: { sessionId: string }) {
-    const queueJob: QueueJobData<{ sessionId: string }> = {
-      name: queue,
+  async queueTransportReadiness(queue: QUEUES, data: { sessionCuid: string }) {
+    const queueJob: QueueJobData<{ sessionCuid: string }> = {
+      action: QUEUE_ACTIONS.READINESS_CHECK,
       data,
     };
 
     const result = await this._channel.sendToQueue(
-      QUEUES.READY_TRANSPORT,
+      queue,
       Buffer.from(JSON.stringify(queueJob)),
       {
         persistent: true,
@@ -29,7 +29,7 @@ export class QueueService {
 
   async queueBroadcast(queue: QUEUES, data: QueueBroadcastJobData) {
     const queueJob: QueueJobData<QueueBroadcastJobData> = {
-      name: 'broadcast',
+      action: QUEUE_ACTIONS.BROADCAST,
       data,
     };
 
@@ -48,7 +48,7 @@ export class QueueService {
     try {
       for (const item of data) {
         const queueJob: QueueJobData<QueueBroadcastJobData> = {
-          name: 'broadcast',
+          action: QUEUE_ACTIONS.BROADCAST,
           data: item,
         };
         await this._channel.sendToQueue(

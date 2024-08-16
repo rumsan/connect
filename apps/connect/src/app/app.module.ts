@@ -64,7 +64,7 @@ import { AppService } from './app.service';
             channel.assertQueue(QUEUES.TRANSPORT_SMTP, { durable: true });
             channel.assertQueue(QUEUES.TRANSPORT_VOICE, { durable: true });
             channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
-            channel.assertQueue(QUEUES.LOG_TRANSPORT, { durable: true });
+            channel.assertQueue(QUEUES.LOG_BROADCAST, { durable: true });
           },
         });
       },
@@ -77,4 +77,4 @@ import { AppService } from './app.service';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}

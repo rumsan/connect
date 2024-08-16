@@ -1,7 +1,7 @@
 // write a nestjs service class named QueueHelper
 
 import { Inject, Injectable } from '@nestjs/common';
-import { QUEUES } from '@rumsan/connect';
+import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
 import {
   QueueBroadcastLog,
   QueueBroadcastVoiceLog,
@@ -12,7 +12,7 @@ import { ChannelWrapper } from 'amqp-connection-manager';
 export class QueueService {
   constructor(
     @Inject('AMQP_CONNECTION')
-    private readonly channel: ChannelWrapper
+    private readonly channel: ChannelWrapper,
   ) {
     console.log('QueueHelper instantiated');
   }
@@ -22,7 +22,7 @@ export class QueueService {
     console.log(test);
     // try {
     //   await this.channel.sendToQueue(
-    //     QUEUES.LOG_TRANSPORT,
+    //     QUEUES.LOG_BROADCAST,
     //     Buffer.from(JSON.stringify(data)),
     //     {
     //       persistent: true,
@@ -32,11 +32,24 @@ export class QueueService {
     //   console.log(error);
     // }
   }
+
+  addToLogQueue<T>(data: T) {
+    data = { ...data, queue: QUEUES.TRANSPORT_VOICE };
+    return this.channel.sendToQueue(
+      QUEUES.LOG_BROADCAST,
+      Buffer.from(
+        JSON.stringify({ action: QUEUE_ACTIONS.BROADCAST_LOG_UPDATE, data }),
+      ),
+      {
+        persistent: true,
+      },
+    );
+  }
 }
 
 //   addToLogQueue<T>(data: T) {
 //     return this.channel.sendToQueue(
-//       QUEUES.LOG_TRANSPORT,
+//       QUEUES.LOG_BROADCAST,
 //       Buffer.from(JSON.stringify({ action: 'update', data })),
 //       {
 //         persistent: true,

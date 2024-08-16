@@ -23,13 +23,14 @@ export interface QueueBroadcastVoiceLog extends QueueBroadcastLog {
 // };
 
 export type QueueJobData<T> = {
-  name: string;
+  action: string;
   data: T;
 };
 
 export type QueueBroadcastJobData = {
   transportId: string;
   broadcastId: string;
+  broadcastLogId?: string;
   sessionId: string;
   address: string;
   attempt: number;

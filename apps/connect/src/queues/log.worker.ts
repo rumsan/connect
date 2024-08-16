@@ -1,16 +1,18 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { QUEUES } from '@rumsan/connect';
-import { QueueBroadcastLog } from '@rumsan/connect/types';
+import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
+import { QueueBroadcastLog, QueueJobData } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
-import { BroadcastLogService } from '../broadcastLog/broadcast-log.service';
+import { BroadcastService } from '../broadcast/broadcast.service';
+import { BroadcastLogQueue } from '../broadcastLog/broadcast-log.queue';
 
 @Injectable()
 export class LogWorker implements OnModuleInit {
   private readonly logger = new Logger(LogWorker.name);
 
   constructor(
-    private readonly broadcastLogService: BroadcastLogService,
+    private readonly broadcastLogService: BroadcastLogQueue,
+    private readonly broadcastService: BroadcastService,
     @Inject('AMQP_CONNECTION')
     private readonly channel: ChannelWrapper,
   ) {}
@@ -18,11 +20,14 @@ export class LogWorker implements OnModuleInit {
   public async onModuleInit() {
     try {
       await this.channel.addSetup(async (channel: ConfirmChannel) => {
-        await channel.assertQueue(QUEUES.LOG_TRANSPORT, { durable: true });
-        await channel.consume(QUEUES.LOG_TRANSPORT, async (message) => {
+        await channel.assertQueue(QUEUES.LOG_BROADCAST, { durable: true });
+
+        await channel.consume(QUEUES.LOG_BROADCAST, async (message) => {
           if (message) {
-            const content = JSON.parse(message.content.toString());
-            await this.process(content.action, content.data);
+            const content: QueueJobData<QueueBroadcastLog> = JSON.parse(
+              message.content.toString(),
+            );
+            await this.process(content);
             channel.ack(message);
           }
         });
@@ -33,7 +38,7 @@ export class LogWorker implements OnModuleInit {
     }
   }
 
-  async add(queue: QUEUES, data: any) {
+  async add(queue: QUEUES, data: QueueJobData<QueueBroadcastLog>) {
     try {
       await this.channel.sendToQueue(queue, Buffer.from(JSON.stringify(data)), {
         persistent: true,
@@ -44,25 +49,43 @@ export class LogWorker implements OnModuleInit {
     }
   }
 
-  async process(action: string, data: QueueBroadcastLog) {
-    console.log(action);
-    if (action === 'create') {
-      await this.broadcastLogService.createViaQueue(data, (queue, job) => {
-        return this.add(queue, job);
-      });
-    }
+  async onTransportReadinessConfirm(sessionCuid: string) {
+    this.broadcastService.sendBroadcasts(sessionCuid).then();
+  }
 
-    if (action === 'update') {
+  async process(job: QueueJobData<unknown>) {
+    const { action } = job;
+    // if (action === QUEUE_ACTIONS.BROADCAST_LOG_CREATE) {
+    //   await this.broadcastLogService.createViaQueue(
+    //     job.data as QueueBroadcastLog,
+    //     (queue, job) => this.add(queue, job),
+    //   );
+    // }
+
+    if (action === QUEUE_ACTIONS.BROADCAST_LOG_UPDATE) {
       try {
-        await this.broadcastLogService.updateDetails({
-          cuid: data.cuid,
-          details: data.details,
-          notes: data.notes,
-          status: data.status,
-        });
+        const data = job.data as QueueBroadcastLog;
+        await this.broadcastLogService.update(data);
       } catch (error) {
         console.log(error);
       }
+    }
+
+    if (action === QUEUE_ACTIONS.BROADCAST_LOG_DETAILS) {
+      try {
+        const data = job.data as {
+          cuid: string;
+          details: Record<string, string>;
+        };
+        await this.broadcastLogService.updateDetails(data.cuid, data.details);
+      } catch (error) {
+        console.log(error);
+      }
+    }
+
+    if (action === QUEUE_ACTIONS.READINESS_CONFIRM) {
+      const data = job.data as { sessionCuid: string };
+      this.onTransportReadinessConfirm(data.sessionCuid);
     }
   }
 }

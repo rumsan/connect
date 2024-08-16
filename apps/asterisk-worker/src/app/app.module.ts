@@ -29,7 +29,7 @@ import { SequelizeModule } from '@nestjs/sequelize';
           setup: (channel: Channel) => {
             channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
             channel.assertQueue(QUEUES.TRANSPORT_VOICE, { durable: true });
-            channel.assertQueue(QUEUES.LOG_TRANSPORT, { durable: true });
+            channel.assertQueue(QUEUES.LOG_BROADCAST, { durable: true });
           },
         });
       },

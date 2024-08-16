@@ -1,9 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { QUEUES } from '@rumsan/connect';
-import { BroadcastStatus, QueueBroadcastLog } from '@rumsan/connect/types';
-import { IDataProvider } from '@rsconnect/workers';
+import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
+import {
+  BroadcastStatus,
+  CallDetails,
+  CallDisposition,
+  QueueBroadcastLog,
+} from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import AsteriskManager from 'asterisk-manager';
+import { getAsteriskDisposition } from '../utils';
 
 const amiConfig = {
   host: process.env.ASTERISK_HOST,
@@ -17,7 +22,8 @@ const amiConfig = {
 @Injectable()
 export class AMIService {
   private ami: any;
-  private dialStateMap = new Map();
+  public dialStateMap = new Map();
+  public activeCalls = new Map();
 
   constructor(
     @Inject('AMQP_CONNECTION')
@@ -42,31 +48,62 @@ export class AMIService {
     this.ami.on('managerevent', async (evt) => {
       const eventType = evt.event;
       if (eventType === 'DialState' || eventType === 'DialEnd') {
-        // console.log('DIALSTATE', evt);
-        this.addToDialState(evt);
+        //        this.addToDialState(evt);
+        // console.log('dialstate', evt);
+        this.updateCallMonitor(evt.destuniqueid, {
+          callStatus: evt.dialstatus,
+        });
       }
 
       if (eventType === 'Hangup') {
-        console.log('HANGUP', evt);
+        //console.log('hangup', evt);
+        const disposition = getAsteriskDisposition(evt.cause, evt.channelstate);
 
-        this.removeFromDialState(evt);
+        const details: CallDetails = {
+          trunk: amiConfig.trunk,
+          disposition,
+          hangupDetails: evt,
+        };
+
+        this.addToLogQueue({
+          cuid: evt.uniqueid,
+          status:
+            disposition === CallDisposition.ANSWERED
+              ? BroadcastStatus.SUCCESS
+              : BroadcastStatus.FAIL,
+          details,
+        });
+
+        // this.removeFromDialState(evt);
+        this.endCallMonitor(evt.uniqueid);
       }
 
       if (eventType === 'Cdr') {
-        // console.log('CDR', evt);
+        const details: CallDetails = {
+          trunk: amiConfig.trunk,
+          disposition: CallDisposition.ANSWERED,
+          answerTime: evt.answertime,
+          endTime: evt.endtime,
+          duration: +evt.billableseconds,
+          cdr: evt,
+        };
 
         setTimeout(() => {
-          this.addToLogQueue<any>({
-            cuid: evt.source,
-            status: BroadcastStatus.SUCCESS,
-            details: {
-              answerTime: evt.answertime,
-              endTime: evt.endtime,
-              duration: +evt.billableseconds,
-              disposition: evt.disposition,
-              uniqueId: evt.uniqueid,
+          this.channel.sendToQueue(
+            QUEUES.LOG_BROADCAST,
+            Buffer.from(
+              JSON.stringify({
+                action: QUEUE_ACTIONS.BROADCAST_LOG_DETAILS,
+                data: {
+                  cuid: evt.uniqueid,
+                  details,
+                },
+              }),
+            ),
+            {
+              persistent: true,
             },
-          });
+          );
         }, 1500);
 
         // CDR {
@@ -95,10 +132,26 @@ export class AMIService {
     });
   }
 
-  addToLogQueue<T>(data: T) {
+  addToLogQueue(data: {
+    cuid: string;
+    status: BroadcastStatus;
+    details: CallDetails;
+  }) {
+    const logData: QueueBroadcastLog = {
+      ...data,
+      attempt: this.activeCalls.get(data.cuid).attempt,
+      broadcast: this.activeCalls.get(data.cuid).broadcast,
+      queue: QUEUES.TRANSPORT_VOICE,
+    };
+
     return this.channel.sendToQueue(
-      QUEUES.LOG_TRANSPORT,
-      Buffer.from(JSON.stringify({ action: 'update', data })),
+      QUEUES.LOG_BROADCAST,
+      Buffer.from(
+        JSON.stringify({
+          action: QUEUE_ACTIONS.BROADCAST_LOG_UPDATE,
+          data: logData,
+        }),
+      ),
       {
         persistent: true,
       },
@@ -124,24 +177,44 @@ export class AMIService {
   //   );
   // }
 
-  addToDialState(event) {
-    //console.log(event);
-    const { destuniqueid, destcalleridnum, destchannel } = event;
-    if (destchannel && destchannel.includes(amiConfig.trunk)) {
-      this.dialStateMap.set(destuniqueid, destcalleridnum);
-    }
+  startCallMonitor(cuid, data: { attempt: number; broadcast: string }) {
+    this.activeCalls.set(cuid, { cuid, ...data });
+    console.log('start:', this.activeCalls);
   }
 
-  removeFromDialState(event) {
-    const { uniqueid } = event;
-    this.dialStateMap.delete(uniqueid);
+  updateCallMonitor(cuid, data: { callStatus: string }) {
+    if (!this.activeCalls.has(cuid)) return;
+    this.activeCalls.set(cuid, { ...this.activeCalls.get(cuid), ...data });
+    console.log('update:', this.activeCalls);
   }
 
-  getDialState() {
-    return this.dialStateMap;
+  endCallMonitor(cuid) {
+    this.activeCalls.delete(cuid);
+    console.log('end:', this.activeCalls);
   }
+
+  // addToDialState(event) {
+  //   const { destuniqueid, dialstatus, destchannel } = event;
+  //   if (destchannel && destchannel.includes(amiConfig.trunk)) {
+  //     this.dialStateMap.set(destuniqueid, dialstatus);
+  //   }
+  //   console.log(this.dialStateMap);
+  // }
+
+  // removeFromDialState(event) {
+  //   const { uniqueid } = event;
+
+  //   this.dialStateMap.delete(uniqueid);
+  //   setTimeout(() => {
+  //     console.log('currrent state: ', this.dialStateMap);
+  //   }, 2000);
+  // }
+
+  // getDialState() {
+  //   return this.dialStateMap;
+  // }
 
   hasAvailableChannel() {
-    return this.dialStateMap.size < amiConfig.trunk_max_channels;
+    return this.activeCalls.size < amiConfig.trunk_max_channels;
   }
 }

@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
-import { ApiProvider } from '../../data-providers/api.provider';
 import { SmtpWorker } from './smtp.worker';
 import { SmtpTransportModule } from '@rsconnect/transports';
+import { DataProviderModule } from '../../data-providers/data-provider.module';
 
 @Module({
-  imports: [SmtpTransportModule],
-  providers: [ApiProvider, SmtpWorker],
+  imports: [SmtpTransportModule, DataProviderModule],
+  providers: [SmtpWorker],
   exports: [SmtpWorker],
 })
 export class SmtpWorkerModule {}

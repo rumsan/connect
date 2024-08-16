@@ -19,7 +19,7 @@ export type Session = {
   app?: string;
   transport: string;
   message: Record<string, any>;
-  addresses: Record<string, any>;
+  addresses: Array<string>;
   maxAttempts: number;
   triggerType: TriggerType;
   webhook: string | null;

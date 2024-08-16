@@ -14,11 +14,11 @@ export class DataProviderModule {
           provide: 'IDataProvider',
           useFactory: async (
             //configService: ConfigService,
-            prismaService: PrismaService
+            prismaService: PrismaService,
           ) => {
             //const providerType = configService.get<string>('DATA_PROVIDER');
             if (dataProviderType === 'api') {
-              return new ApiProvider();
+              return new ApiProvider({ url: process.env['RSCONNECT_API_URL'] });
             } else if (dataProviderType === 'prisma') {
               return new PrismaProvider(prismaService);
             } else {

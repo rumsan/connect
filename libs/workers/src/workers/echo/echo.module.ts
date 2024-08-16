@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
-import { ApiProvider } from '../../data-providers/api.provider';
+import { DataProviderModule } from '../../data-providers/data-provider.module';
 import { EchoWorker } from './echo.worker';
 
 @Module({
-  providers: [ApiProvider, EchoWorker],
+  imports: [DataProviderModule],
+  providers: [EchoWorker],
   exports: [EchoWorker],
 })
 export class EchoWorkerModule {}

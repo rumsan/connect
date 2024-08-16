@@ -21,26 +21,26 @@ export class ApiWorker extends TransportWorker {
     override readonly dataProvider: IDataProvider,
     @Inject('AMQP_CONNECTION')
     override readonly channel: ChannelWrapper,
-    private readonly transport: ApiTransport
+    private readonly transport: ApiTransport,
   ) {
     super(dataProvider, channel);
   }
   TransportQueue: QUEUES = QUEUES.TRANSPORT_API;
   private readonly logger = new Logger(ApiWorker.name);
 
-  async process(data: {
+  async sendBroadcast(data: {
     session: Session;
     broadcast: Broadcast;
     jobData: QueueBroadcastJobData;
     broadcastLog: QueueBroadcastLog;
-  }): Promise<QueueBroadcastLog> {
+  }): Promise<{ sendLog: boolean; log: QueueBroadcastLog }> {
     const { session, broadcast, broadcastLog, jobData } = data;
 
     try {
       this.transport.init(session.Transport?.config as TransportApiConfig);
       const res = await this.transport.send(
         jobData.address,
-        session.message as EmailMessage
+        session.message as EmailMessage,
       );
 
       broadcastLog.status = BroadcastStatus.SUCCESS;
@@ -52,6 +52,11 @@ export class ApiWorker extends TransportWorker {
 
     // this.smtpService.send();
 
-    return broadcastLog;
+    return { sendLog: true, log: broadcastLog };
+  }
+
+  override async makeTransportReady(session: Session): Promise<boolean> {
+    //TODO: Ping api to check if it is ready
+    return true;
   }
 }
