@@ -1,29 +1,25 @@
 import { Injectable } from '@nestjs/common';
-import { createId } from '@paralleldrive/cuid2';
-import { Broadcast, SessionStatus } from '@prisma/client';
+import { SessionStatus } from '@prisma/client';
 import {
   BroadcastStatus,
-  QueueBroadcastJobData,
   QueueBroadcastLog,
+  QueueBroadcastLogDetails,
 } from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
-import { QueueService } from '../queues/queue.service';
+import { BroadcastService } from '../broadcast/broadcast.service';
 
 @Injectable()
 export class BroadcastLogQueue {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly queueService: QueueService,
+    private readonly broadcastService: BroadcastService,
   ) {}
 
-  async update(
-    data: QueueBroadcastLog,
-    // data: Pick<BroadcastLog, 'cuid' | 'details' | 'status' | 'notes'>,
-  ) {
+  async update(data: QueueBroadcastLog) {
     return this.prisma.$transaction(async (tx: PrismaService) => {
       const existingLog = await tx.broadcastLog.findUnique({
         where: {
-          cuid: data.cuid,
+          cuid: data.broadcastLogId,
         },
         include: {
           Broadcast: true,
@@ -40,7 +36,7 @@ export class BroadcastLogQueue {
 
       await tx.broadcastLog.update({
         where: {
-          cuid: data.cuid,
+          cuid: data.broadcastLogId,
         },
         data: {
           details,
@@ -49,7 +45,7 @@ export class BroadcastLogQueue {
         },
       });
 
-      const broadcast = await tx.broadcast.update({
+      await tx.broadcast.update({
         where: {
           cuid: existingLog.broadcast,
         },
@@ -61,17 +57,14 @@ export class BroadcastLogQueue {
         },
       });
 
-      if (data.status === BroadcastStatus.FAIL && !isBroadcastComplete) {
-        await this._processFailedBroadcasts(data, broadcast);
-      }
-
       if (isBroadcastComplete) {
         await this._checkSessionComplete(tx, existingLog.session);
       }
     });
   }
 
-  async updateDetails(broadcastLogId: string, details: object) {
+  async updateDetails(data: QueueBroadcastLogDetails) {
+    const { broadcastLogId, details, notes } = data;
     const existingLog = await this.prisma.broadcastLog.findUnique({
       where: {
         cuid: broadcastLogId,
@@ -90,7 +83,9 @@ export class BroadcastLogQueue {
         cuid: broadcastLogId,
       },
       data: {
+        status: data.status,
         details: updatedDetails,
+        notes,
       },
     });
 
@@ -99,6 +94,7 @@ export class BroadcastLogQueue {
         cuid: broadcastLog.broadcast,
       },
       data: {
+        status: data.status,
         disposition: updatedDetails,
       },
     });
@@ -122,40 +118,5 @@ export class BroadcastLogQueue {
         },
       });
     }
-  }
-
-  private async _processFailedBroadcasts(
-    log: QueueBroadcastLog,
-    broadcast: Broadcast,
-  ) {
-    const data: QueueBroadcastJobData = {
-      broadcastLogId: createId(),
-      broadcastId: broadcast.cuid,
-      transportId: broadcast.transport,
-      sessionId: broadcast.session,
-      address: broadcast.address,
-      attempt: log.attempt + 1,
-    };
-
-    await this.prisma.broadcastLog.create({
-      data: {
-        cuid: data.broadcastLogId,
-        broadcast: data.broadcastId,
-        session: data.sessionId,
-        app: broadcast.app,
-        status: BroadcastStatus.PENDING,
-        attempt: data.attempt,
-      },
-    });
-
-    //TODO: need to have dynamic scheduling using bullmq
-    setTimeout(async () => {
-      this.queueService
-        .queueBroadcast(log.queue, data)
-        .then()
-        .catch((err) => {
-          console.log(err);
-        });
-    }, 60000);
   }
 }

@@ -1,30 +1,45 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { BroadcastLogQueue, TransportQueue } from '@rsconnect/queue';
 import { QUEUES } from '@rumsan/connect';
 import {
   Broadcast,
+  BroadcastJobData,
   BroadcastStatus,
-  QueueBroadcastJobData,
   QueueBroadcastLog,
   Session,
 } from '@rumsan/connect/types';
+import { ChannelWrapper } from 'amqp-connection-manager';
 import axios from 'axios';
+import { IDataProvider } from '../../data-providers/data-provider.interface';
 import { TransportWorker } from '../transport.worker';
 @Injectable()
 export class EchoWorker extends TransportWorker {
-  TransportQueue: QUEUES = QUEUES.TRANSPORT_ECHO;
+  queueTransport: QUEUES = QUEUES.TRANSPORT_ECHO;
   private readonly logger = new Logger(EchoWorker.name);
+
+  constructor(
+    @Inject('IDataProvider')
+    override readonly dataProvider: IDataProvider,
+    @Inject('AMQP_CONNECTION')
+    override readonly channel: ChannelWrapper,
+    override readonly transportQueue: TransportQueue,
+    private readonly broadcastLogQueue: BroadcastLogQueue,
+  ) {
+    super(dataProvider, channel, transportQueue);
+  }
 
   async sendBroadcast(data: {
     session: Session;
     broadcast: Broadcast;
-    jobData: QueueBroadcastJobData;
+    broadcastJob: BroadcastJobData;
     broadcastLog: QueueBroadcastLog;
-  }): Promise<{ sendLog: boolean; log: QueueBroadcastLog }> {
-    const { session, broadcast, broadcastLog, jobData } = data;
-    const addr = jobData.address.split('|');
+  }): Promise<QueueBroadcastLog> {
+    const { session, broadcast, broadcastLog, broadcastJob } = data;
+    const addr = broadcastJob.address.split('|');
 
+    console.log(broadcastJob.address);
     if (!isNaN(+addr[1])) {
-      if (+jobData.attempt < +addr[1])
+      if (+broadcastJob.attempt < +addr[1])
         broadcastLog.status = BroadcastStatus.FAIL;
     }
     if (broadcastLog.status === BroadcastStatus.SUCCESS) {
@@ -47,10 +62,17 @@ export class EchoWorker extends TransportWorker {
         broadcastLog.status = BroadcastStatus.FAIL;
       }
     }
-    return { sendLog: true, log: broadcastLog };
+
+    //send log to connect server
+    await this.broadcastLogQueue.add(broadcastLog);
+
+    //remove job from batchManager
+    await this.batchManager.endMonitoring(broadcastJob.broadcastLogId);
+
+    return broadcastLog;
   }
 
-  override async makeTransportReady(session: Session): Promise<boolean> {
+  async makeTransportReady(session: Session): Promise<boolean> {
     return true;
   }
 }

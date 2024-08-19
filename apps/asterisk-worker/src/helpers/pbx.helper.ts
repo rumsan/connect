@@ -1,23 +1,26 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
+import { BatchManger, BroadcastLogQueue } from '@rsconnect/queue';
 import {
   Broadcast,
   BroadcastStatus,
   CallDetails,
   CallDisposition,
   QueueBroadcastLog,
-  QueueBroadcastVoiceLog,
 } from '@rumsan/connect/types';
 import ari from 'ari-client';
-import { QueueService } from '../workers/queue.service';
-import { AMIService } from '../workers/ami.service';
 
-@Injectable()
 export class PBXHelper {
   private readonly logger = new Logger(PBXHelper.name);
   private isChannelDestroyed = false;
+  private client: any;
+
+  //generate random number
+  private generateRandomNumber() {
+    return Math.floor(Math.random() * 1000000000);
+  }
 
   private AriServer = {
-    appName: process.env.ASTERISK_APP_NAME,
+    appName: Math.floor(Math.random() * 1000000000).toString(),
     ariServer: process.env.ASTERISK_ARI,
     ariUser: process.env.ASTERISK_ARI_USER,
     ariPass: process.env.ASTERISK_ARI_PASS,
@@ -28,9 +31,11 @@ export class PBXHelper {
   };
 
   constructor(
-    private readonly queue: QueueService,
-    private readonly amiService: AMIService,
-  ) {}
+    private readonly batchManager: BatchManger,
+    private readonly broadcastLogQueue: BroadcastLogQueue,
+  ) {
+    console.log('-----------------PBXHelper-----------------');
+  }
 
   async broadcastAudio(broadcast: Broadcast, broadcastLog: QueueBroadcastLog) {
     const {
@@ -44,44 +49,52 @@ export class PBXHelper {
       callerId,
     } = this.AriServer;
 
-    //const callEndpoint = `${broadcast.address}`;
-    const callEndpoint = `${trunk}/${broadcast.address}`;
-    //const callEndpoint = 'SIP/704';
+    let callEndpoint = broadcast.address;
+    if (trunk) callEndpoint = `${trunk}/${broadcast.address}`;
 
     try {
-      const client = await ari.connect(ariServer, ariUser, ariPass, appName);
-      await client.start(appName);
+      this.client = await ari.connect(ariServer, ariUser, ariPass, appName);
+      await this.client.start(appName);
 
-      const channel = await client.channels.originate({
+      const channel = await this.client.channels.originate({
         endpoint: callEndpoint,
         context: 'from-internal',
-        channelId: broadcastLog.cuid,
+        channelId: broadcastLog.broadcastLogId,
         priority: 1,
-        callerId,
+        callerId: broadcast.session,
         app: appName,
       });
 
-      this.amiService.startCallMonitor(broadcastLog.cuid, {
-        attempt: broadcastLog.attempt,
-        broadcast: broadcastLog.broadcast,
+      console.log(callEndpoint);
+
+      //this.onStatisStart(client, broadcast.session, callEndpoint);
+
+      this.client.on('StasisStart', async (event, channel) => {
+        await this.onStatisStart(
+          event,
+          channel,
+          broadcast.session,
+          callEndpoint,
+        );
+      });
+      //this.onStatisEnd(client, callEndpoint);
+      this.client.on('StasisEnd', async (event, channel) => {
+        await this.onStatisEnd(event, channel, callEndpoint);
       });
 
-      const hangupTimeout = setTimeout(async () => {
-        console.log('=====Timeout=====', channel.id);
-        await this.hangupCall(channel, 'timeout');
-      }, timeout * 1000);
-
-      this.onStatisStart(
-        client,
-        broadcast.session,
-        broadcastLog,
-        hangupTimeout,
-      );
-      this.onStatisEnd(client);
-      this.onChannelDestroyed(client, broadcastLog);
+      //this.onChannelDestroyed(client, callEndpoint);
+      this.client.on('ChannelDestroyed', async (event, channel) => {
+        await this.onChannelDestroyed(
+          event,
+          channel,
+          this.client,
+          callEndpoint,
+        );
+      });
 
       this.logger.log(`Call originated, channel ID: ${channel.id}`);
     } catch (err) {
+      console.log('=====Error=====');
       const details: CallDetails = {
         trunk: this.AriServer.trunk,
         disposition: CallDisposition.FAILED,
@@ -89,65 +102,85 @@ export class PBXHelper {
       broadcastLog.status = BroadcastStatus.FAIL;
       broadcastLog.details = details;
       setTimeout(async () => {
-        await this.queue.addToLogQueue(broadcastLog);
+        await this.broadcastLogQueue.add(broadcastLog);
+        await this.batchManager.endMonitoring(broadcastLog.broadcastLogId);
       }, 1500);
-      this.amiService.endCallMonitor(broadcastLog.cuid);
       this.logger.error(`Error: ${err}`);
     }
   }
 
-  onStatisStart(
-    client: ari.Client,
+  async onStatisStart(
+    event,
+    channel,
     sessionCuid: string,
-    broadcastLog: QueueBroadcastLog,
-    hangupTimeout: NodeJS.Timeout,
+    callEndpoint: string,
   ) {
-    client.on('StasisStart', async (event, channel) => {
-      this.logger.log(`Channel ${channel.id} entered Stasis`);
+    console.log('=====StasisStart=====', callEndpoint);
+    this.logger.log(`Channel ${channel.id} entered Stasis`);
 
-      try {
-        clearTimeout(hangupTimeout); // Clear the timeout since the call was answered
+    // const hangupTimeout = setTimeout(async () => {
+    //   console.log('=====Timeout=====', channel.id);
+    //   await this.hangupCall(channel, 'timeout');
+    // }, this.AriServer.timeout * 1000);
 
-        await this.playRecordingAndHangup(
-          channel,
-          client,
-          //TODO
-          `${this.AriServer.audioPath}/${sessionCuid}`,
-          //`${this.AriServer.audioPath}/q2vep0n91il16jfb03idp8lf`,
-          //`${this.AriServer.audioPath}/j4t6ia9uvopqp20zm47ewyka`,
-        );
-      } catch (err) {
-        this.logger.error(`Error in StasisStart handler: ${err}`);
-      }
-    });
-  }
-
-  onStatisEnd(client: ari.Client) {
-    client.on('StasisEnd', async (event, channel) => {
-      this.logger.log(`Channel ${channel.id} left Stasis`);
-      //this.clearEventListeners();
-    });
-  }
-
-  private async playRecordingAndHangup(channel, client, audio) {
     try {
-      const playback = client.Playback();
-      await channel.play({ media: `sound:${audio}` }, playback);
-      this.logger.log('Playing recording...');
+      //clearTimeout(hangupTimeout); // Clear the timeout since the call was answered
 
+      // await this.playRecordingAndHangup(
+      //   channel,
+      //   client,
+      //   //TODO
+      //   //`${this.AriServer.audioPath}/${sessionCuid}`,
+      //   `${this.AriServer.audioPath}/cb2ic9gls9afmjmsp0tom5mo`,
+      //   callEndpoint,
+      // );
+
+      //const audio = `${this.AriServer.audioPath}/${sessionCuid}`;
+      const audio = `${this.AriServer.audioPath}/cb2ic9gls9afmjmsp0tom5mo`;
+
+      const playback = this.client.Playback();
       playback.on('PlaybackFinished', async (event, media) => {
+        console.log('=====PlaybackFinished=====', callEndpoint);
+        this.logger.log('PlaybackFinished');
         this.hangupCall(channel, 'PlaybackFinished');
       });
+
+      await channel.play({ media: `sound:${audio}` }, playback);
+      this.logger.log('Playing recording...');
+      console.log('=====PlaybackStarted=====', callEndpoint);
     } catch (err) {
-      this.logger.error(`Error in playRecordingAndHangup: ${err}`);
+      this.logger.error(`Error in StasisStart handler: ${err}`);
     }
   }
 
-  clearEventListeners(channel) {
-    channel.removeAllListeners('StasisStart');
-    channel.removeAllListeners('StasisEnd');
-    channel.removeAllListeners('ChannelHangupRequest');
+  onStatisEnd(event, channel, callEndpoint: string) {
+    console.log('=====StasisEnd=====', callEndpoint);
+    this.logger.log(`Channel ${channel.id} left Stasis`);
+    //this.clearEventListeners(channel);
   }
+
+  // private async playRecordingAndHangup(channel, client, audio, callEndpoint) {
+  //   try {
+  //     const playback = client.Playback();
+  //     await channel.play({ media: `sound:${audio}` }, playback);
+  //     this.logger.log('Playing recording...');
+  //     console.log('=====PlaybackStarted=====', callEndpoint);
+
+  //     playback.on('PlaybackFinished', async (event, media) => {
+  //       console.log('=====PlaybackFinished=====', callEndpoint);
+  //       this.logger.log('PlaybackFinished');
+  //       this.hangupCall(channel, 'PlaybackFinished');
+  //     });
+  //   } catch (err) {
+  //     this.logger.error(`Error in playRecordingAndHangup: ${err}`);
+  //   }
+  // }
+
+  // clearEventListeners(channel) {
+  //   channel.removeAllListeners('StasisStart');
+  //   channel.removeAllListeners('StasisEnd');
+  //   channel.removeAllListeners('ChannelHangupRequest');
+  // }
 
   hangupCall(channel: ari.Channel, reason = 'normal') {
     setTimeout(async () => {
@@ -160,29 +193,11 @@ export class PBXHelper {
     }, 500);
   }
 
-  onChannelDestroyed(client: ari.Client, broadcastLog: QueueBroadcastLog) {
-    client.on('ChannelDestroyed', async (event, channel) => {
-      // logData.details = {
-      //   trunk: this.AriServer.trunk,
-      //   disposition: CallDisposition.ANSWERED,
-      //   uniqueId: channel.id,
-      //   hangupCode: getHangupCause(event.cause).toString(),
-      // };
-      // this.queue.addLog(logData);
-      this.logger.log(`Channel ${channel.id} destroyed`);
-      this.clearEventListeners(channel);
-      this.isChannelDestroyed = true;
-      await client.stop();
-    });
+  onChannelDestroyed(event, channel, client, callEndpoint: string) {
+    console.log('=====ChannelDestroyed=====', callEndpoint);
+    this.logger.log(`Channel ${channel.id} destroyed`);
+    //this.clearEventListeners(channel);
+    this.isChannelDestroyed = true;
+    client.stop();
   }
 }
-
-// trunk: string;
-// disposition: CallDisposition;
-// answerTime?: Date;
-// endTime?: Date;
-// duration?: number;
-// uniqueId?: string;
-// hangupCode?: string;
-// hangupDetails?: Record<string, string>;
-// cdr?: Record<string, string>;

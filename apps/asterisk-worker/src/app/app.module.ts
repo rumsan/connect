@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
+import { SequelizeModule } from '@nestjs/sequelize';
+import { QueueModule } from '@rsconnect/queue';
+import { AmqpModule, DataProviderModule } from '@rsconnect/workers';
+import { QUEUES } from '@rumsan/connect';
+import amqp, { Channel } from 'amqp-connection-manager';
+import { AsteriskWorkerModule } from '../workers/asterisk.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { AsteriskWorkerModule } from '../workers/asterisk.module';
-import { AmqpModule, DataProviderModule } from '@rsconnect/workers';
-import amqp, { Channel } from 'amqp-connection-manager';
-import { QUEUES } from '@rumsan/connect';
-import { SequelizeModule } from '@nestjs/sequelize';
 
 @Module({
   imports: [
@@ -29,11 +30,12 @@ import { SequelizeModule } from '@nestjs/sequelize';
           setup: (channel: Channel) => {
             channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
             channel.assertQueue(QUEUES.TRANSPORT_VOICE, { durable: true });
-            channel.assertQueue(QUEUES.LOG_BROADCAST, { durable: true });
+            channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
           },
         });
       },
     }),
+    QueueModule,
     AsteriskWorkerModule,
   ],
   controllers: [AppController],

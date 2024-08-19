@@ -1,18 +1,23 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import {
+  BatchManger,
+  BroadcastLogQueue,
+  TransportQueue,
+} from '@rsconnect/queue';
+import { IDataProvider, TransportWorker } from '@rsconnect/workers';
 import { QUEUES } from '@rumsan/connect';
 import {
   Broadcast,
+  BroadcastJobData,
   BroadcastStatus,
-  QueueBroadcastJobData,
   QueueBroadcastLog,
   Session,
 } from '@rumsan/connect/types';
-import { IDataProvider, TransportWorker } from '@rsconnect/workers';
 import { ChannelWrapper } from 'amqp-connection-manager';
+import { SessionModel } from '../entities/session.entity';
 import { AudioHelper } from '../helpers/audio.helper';
 import { PBXHelper } from '../helpers/pbx.helper';
-import { InjectModel } from '@nestjs/sequelize';
-import { SessionModel } from '../entities/session.entity';
 import { wait } from '../utils';
 
 const sftpConfig = {
@@ -25,6 +30,9 @@ const sftpConfig = {
 
 @Injectable()
 export class AsteriskWorker extends TransportWorker {
+  queueTransport: QUEUES = QUEUES.TRANSPORT_VOICE;
+  private readonly logger = new Logger(AsteriskWorker.name);
+
   constructor(
     @Inject('IDataProvider')
     override readonly dataProvider: IDataProvider,
@@ -33,19 +41,19 @@ export class AsteriskWorker extends TransportWorker {
     @InjectModel(SessionModel)
     private sessionCache: typeof SessionModel,
     private readonly audioHelper: AudioHelper,
-    private readonly pbxHelper: PBXHelper,
+    override readonly transportQueue: TransportQueue,
+    private readonly broadcastLogQueue: BroadcastLogQueue,
+    override readonly batchManager: BatchManger,
   ) {
-    super(dataProvider, channel);
+    super(dataProvider, channel, transportQueue);
   }
-  TransportQueue: QUEUES = QUEUES.TRANSPORT_VOICE;
-  private readonly logger = new Logger(AsteriskWorker.name);
 
   async sendBroadcast(data: {
     session: Session;
     broadcast: Broadcast;
-    jobData: QueueBroadcastJobData;
+    broadcastJob: BroadcastJobData;
     broadcastLog: QueueBroadcastLog;
-  }): Promise<{ sendLog: boolean; log: QueueBroadcastLog }> {
+  }): Promise<QueueBroadcastLog> {
     const { session, broadcast, broadcastLog } = data;
     broadcastLog.status = BroadcastStatus.PENDING;
 
@@ -61,13 +69,19 @@ export class AsteriskWorker extends TransportWorker {
         });
       }
 
-      await this.pbxHelper.broadcastAudio(broadcast, broadcastLog);
+      const pbxHelper = new PBXHelper(
+        this.batchManager,
+        this.broadcastLogQueue,
+      );
+      setTimeout(async () => {
+        await pbxHelper.broadcastAudio(broadcast, broadcastLog);
+      }, 1000);
     } catch (e: any) {
       console.log(e);
       broadcastLog.status = BroadcastStatus.FAIL;
       broadcastLog.details = { error: e.message };
     }
-    return { sendLog: false, log: broadcastLog };
+    return broadcastLog;
   }
 
   async makeTransportReady(session: Session) {

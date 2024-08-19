@@ -3,7 +3,7 @@ export enum QUEUES {
   TRANSPORT_SMTP = 'rsconnect.transport.smtp',
   TRANSPORT_VOICE = 'rsconnect.transport.voice',
   TRANSPORT_API = 'rsconnect.transport.api',
-  LOG_BROADCAST = 'rsconnect.log.broadcast',
+  TO_CONNECT = 'rsconnect.to.connect',
 }
 
 export enum QUEUE_ACTIONS {

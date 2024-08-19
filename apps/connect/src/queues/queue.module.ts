@@ -1,11 +1,10 @@
 import { Global, Module } from '@nestjs/common';
 import { ApiTransportModule, SmtpTransportModule } from '@rsconnect/transports';
 import { PrismaModule } from '@rumsan/prisma';
+import { BroadcastService } from '../broadcast/broadcast.service';
 import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
 import { BroadcastLogQueue } from '../broadcastLog/broadcast-log.queue';
 import { LogWorker } from './log.worker';
-import { QueueService } from './queue.service';
-import { BroadcastService } from '../broadcast/broadcast.service';
 
 export type ampqConfig = {
   url: string;
@@ -19,7 +18,6 @@ export type ampqConfig = {
     ApiTransportModule,
     BroadcastLogModule,
   ],
-  providers: [QueueService, LogWorker, BroadcastService, BroadcastLogQueue],
-  exports: [QueueService],
+  providers: [LogWorker, BroadcastService, BroadcastLogQueue],
 })
 export class QueueModule {}

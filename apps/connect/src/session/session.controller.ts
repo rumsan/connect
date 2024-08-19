@@ -41,8 +41,16 @@ export class SessionController {
   })
   listLogs(
     @Param('cuid') sessionId: string,
-    @Query() dto: ListBroadcastLogDto
+    @Query() dto: ListBroadcastLogDto,
   ) {
     return this.sessionService.listLogs(sessionId, dto);
+  }
+
+  @Get(':cuid/trigger')
+  @ApiOperation({
+    summary: 'Trigger a broadcast to retry',
+  })
+  triggerBroadcast(@Param('cuid') cuid: string) {
+    return this.sessionService.triggerBroadcast(cuid);
   }
 }

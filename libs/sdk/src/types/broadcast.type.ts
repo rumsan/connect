@@ -3,6 +3,7 @@ import { Session, TriggerType } from './session.type';
 import { Transport } from './transport.type';
 
 export enum BroadcastStatus {
+  SCHEDULED = 'SCHEDULED',
   PENDING = 'PENDING',
   SUCCESS = 'SUCCESS',
   FAIL = 'FAIL',

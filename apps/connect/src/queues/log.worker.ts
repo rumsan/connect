@@ -1,6 +1,10 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
-import { QueueBroadcastLog, QueueJobData } from '@rumsan/connect/types';
+import {
+  QueueBroadcastLog,
+  QueueBroadcastLogDetails,
+  QueueJobData,
+} from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
 import { BroadcastService } from '../broadcast/broadcast.service';
@@ -20,9 +24,9 @@ export class LogWorker implements OnModuleInit {
   public async onModuleInit() {
     try {
       await this.channel.addSetup(async (channel: ConfirmChannel) => {
-        await channel.assertQueue(QUEUES.LOG_BROADCAST, { durable: true });
+        await channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
 
-        await channel.consume(QUEUES.LOG_BROADCAST, async (message) => {
+        await channel.consume(QUEUES.TO_CONNECT, async (message) => {
           if (message) {
             const content: QueueJobData<QueueBroadcastLog> = JSON.parse(
               message.content.toString(),
@@ -38,29 +42,8 @@ export class LogWorker implements OnModuleInit {
     }
   }
 
-  async add(queue: QUEUES, data: QueueJobData<QueueBroadcastLog>) {
-    try {
-      await this.channel.sendToQueue(queue, Buffer.from(JSON.stringify(data)), {
-        persistent: true,
-      });
-      Logger.log('Sent To Queue');
-    } catch (error) {
-      console.log(error);
-    }
-  }
-
-  async onTransportReadinessConfirm(sessionCuid: string) {
-    this.broadcastService.sendBroadcasts(sessionCuid).then();
-  }
-
   async process(job: QueueJobData<unknown>) {
     const { action } = job;
-    // if (action === QUEUE_ACTIONS.BROADCAST_LOG_CREATE) {
-    //   await this.broadcastLogService.createViaQueue(
-    //     job.data as QueueBroadcastLog,
-    //     (queue, job) => this.add(queue, job),
-    //   );
-    // }
 
     if (action === QUEUE_ACTIONS.BROADCAST_LOG_UPDATE) {
       try {
@@ -73,19 +56,22 @@ export class LogWorker implements OnModuleInit {
 
     if (action === QUEUE_ACTIONS.BROADCAST_LOG_DETAILS) {
       try {
-        const data = job.data as {
-          cuid: string;
-          details: Record<string, string>;
-        };
-        await this.broadcastLogService.updateDetails(data.cuid, data.details);
+        const data = job.data as QueueBroadcastLogDetails;
+        await this.broadcastLogService.updateDetails(data);
       } catch (error) {
         console.log(error);
       }
     }
 
     if (action === QUEUE_ACTIONS.READINESS_CONFIRM) {
-      const data = job.data as { sessionCuid: string };
-      this.onTransportReadinessConfirm(data.sessionCuid);
+      try {
+        const data = job.data as { sessionCuid: string; maxBatchSize: number };
+        this.broadcastService
+          .sendBroadcasts(data.sessionCuid, data.maxBatchSize)
+          .then();
+      } catch (error) {
+        console.log(error);
+      }
     }
   }
 }

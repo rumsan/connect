@@ -17,12 +17,13 @@
     "baseUrl": ".",
     "paths": {
       "@rsconnect/connect/*": ["apps/connect/src/*"],
-      "@rumsan/connect": ["libs/sdk/src/index.ts"],
-      "@rumsan/connect/*": ["libs/sdk/src/*"],
+      "@rsconnect/queue": ["libs/queue/src/index.ts"],
       "@rsconnect/transports": ["libs/transports/src/index.ts"],
       "@rsconnect/transports/*": ["libs/transports/src/*"],
       "@rsconnect/workers": ["libs/workers/src/index.ts"],
-      "@rsconnect/workers/*": ["libs/workers/src/*"]
+      "@rsconnect/workers/*": ["libs/workers/src/*"],
+      "@rumsan/connect": ["libs/sdk/src/index.ts"],
+      "@rumsan/connect/*": ["libs/sdk/src/*"]
     }
   },
   "exclude": ["node_modules", "tmp"]

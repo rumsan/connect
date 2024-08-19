@@ -1,10 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { BatchManger, BroadcastLogQueue } from '@rsconnect/queue';
 import {
   BroadcastStatus,
   CallDetails,
   CallDisposition,
-  QueueBroadcastLog,
+  QueueBroadcastLogVoice,
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import AsteriskManager from 'asterisk-manager';
@@ -21,13 +21,14 @@ const amiConfig = {
 
 @Injectable()
 export class AMIService {
+  private readonly logger = new Logger(AMIService.name);
   private ami: any;
-  public dialStateMap = new Map();
-  public activeCalls = new Map();
 
   constructor(
     @Inject('AMQP_CONNECTION')
     protected readonly channel: ChannelWrapper,
+    private readonly batchManager: BatchManger,
+    private readonly broadcastLogQueue: BroadcastLogQueue,
   ) {
     this.connect();
   }
@@ -47,35 +48,30 @@ export class AMIService {
 
     this.ami.on('managerevent', async (evt) => {
       const eventType = evt.event;
-      if (eventType === 'DialState' || eventType === 'DialEnd') {
-        //        this.addToDialState(evt);
-        // console.log('dialstate', evt);
-        this.updateCallMonitor(evt.destuniqueid, {
-          callStatus: evt.dialstatus,
-        });
-      }
+      // console.log('=====', eventType);
+      // console.log(evt);
 
       if (eventType === 'Hangup') {
-        //console.log('hangup', evt);
+        // console.log('Hangup Event', evt);
         const disposition = getAsteriskDisposition(evt.cause, evt.channelstate);
+        const broadcastLog: QueueBroadcastLogVoice = this.batchManager.getLog(
+          evt.uniqueid,
+        );
 
-        const details: CallDetails = {
-          trunk: amiConfig.trunk,
-          disposition,
-          hangupDetails: evt,
-        };
-
-        this.addToLogQueue({
-          cuid: evt.uniqueid,
-          status:
+        if (broadcastLog) {
+          broadcastLog.status =
             disposition === CallDisposition.ANSWERED
               ? BroadcastStatus.SUCCESS
-              : BroadcastStatus.FAIL,
-          details,
-        });
-
-        // this.removeFromDialState(evt);
-        this.endCallMonitor(evt.uniqueid);
+              : BroadcastStatus.FAIL;
+          broadcastLog.details = {
+            trunk: amiConfig.trunk,
+            disposition,
+            hangupDetails: evt,
+          };
+          await this.broadcastLogQueue.addVoice(broadcastLog);
+        }
+        await this.batchManager.endMonitoring(evt.uniqueid);
+        this.logger.log(`Call Hangup: ${evt.uniqueid}`);
       }
 
       if (eventType === 'Cdr') {
@@ -88,133 +84,103 @@ export class AMIService {
           cdr: evt,
         };
 
-        setTimeout(() => {
-          this.channel.sendToQueue(
-            QUEUES.LOG_BROADCAST,
-            Buffer.from(
-              JSON.stringify({
-                action: QUEUE_ACTIONS.BROADCAST_LOG_DETAILS,
-                data: {
-                  cuid: evt.uniqueid,
-                  details,
-                },
-              }),
-            ),
-            {
-              persistent: true,
-            },
-          );
-        }, 1500);
-
-        // CDR {
-        //   event: 'Cdr',
-        //   privilege: 'cdr,all',
-        //   accountcode: '',
-        //   source: 'ms72ehe7dp265e6kp5gbmqzv',
-        //   destination: '',
-        //   destinationcontext: 'from-pstn-toheader',
-        //   callerid: '"Rahat - ms72ehe7dp265e6kp5gbmqzv" <ms72ehe7dp265e6kp5gbmqzv>',
-        //   channel: 'SIP/GOIP1-00000007',
-        //   destinationchannel: '',
-        //   lastapplication: 'Stasis',
-        //   lastdata: '89963',
-        //   starttime: '2024-08-05 22:00:56',
-        //   answertime: '2024-08-05 22:01:07',
-        //   endtime: '2024-08-05 22:01:10',
-        //   duration: '13',
-        //   billableseconds: '2',
-        //   disposition: 'ANSWERED',
-        //   amaflags: 'DOCUMENTATION',
-        //   uniqueid: '1722895256.12',
-        //   userfield: ''
-        // }
+        setTimeout(async () => {
+          await this.broadcastLogQueue.updateDetailsVoice({
+            broadcastLogId: evt.uniqueid,
+            status: BroadcastStatus.SUCCESS,
+            details,
+          });
+          this.logger.log(`CDR Sent: ${evt.uniqueid}`);
+        }, 5000);
       }
     });
   }
-
-  addToLogQueue(data: {
-    cuid: string;
-    status: BroadcastStatus;
-    details: CallDetails;
-  }) {
-    const logData: QueueBroadcastLog = {
-      ...data,
-      attempt: this.activeCalls.get(data.cuid).attempt,
-      broadcast: this.activeCalls.get(data.cuid).broadcast,
-      queue: QUEUES.TRANSPORT_VOICE,
-    };
-
-    return this.channel.sendToQueue(
-      QUEUES.LOG_BROADCAST,
-      Buffer.from(
-        JSON.stringify({
-          action: QUEUE_ACTIONS.BROADCAST_LOG_UPDATE,
-          data: logData,
-        }),
-      ),
-      {
-        persistent: true,
-      },
-    );
-  }
-
-  // getSIPChannels() {
-  //   this.ami.action(
-  //     {
-  //       action: 'CoreShowChannels',
-  //     },
-  //     (err, res) => {
-  //       if (err) {
-  //         console.error('Error retrieving SIP channels:', err);
-  //       } else {
-  //         console.log(res);
-  //         const channels = res.events.filter(
-  //           (event) => event.event === 'SIPshowchannels'
-  //         );
-  //         console.log(`Number of SIP channels in use: ${channels.length}`);
-  //       }
-  //     }
-  //   );
-  // }
-
-  startCallMonitor(cuid, data: { attempt: number; broadcast: string }) {
-    this.activeCalls.set(cuid, { cuid, ...data });
-    console.log('start:', this.activeCalls);
-  }
-
-  updateCallMonitor(cuid, data: { callStatus: string }) {
-    if (!this.activeCalls.has(cuid)) return;
-    this.activeCalls.set(cuid, { ...this.activeCalls.get(cuid), ...data });
-    console.log('update:', this.activeCalls);
-  }
-
-  endCallMonitor(cuid) {
-    this.activeCalls.delete(cuid);
-    console.log('end:', this.activeCalls);
-  }
-
-  // addToDialState(event) {
-  //   const { destuniqueid, dialstatus, destchannel } = event;
-  //   if (destchannel && destchannel.includes(amiConfig.trunk)) {
-  //     this.dialStateMap.set(destuniqueid, dialstatus);
-  //   }
-  //   console.log(this.dialStateMap);
-  // }
-
-  // removeFromDialState(event) {
-  //   const { uniqueid } = event;
-
-  //   this.dialStateMap.delete(uniqueid);
-  //   setTimeout(() => {
-  //     console.log('currrent state: ', this.dialStateMap);
-  //   }, 2000);
-  // }
-
-  // getDialState() {
-  //   return this.dialStateMap;
-  // }
-
-  hasAvailableChannel() {
-    return this.activeCalls.size < amiConfig.trunk_max_channels;
-  }
 }
+
+// ======== DialState-Event ========
+// {
+//   event: 'DialState',
+//   privilege: 'call,all',
+//   destchannel: 'SIP/704-0000001a',
+//   destchannelstate: '5',
+//   destchannelstatedesc: 'Ringing',
+//   destcalleridnum: '704',
+//   destcalleridname: 'jpiecxxxaxz498g0v16kpgji',
+//   destconnectedlinenum: '<unknown>',
+//   destconnectedlinename: 'jpiecxxxaxz498g0v16kpgji',
+//   destlanguage: 'en',
+//   destaccountcode: '',
+//   destcontext: 'from-internal',
+//   destexten: '',
+//   destpriority: '1',
+//   destuniqueid: 'adl1es25xc3dka56gpmvfe9g',
+//   destlinkedid: 'adl1es25xc3dka56gpmvfe9g',
+//   dialstatus: 'RINGING'
+// }
+
+// ======== DialEnd-Event ========
+// {
+//   event: 'DialEnd',
+//   privilege: 'call,all',
+//   destchannel: 'SIP/704-0000001a',
+//   destchannelstate: '6',
+//   destchannelstatedesc: 'Up',
+//   destcalleridnum: '704',
+//   destcalleridname: 'jpiecxxxaxz498g0v16kpgji',
+//   destconnectedlinenum: '<unknown>',
+//   destconnectedlinename: 'jpiecxxxaxz498g0v16kpgji',
+//   destlanguage: 'en',
+//   destaccountcode: '',
+//   destcontext: 'from-internal',
+//   destexten: '',
+//   destpriority: '1',
+//   destuniqueid: 'adl1es25xc3dka56gpmvfe9g',
+//   destlinkedid: 'adl1es25xc3dka56gpmvfe9g',
+//   dialstatus: 'ANSWER'
+// }
+
+// ======== Hangup-Event ========
+// {
+//   event: 'Hangup',
+//   privilege: 'call,all',
+//   channel: 'SIP/704-00000018',
+//   channelstate: '6',
+//   channelstatedesc: 'Up',
+//   calleridnum: '704',
+//   calleridname: 'a9i507avmekfky2qcatczci9',
+//   connectedlinenum: '<unknown>',
+//   connectedlinename: 'a9i507avmekfky2qcatczci9',
+//   language: 'en',
+//   accountcode: '',
+//   context: 'from-internal',
+//   exten: '',
+//   priority: '1',
+//   uniqueid: 'wmfbnp8qx09j9ayaj90x17jh',
+//   linkedid: 'wmfbnp8qx09j9ayaj90x17jh',
+//   cause: '16',
+//   'cause-txt': 'Normal Clearing'
+// }
+
+// ======== CDR-Event ========
+// {
+//   event: 'Cdr',
+//   privilege: 'cdr,all',
+//   accountcode: '',
+//   source: '704',
+//   destination: '',
+//   destinationcontext: 'from-internal',
+//   callerid: '"hq1h9q3u881iwhxjr9ltmiam" <704>',
+//   channel: 'SIP/704-0000001b',
+//   destinationchannel: '',
+//   lastapplication: 'Stasis',
+//   lastdata: 'rs-connect',
+//   starttime: '2024-08-18 09:52:16',
+//   answertime: '2024-08-18 09:52:20',
+//   endtime: '2024-08-18 09:52:22',
+//   duration: '5',
+//   billableseconds: '1',
+//   disposition: 'ANSWERED',
+//   amaflags: 'DOCUMENTATION',
+//   uniqueid: 'ayaoiiip9q9mvukq9w6ajeas',
+//   userfield: ''
+// }

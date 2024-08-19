@@ -8,8 +8,12 @@ export function getAsteriskDisposition(
     return CallDisposition.ANSWERED;
   }
 
+  //Ringing
   if (channelState === '5') {
     if (hangupCause === '19') {
+      return CallDisposition.NO_ANSWER;
+    }
+    if (hangupCause === '16') {
       return CallDisposition.NO_ANSWER;
     }
     if (hangupCause === '21') {

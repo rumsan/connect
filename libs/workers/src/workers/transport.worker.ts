@@ -1,8 +1,9 @@
 import { Inject, OnModuleInit } from '@nestjs/common';
-import { createId } from '@paralleldrive/cuid2';
+import { BatchManger, TransportQueue } from '@rsconnect/queue';
 import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
 import {
   Broadcast,
+  BroadcastJobData,
   BroadcastStatus,
   QueueBroadcastJobData,
   QueueBroadcastLog,
@@ -14,36 +15,46 @@ import { ConfirmChannel } from 'amqplib';
 import { IDataProvider } from '../data-providers/data-provider.interface';
 
 export abstract class TransportWorker implements OnModuleInit {
-  abstract TransportQueue: QUEUES;
+  abstract queueTransport: QUEUES;
+  protected batchManager: BatchManger;
+
   constructor(
     @Inject('IDataProvider')
     protected readonly dataProvider: IDataProvider,
     @Inject('AMQP_CONNECTION')
     protected readonly channel: ChannelWrapper,
-  ) {}
+    protected readonly transportQueue: TransportQueue,
+  ) {
+    this.batchManager = new BatchManger(this.transportQueue);
+  }
 
   public async onModuleInit() {
     try {
       await this.channel.addSetup(async (channel: ConfirmChannel) => {
         await this.assertQueue(channel);
-        await channel.consume(this.TransportQueue, async (message) => {
-          if (message) {
-            const job: QueueJobData<unknown> = JSON.parse(
-              message.content.toString(),
-            );
 
-            if (job.action === QUEUE_ACTIONS.READINESS_CHECK) {
-              const data = job.data as { sessionCuid: string };
-              this._makeTransportReady(data.sessionCuid).then();
+        await channel.consume(
+          this.queueTransport,
+          async (message) => {
+            if (message) {
+              const job: QueueJobData<unknown> = JSON.parse(
+                message.content.toString(),
+              );
+
+              if (job.action === QUEUE_ACTIONS.READINESS_CHECK) {
+                const data = job.data as { sessionCuid: string };
+                this._makeTransportReady(data.sessionCuid).then();
+              }
+
+              if (job.action === QUEUE_ACTIONS.BROADCAST) {
+                this._sendBroadcast(job.data as QueueBroadcastJobData).then();
+              }
+
+              channel.ack(message);
             }
-
-            if (job.action === QUEUE_ACTIONS.BROADCAST) {
-              this._sendBroadcast(job.data as QueueBroadcastJobData).then();
-            }
-
-            channel.ack(message);
-          }
-        });
+          },
+          {},
+        );
       });
     } catch (err) {
       console.error('Error starting the consumer:', err);
@@ -51,26 +62,21 @@ export abstract class TransportWorker implements OnModuleInit {
   }
 
   async assertQueue(channel: ConfirmChannel) {
-    await channel.assertQueue(QUEUES.LOG_BROADCAST, { durable: true });
-    await channel.assertQueue(this.TransportQueue, { durable: true });
-  }
-
-  private _addToLogQueue<T>(action: QUEUE_ACTIONS, data: T) {
-    return this.channel.sendToQueue(
-      QUEUES.LOG_BROADCAST,
-      Buffer.from(JSON.stringify({ action, data })),
-      {
-        persistent: true,
-      },
-    );
+    await channel.assertQueue(QUEUES.TO_CONNECT, {
+      durable: true,
+    });
+    await channel.assertQueue(this.queueTransport, {
+      durable: true,
+    });
   }
 
   private async _makeTransportReady(sessionCuid: string) {
     const session: Session = await this.dataProvider.getSession(sessionCuid);
     const isTransportReady = await this.makeTransportReady(session);
     if (isTransportReady) {
-      await this._addToLogQueue(QUEUE_ACTIONS.READINESS_CONFIRM, {
+      await this.transportQueue.confirmReadiness({
         sessionCuid,
+        maxBatchSize: this.batchManager.batchSize,
       });
     }
   }
@@ -80,45 +86,74 @@ export abstract class TransportWorker implements OnModuleInit {
       jobData.sessionId,
     );
 
-    const broadcast: Broadcast = await this.dataProvider.getBroadcast(
-      jobData.broadcastId,
-    );
+    for (const job of jobData.broadcasts) {
+      const broadcastLog: QueueBroadcastLog = {
+        broadcastLogId: job.broadcastLogId,
+        broadcastId: job.broadcastId,
+        sessionId: jobData.sessionId,
+        attempt: job.attempt,
+        status: BroadcastStatus.SUCCESS,
+        queue: this.queueTransport,
+      };
 
-    const broadcastLog: QueueBroadcastLog = {
-      cuid: jobData.broadcastLogId || createId(),
-      broadcast: jobData.broadcastId,
-      attempt: +jobData.attempt,
-      status: BroadcastStatus.SUCCESS,
-      queue: this.TransportQueue,
-    };
-
-    const result = await this.sendBroadcast({
-      session,
-      broadcast,
-      jobData,
-      broadcastLog,
-    });
-    if (result.sendLog) {
-      setTimeout(async () => {
-        await this._addToLogQueue<QueueBroadcastLog>(
-          QUEUE_ACTIONS.BROADCAST_LOG_UPDATE,
-          result.log,
-        );
-      }, 500);
+      this.batchManager.startMonitoring(broadcastLog);
     }
+
+    for (const job of jobData.broadcasts) {
+      const broadcast: Broadcast = await this.dataProvider.getBroadcast(
+        job.broadcastId,
+      );
+
+      const broadcastLog: QueueBroadcastLog = {
+        broadcastLogId: job.broadcastLogId,
+        broadcastId: job.broadcastId,
+        sessionId: jobData.sessionId,
+        attempt: job.attempt,
+        status: BroadcastStatus.SUCCESS,
+        queue: this.queueTransport,
+      };
+
+      await this.sendBroadcast({
+        session,
+        broadcast,
+        broadcastJob: job,
+        broadcastLog,
+      });
+    }
+
+    // const broadcast: Broadcast = await this.dataProvider.getBroadcast(
+    //   jobData.broadcastId,
+    // );
+
+    // const broadcastLog: QueueBroadcastLog = {
+    //   broadcastLogId: jobData.broadcastLogId || createId(),
+    //   broadcastId: jobData.broadcastId,
+    //   sessionId: jobData.sessionId,
+    //   attempt: jobData.attempt,
+    //   status: BroadcastStatus.SUCCESS,
+    //   queue: this.queueTransport,
+    // };
+    // this.batchManager.startMonitoring(broadcastLog);
+
+    // await this.sendBroadcast({
+    //   session,
+    //   broadcast,
+    //   jobData,
+    //   broadcastLog,
+    // });
   }
 
   abstract sendBroadcast({
     session,
     broadcast,
-    jobData,
+    broadcastJob,
     broadcastLog,
   }: {
     session: Session;
     broadcast: Broadcast;
-    jobData: QueueBroadcastJobData;
+    broadcastJob: BroadcastJobData;
     broadcastLog: QueueBroadcastLog;
-  }): Promise<{ sendLog: boolean; log: QueueBroadcastLog }>;
+  }): Promise<QueueBroadcastLog>;
 
   abstract makeTransportReady(session: Session): Promise<boolean>;
 }

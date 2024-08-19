@@ -29,6 +29,7 @@ enum TriggerType {
 }
 
 enum BroadcastStatus {
+  SCHEDULED
   PENDING
   SUCCESS
   FAIL
@@ -104,7 +105,7 @@ model Broadcast {
   session     String
   transport   String
   address     String
-  status      BroadcastStatus @default(PENDING)
+  status      BroadcastStatus @default(SCHEDULED)
   maxAttempts Int             @default(1)
   disposition Json?           @db.JsonB()
   attempts    Int             @default(0)

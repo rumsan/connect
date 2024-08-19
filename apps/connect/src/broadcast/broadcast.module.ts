@@ -1,10 +1,9 @@
 import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { QUEUES } from '@rumsan/connect';
+import { QueueModule } from '../queues/queue.module';
 import { BroadcastController } from './broadcast.controller';
 import { BroadcastService } from './broadcast.service';
-import { QueueModule } from '../queues/queue.module';
-import { QueueService } from '../queues/queue.service';
 
 @Module({
   imports: [
@@ -23,6 +22,6 @@ import { QueueService } from '../queues/queue.service';
     QueueModule,
   ],
   controllers: [BroadcastController],
-  providers: [BroadcastService, QueueService],
+  providers: [BroadcastService],
 })
-export class BroadcastModule { }
+export class BroadcastModule {}
