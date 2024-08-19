@@ -34,7 +34,7 @@ jobs:
           npm install -g pnpm@8.14.1
           pnpm install
           pnpm prisma:generate
-          pnpm build:all
+          pnpm build:all --nx-cloud=false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
