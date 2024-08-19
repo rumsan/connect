@@ -1,0 +1,12 @@
+# Install dependencies only when needed
+FROM node:20-alpine3.19 AS deps
+WORKDIR /usr/src/app
+COPY ./dist/apps/connect/package.json .npmrc ./
+RUN npm install -g pnpm@8.14.1 && pnpm install
+
+FROM node:20-alpine3.19 AS builder
+WORKDIR /usr/src/app
+COPY ./dist/apps/connect/ ./
+COPY --from=deps /usr/src/app/node_modules ./node_modules
+RUN npm install -g pnpm@8.14.1 && pnpx prisma generate
+CMD [ "node", "main.js" ]

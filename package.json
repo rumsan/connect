@@ -3,7 +3,12 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "start:dev": "nx serve connect"
+    "start:dev": "nx serve connect",
+    "clean": "rm -rf dist node_modules",
+    "build:all": "npx nx run-many --target=build --all",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+
   },
   "private": true,
   "dependencies": {
