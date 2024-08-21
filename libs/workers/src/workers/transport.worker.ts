@@ -81,6 +81,10 @@ export abstract class TransportWorker implements OnModuleInit {
     }
   }
 
+  private wait(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   private async _sendBroadcast(jobData: QueueBroadcastJobData) {
     const session: Session = await this.dataProvider.getSession(
       jobData.sessionId,
@@ -119,6 +123,8 @@ export abstract class TransportWorker implements OnModuleInit {
         broadcastJob: job,
         broadcastLog,
       });
+
+      //await this.wait(3000);
     }
 
     // const broadcast: Broadcast = await this.dataProvider.getBroadcast(

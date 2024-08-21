@@ -16,17 +16,9 @@ import {
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { SessionModel } from '../entities/session.entity';
-import { AudioHelper } from '../helpers/audio.helper';
-import { PBXHelper } from '../helpers/pbx.helper';
 import { wait } from '../utils';
-
-const sftpConfig = {
-  host: process.env.ASTERISK_HOST,
-  port: Number(process.env.ASTERISK_SSH_PORT),
-  username: process.env.ASTERISK_SSH_USER,
-  password: process.env.ASTERISK_SSH_PASS,
-  audioPath: process.env.ASTERISK_AUDIO_PATH,
-};
+import { AudioService } from './audio.service';
+import { PbxService } from './pbx.service';
 
 @Injectable()
 export class AsteriskWorker extends TransportWorker {
@@ -40,10 +32,11 @@ export class AsteriskWorker extends TransportWorker {
     override readonly channel: ChannelWrapper,
     @InjectModel(SessionModel)
     private sessionCache: typeof SessionModel,
-    private readonly audioHelper: AudioHelper,
+    private readonly audioService: AudioService,
     override readonly transportQueue: TransportQueue,
     private readonly broadcastLogQueue: BroadcastLogQueue,
     override readonly batchManager: BatchManger,
+    private readonly pbxService: PbxService,
   ) {
     super(dataProvider, channel, transportQueue);
   }
@@ -58,6 +51,18 @@ export class AsteriskWorker extends TransportWorker {
     broadcastLog.status = BroadcastStatus.PENDING;
 
     try {
+      await this.pbxService.sendBroadcast(broadcast, broadcastLog);
+    } catch (e: any) {
+      console.log(e);
+      broadcastLog.status = BroadcastStatus.FAIL;
+      broadcastLog.details = { error: e.message };
+    }
+    return broadcastLog;
+  }
+
+  async makeTransportReady(session: Session) {
+    try {
+      //return true;
       const cacheSession = await this.sessionCache.findOne({
         where: { cuid: session.cuid },
       });
@@ -69,42 +74,10 @@ export class AsteriskWorker extends TransportWorker {
         });
       }
 
-      const pbxHelper = new PBXHelper(
-        this.batchManager,
-        this.broadcastLogQueue,
-      );
-      setTimeout(async () => {
-        await pbxHelper.broadcastAudio(broadcast, broadcastLog);
-      }, 1000);
-    } catch (e: any) {
-      console.log(e);
-      broadcastLog.status = BroadcastStatus.FAIL;
-      broadcastLog.details = { error: e.message };
-    }
-    return broadcastLog;
-  }
+      //console.log(cacheSession);
 
-  async makeTransportReady(session: Session) {
-    try {
-      const rawFile = `.data/${session.cuid}-raw.wav`;
-      const convertedFile = `.data/${session.cuid}.wav`;
-      const asteriskFile = `${sftpConfig.audioPath}/${session.cuid}.wav`;
+      await this.audioService.makeAudioReady(session);
 
-      // download file from message.content
-      await this.audioHelper.downloadFile(session.message.content, rawFile);
-
-      //convert file bitrate using ffmpeg
-      await this.audioHelper.convertAudio(rawFile, convertedFile);
-
-      // upload file to asterisk server
-      await this.audioHelper.uploadFileToRemote(
-        convertedFile,
-        asteriskFile,
-        sftpConfig,
-      );
-
-      // delete local files
-      await this.audioHelper.removeFiles([rawFile, convertedFile]);
       await wait(1500);
       return true;
     } catch (e: any) {

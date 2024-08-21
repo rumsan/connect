@@ -180,6 +180,9 @@ importers:
       '@swc/helpers':
         specifier: ~0.5.11
         version: 0.5.12
+      '@types/ari-client':
+        specifier: ^2.2.13
+        version: 2.2.13
       '@types/jest':
         specifier: ^29.4.0
         version: 29.5.12
@@ -1730,6 +1733,9 @@ packages:
 
   '@types/amqplib@0.10.5':
     resolution: {integrity: sha512-/cSykxROY7BWwDoi4Y4/jLAuZTshZxd8Ey1QYa/VaXriMotBDoou7V/twJiOSHzU6t1Kp1AHAUXGCgqq+6DNeg==}
+
+  '@types/ari-client@2.2.13':
+    resolution: {integrity: sha512-WK8Ca8gFFhNyCoC7N6Sjp38Lx+UESC7yyvHyHu+S85LmYFpk2cbsdSWaiHvxJLLlge/Ku0IMYAXaWG1N2szq3w==}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -8976,6 +8982,10 @@ snapshots:
       tslib: 2.6.3
 
   '@types/amqplib@0.10.5':
+    dependencies:
+      '@types/node': 18.16.20
+
+  '@types/ari-client@2.2.13':
     dependencies:
       '@types/node': 18.16.20
 

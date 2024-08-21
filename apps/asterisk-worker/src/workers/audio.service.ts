@@ -1,23 +1,44 @@
-import * as fs from 'fs/promises';
 import { Injectable, Logger } from '@nestjs/common';
+import { Session } from '@rumsan/connect/types';
 import ffmpeg from 'fluent-ffmpeg';
-import Client from 'ssh2-sftp-client';
+import * as fs from 'fs/promises';
 import { dirname } from 'path';
+import Client from 'ssh2-sftp-client';
 
-interface SFTPConfig {
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-}
+const sftpConfig = {
+  host: process.env.ASTERISK_HOST,
+  port: Number(process.env.ASTERISK_SSH_PORT),
+  username: process.env.ASTERISK_SSH_USER,
+  password: process.env.ASTERISK_SSH_PASS,
+  audioPath: process.env.ASTERISK_AUDIO_PATH,
+};
 
 @Injectable()
-export class AudioHelper {
-  private readonly logger = new Logger(AudioHelper.name);
+export class AudioService {
+  private readonly logger = new Logger(AudioService.name);
   private sftp: Client;
 
   constructor() {
     this.sftp = new Client();
+  }
+
+  async makeAudioReady(session: Session) {
+    const rawFile = `.data/${session.cuid}-raw.wav`;
+    const convertedFile = `.data/${session.cuid}.wav`;
+    const asteriskFile = `${sftpConfig.audioPath}/${session.cuid}.wav`;
+
+    // download file from message.content
+    await this.downloadFile(session.message.content, rawFile);
+
+    //convert file bitrate using ffmpeg
+    await this.convertAudio(rawFile, convertedFile);
+
+    // upload file to asterisk server
+    await this.uploadFileToRemote(convertedFile, asteriskFile);
+
+    // delete local files
+    await this.removeFiles([rawFile, convertedFile]);
+    return true;
   }
 
   async downloadFile(url: string, outputPath: string) {
@@ -53,7 +74,7 @@ export class AudioHelper {
         })
         .on('error', (err) => {
           this.logger.error(
-            'An error occurred during conversion: ' + err.message
+            'An error occurred during conversion: ' + err.message,
           );
           reject(err);
         })
@@ -61,13 +82,9 @@ export class AudioHelper {
     });
   }
 
-  async uploadFileToRemote(
-    inputFilePath: string,
-    remoteFilePath: string,
-    config: SFTPConfig
-  ) {
+  async uploadFileToRemote(inputFilePath: string, remoteFilePath: string) {
     try {
-      await this.sftp.connect(config);
+      await this.sftp.connect(sftpConfig);
       await this.sftp.put(inputFilePath, remoteFilePath);
       this.sftp.end();
       return true;

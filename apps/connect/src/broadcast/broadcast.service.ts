@@ -163,10 +163,11 @@ export class BroadcastService {
     if (broadcasts.length > 0) {
       await this._addToQueue(session.cuid, session.Transport, broadcasts);
     } else {
-      await this.retryBroadcasts(
-        sessionCuid,
-        session.Transport.type as TransportType,
-      );
+      //TODO: Enable for automatic retries
+      // await this.retryBroadcasts(
+      //   sessionCuid,
+      //   session.Transport.type as TransportType,
+      // );
     }
   }
 

@@ -52,7 +52,7 @@ export class AMIService {
       // console.log(evt);
 
       if (eventType === 'Hangup') {
-        // console.log('Hangup Event', evt);
+        //console.log('Hangup Event', evt);
         const disposition = getAsteriskDisposition(evt.cause, evt.channelstate);
         const broadcastLog: QueueBroadcastLogVoice = this.batchManager.getLog(
           evt.uniqueid,
