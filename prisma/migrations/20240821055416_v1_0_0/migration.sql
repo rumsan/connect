@@ -8,7 +8,13 @@ CREATE TYPE "SessionStatus" AS ENUM ('NEW', 'PENDING', 'COMPLETED', 'FAILED');
 CREATE TYPE "TriggerType" AS ENUM ('IMMEDIATE', 'SCHEDULED', 'MANUAL');
 
 -- CreateEnum
-CREATE TYPE "BroadcastStatus" AS ENUM ('PENDING', 'SUCCESS', 'FAIL');
+CREATE TYPE "BroadcastStatus" AS ENUM ('SCHEDULED', 'PENDING', 'SUCCESS', 'FAIL');
+
+-- CreateEnum
+CREATE TYPE "ValidationContent" AS ENUM ('URL', 'TEXT');
+
+-- CreateEnum
+CREATE TYPE "ValidationAddress" AS ENUM ('ANY', 'EMAIL', 'PHONE');
 
 -- CreateEnum
 CREATE TYPE "ApplicationEnvironment" AS ENUM ('PRODUCTION', 'STAGING', 'DEVELOPMENT', 'TEST');
@@ -22,6 +28,8 @@ CREATE TABLE "tbl_transports" (
     "type" "TransportType" NOT NULL,
     "config" JSONB NOT NULL,
     "stats" JSONB,
+    "validationContent" "ValidationContent" NOT NULL DEFAULT 'TEXT',
+    "validationAddress" "ValidationAddress" NOT NULL DEFAULT 'ANY',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
     "updatedBy" TEXT NOT NULL DEFAULT 'system',
@@ -45,7 +53,6 @@ CREATE TABLE "tbl_sessions" (
     "status" "SessionStatus" NOT NULL DEFAULT 'NEW',
     "totalAddresses" INTEGER NOT NULL,
     "stats" JSONB,
-    "isTransportVerified" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
     "updatedBy" TEXT NOT NULL DEFAULT 'system',
@@ -62,12 +69,12 @@ CREATE TABLE "tbl_broadcasts" (
     "session" TEXT NOT NULL,
     "transport" TEXT NOT NULL,
     "address" TEXT NOT NULL,
-    "status" "BroadcastStatus" NOT NULL DEFAULT 'PENDING',
+    "status" "BroadcastStatus" NOT NULL DEFAULT 'SCHEDULED',
     "maxAttempts" INTEGER NOT NULL DEFAULT 1,
+    "disposition" JSONB,
     "attempts" INTEGER NOT NULL DEFAULT 0,
-    "lastAttempt" TIMESTAMP(3),
     "isComplete" BOOLEAN NOT NULL DEFAULT false,
-    "queuedAt" TIMESTAMP(3),
+    "lastAttempt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3),
 
