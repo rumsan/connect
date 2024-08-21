@@ -7,6 +7,7 @@ import {
 } from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
 import { BroadcastService } from '../broadcast/broadcast.service';
+import { dev_SessionCompletionAlert } from '../utils/dev.alert';
 
 @Injectable()
 export class BroadcastLogQueue {
@@ -117,6 +118,7 @@ export class BroadcastLogQueue {
           status: SessionStatus.COMPLETED,
         },
       });
+      dev_SessionCompletionAlert(sessionId).then().catch();
     }
   }
 }

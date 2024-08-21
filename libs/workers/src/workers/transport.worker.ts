@@ -100,7 +100,7 @@ export abstract class TransportWorker implements OnModuleInit {
         queue: this.queueTransport,
       };
 
-      this.batchManager.startMonitoring(broadcastLog);
+      //this.batchManager.startMonitoring(broadcastLog);
     }
 
     for (const job of jobData.broadcasts) {

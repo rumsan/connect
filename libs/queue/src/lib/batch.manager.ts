@@ -22,8 +22,8 @@ export class BatchManger {
     console.log('Batch Delay:', this.batchDelay);
   }
 
-  public startMonitoring(log: QueueBroadcastLog) {
-    this.processingBroadcasts.set(log.broadcastLogId, {
+  public startMonitoring(uniqueId: string, log: QueueBroadcastLog) {
+    this.processingBroadcasts.set(uniqueId, {
       log,
     });
   }
@@ -52,7 +52,7 @@ export class BatchManger {
     this.processingBroadcasts.delete(broadcastLogId);
 
     if (this.processingBroadcasts.size === 0) {
-      console.log('End Monitorring');
+      console.log('End Monitoring');
       setTimeout(async () => {
         await this.transportQueue.confirmReadiness({
           sessionCuid: broadcast.log.sessionId,

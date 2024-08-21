@@ -69,9 +69,11 @@ export class AMIService {
             hangupDetails: evt,
           };
           await this.broadcastLogQueue.addVoice(broadcastLog);
+          await this.batchManager.endMonitoring(evt.uniqueid);
+          this.logger.log(`Call Hangup: ${evt.uniqueid}`);
+        } else {
+          console.log('=====> Call Received: ', evt.calleridnum);
         }
-        await this.batchManager.endMonitoring(evt.uniqueid);
-        this.logger.log(`Call Hangup: ${evt.uniqueid}`);
       }
 
       if (eventType === 'Cdr') {
@@ -84,14 +86,17 @@ export class AMIService {
           cdr: evt,
         };
 
-        setTimeout(async () => {
-          await this.broadcastLogQueue.updateDetailsVoice({
-            broadcastLogId: evt.uniqueid,
-            status: BroadcastStatus.SUCCESS,
-            details,
-          });
-          this.logger.log(`CDR Sent: ${evt.uniqueid}`);
-        }, 5000);
+        const [appName, broadcastLogId] = evt.lastdata.split(',');
+        if (broadcastLogId) {
+          setTimeout(async () => {
+            await this.broadcastLogQueue.updateDetailsVoice({
+              broadcastLogId,
+              status: BroadcastStatus.SUCCESS,
+              details,
+            });
+            this.logger.log(`CDR Sent: ${broadcastLogId}`);
+          }, 5000);
+        }
       }
     });
   }

@@ -38,16 +38,15 @@ export class PbxService implements OnModuleInit, OnModuleDestroy {
       callEndpoint = `${this.config.trunk}/${broadcast.address}`;
 
     const channel = await this.originateCall(
-      broadcastLog.broadcastLogId,
       callEndpoint,
       `${broadcastLog.broadcastId} <${broadcast.address}>`,
-      [broadcast.session, broadcast.cuid, broadcast.address],
+      [broadcastLog.broadcastLogId, broadcast.session, broadcast.address],
     );
+    this.batchManager.startMonitoring(channel.id, broadcastLog);
     console.log('=====BroadcastStarted=====', channel?.caller?.number);
   }
 
   async originateCall(
-    uniqueId: string,
     callEndpoint: string,
     callerId: string,
     appArgs: string[] = [],
@@ -55,7 +54,7 @@ export class PbxService implements OnModuleInit, OnModuleDestroy {
     return this.client.channels.originate({
       endpoint: callEndpoint,
       context: 'from-internal',
-      channelId: uniqueId,
+      //channelId: uniqueId,
       priority: 1,
       callerId: callerId || this.config.callerId || 'Rumsan Connect <0000>',
       app: this.config.appName,
@@ -100,7 +99,7 @@ export class PbxService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onStasisStart(event, channel: Channel) {
-    const [sessionId, broadcastId, address] = event.args;
+    const [broadcastLogId, sessionId, address] = event.args;
     console.log('=====StasisStart=====', address);
     this.logger.log('StasisStart', channel);
     await this.playAudio(sessionId, channel);

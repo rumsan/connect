@@ -10,6 +10,11 @@ import {
 } from '@rumsan/connect/types';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import {
+  dev_NewBatchAlert,
+  dev_SessionAttemptComplete,
+  dev_SessionCompletionAlert,
+} from '../utils/dev.alert';
+import {
   BroadcastDto,
   ListBroadcastDto,
   MessageDto,
@@ -162,7 +167,9 @@ export class BroadcastService {
 
     if (broadcasts.length > 0) {
       await this._addToQueue(session.cuid, session.Transport, broadcasts);
+      dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
+      dev_SessionAttemptComplete(session.cuid).then().catch();
       //TODO: Enable for automatic retries
       // await this.retryBroadcasts(
       //   sessionCuid,
@@ -219,6 +226,7 @@ export class BroadcastService {
           status: SessionStatus.COMPLETED,
         },
       });
+      dev_SessionCompletionAlert(sessionCuid).then().catch();
       return true;
     }
 
