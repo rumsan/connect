@@ -8,10 +8,6 @@ export function getAsteriskDisposition(
     return CallDisposition.ANSWERED;
   }
 
-  if (hangupCause === '19' || hangupCause === '19') {
-    return CallDisposition.NO_ANSWER;
-  }
-
   if (hangupCause === '16') {
     return CallDisposition.NO_ANSWER;
   }
@@ -20,7 +16,7 @@ export function getAsteriskDisposition(
     return CallDisposition.REJECTED;
   }
 
-  if (hangupCause === '16') {
+  if (hangupCause === '19') {
     if (channelState === '5') {
       return CallDisposition.NO_ANSWER;
     }

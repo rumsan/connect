@@ -8,7 +8,6 @@
     "build:all": "npx nx run-many --target=build --all",
     "prisma:generate": "npx prisma generate",
     "prisma:migrate": "npx prisma migrate dev"
-
   },
   "private": true,
   "dependencies": {
