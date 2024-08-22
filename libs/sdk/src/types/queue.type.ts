@@ -1,23 +1,58 @@
 import { QUEUES } from '../constants';
 import { BroadcastStatus } from './broadcast.type';
+import { CallDetails } from './voice.type';
 
-export type QueueBroadcastLog = {
+export interface QueueBroadcastLog {
   queue: QUEUES;
-  broadcast: string;
-  status: BroadcastStatus;
+  broadcastLogId: string;
+  broadcastId: string;
+  sessionId: string;
   attempt: number;
+  status: BroadcastStatus;
   details?: Record<string, any>;
+  notes?: string;
+}
+
+export interface QueueBroadcastLogVoice extends QueueBroadcastLog {
+  queue: QUEUES.TRANSPORT_VOICE;
+  details?: CallDetails;
+}
+
+export interface QueueBroadcastLogDetails {
+  broadcastLogId: string;
+  status?: BroadcastStatus;
+  details: Record<string, any>;
+  notes?: string;
+}
+
+export interface QueueBroadcastLogVoiceDetails
+  extends QueueBroadcastLogDetails {
+  details: CallDetails;
+}
+
+export type QueueJobData<T> = {
+  action: string;
+  data: T;
 };
 
-export type QueueBroadcastJob = {
-  name: string;
-  data: QueueBroadcastJobData;
+// export type QueueBroadcastJobData = {
+//   address: string;
+//   broadcastLogId: string;
+//   broadcastId: string;
+//   sessionId: string;
+//   transportId: string;
+//   attempt: number;
+// };
+
+export type BroadcastJobData = {
+  address: string;
+  broadcastLogId: string;
+  broadcastId: string;
+  attempt: number;
 };
 
 export type QueueBroadcastJobData = {
-  transportId: string;
-  broadcastId: string;
   sessionId: string;
-  address: string;
-  attempt: number;
+  transportId: string;
+  broadcasts: BroadcastJobData[];
 };

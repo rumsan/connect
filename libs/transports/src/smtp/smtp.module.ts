@@ -1,6 +1,6 @@
 import { DynamicModule, Global, Module, ValueProvider } from '@nestjs/common';
 import { SmtpService } from './smtp.service';
-import { AsyncOptions, TransportSmtpConfig } from '@rsconnect/sdk/types';
+import { AsyncOptions, TransportSmtpConfig } from '@rumsan/connect/types';
 
 @Global()
 @Module({

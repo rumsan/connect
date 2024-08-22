@@ -1,5 +1,6 @@
-import { Session } from '@rsconnect/sdk/types';
+import { Broadcast, Session } from '@rumsan/connect/types';
 
 export interface IDataProvider {
-  getSession(cuid: string): Promise<Session>;
+  getSession(sessionCuid: string): Promise<Session>;
+  getBroadcast(broadcastCuid: string): Promise<Broadcast>;
 }

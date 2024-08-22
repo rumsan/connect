@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import { TransportSmtpConfig } from '@rsconnect/sdk/types';
+import { TransportSmtpConfig } from '@rumsan/connect/types';
 import { SmtpTransport } from './smtp.transport';
 
 @Injectable()

@@ -29,9 +29,21 @@ enum TriggerType {
 }
 
 enum BroadcastStatus {
+  SCHEDULED
   PENDING
   SUCCESS
   FAIL
+}
+
+enum ValidationContent {
+  URL
+  TEXT
+}
+
+enum ValidationAddress {
+  ANY
+  EMAIL
+  PHONE
 }
 
 //TODO https://socket.dev/npm/package/prisma-extension-cuid2
@@ -43,13 +55,17 @@ model Transport {
   name   String
   type   TransportType
   config Json          @db.JsonB()
-  stats          Json?         @db.JsonB()
+  stats  Json?         @db.JsonB()
+
+  validationContent ValidationContent @default(TEXT)
+  validationAddress ValidationAddress @default(ANY)
 
   Sessions   Session[]
   Broadcasts Broadcast[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
+  updatedBy String    @default("system")
   deletedAt DateTime?
 
   @@map("tbl_transports")
@@ -76,6 +92,7 @@ model Session {
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
+  updatedBy String    @default("system")
   deletedAt DateTime?
 
   @@map("tbl_sessions")
@@ -88,12 +105,12 @@ model Broadcast {
   session     String
   transport   String
   address     String
-  status      BroadcastStatus @default(PENDING)
+  status      BroadcastStatus @default(SCHEDULED)
   maxAttempts Int             @default(1)
+  disposition Json?           @db.JsonB()
   attempts    Int             @default(0)
+  isComplete  Boolean @default(false)
   lastAttempt DateTime?
-  isComplete  Boolean         @default(false)
-  queuedAt    DateTime?
 
   Session   Session   @relation(fields: [session], references: [cuid])
   Transport Transport @relation(fields: [transport], references: [cuid])
@@ -107,20 +124,23 @@ model Broadcast {
 }
 
 model BroadcastLog {
+  id        Int             @id @default(autoincrement())
   cuid      String          @unique @default(cuid())
   app       String
   session   String
   broadcast String
-  status    BroadcastStatus
+  status    BroadcastStatus @default(PENDING)
   attempt   Int
   details   Json?           @db.JsonB()
   notes     String?
 
   Broadcast Broadcast @relation(fields: [broadcast], references: [cuid])
   Session   Session   @relation(fields: [session], references: [cuid])
-  createdAt DateTime  @default(now())
 
-  @@map("tbl_broadcastLogs")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt()
+
+  @@map("tbl_broadcast_logs")
 }
 
 // ++++++++++++++++++ START: @rumsan/extensions/apps +++++++++++++++++++++++++++
@@ -140,7 +160,10 @@ model Application {
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  updatedBy String    @default("system")
   deletedAt DateTime?
+
+  @@map("tbl_applications")
 }
 
 // ++++++++++++++++++ END: @rumsan/extensions/apps ++++++++++++++++++++++++++++++++

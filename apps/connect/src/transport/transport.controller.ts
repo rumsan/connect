@@ -14,7 +14,7 @@ import { CreateTransportDto } from './dto/create-transport.dto';
 import { UpdateTransportDto } from './dto/update-transport.dto';
 import { TransportService } from './transport.service';
 
-import { TransportType } from '@rsconnect/sdk/types';
+import { TransportType } from '@rumsan/connect/types';
 import { AppId } from '@rumsan/app';
 import { ClassConstructor, plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -24,7 +24,7 @@ import { TransportSMTPConfigDto } from './dto/smtp-transport-config.dto';
 @Controller('transports')
 @ApiTags('Transport')
 export class TransportController {
-  constructor(private readonly transportService: TransportService) {}
+  constructor(private readonly transportService: TransportService) { }
 
   @Post()
   @ApiOperation({

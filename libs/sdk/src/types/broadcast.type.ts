@@ -3,6 +3,7 @@ import { Session, TriggerType } from './session.type';
 import { Transport } from './transport.type';
 
 export enum BroadcastStatus {
+  SCHEDULED = 'SCHEDULED',
   PENDING = 'PENDING',
   SUCCESS = 'SUCCESS',
   FAIL = 'FAIL',
@@ -46,7 +47,7 @@ export type Broadcast = {
   maxAttempts: number;
   attempts?: number;
   lastAttempt?: Date | null;
-  isComplete: boolean;
+  disposition?: Record<string, any>;
   createdAt?: Date;
   updatedAt?: Date | null;
   Transport?: Partial<Transport> | null;

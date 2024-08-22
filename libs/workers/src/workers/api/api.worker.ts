@@ -1,59 +1,69 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { BroadcastLogQueue, TransportQueue } from '@rsconnect/queue';
+import { ApiTransport } from '@rsconnect/transports';
+import { QUEUES } from '@rumsan/connect';
 import {
+  Broadcast,
+  BroadcastJobData,
   BroadcastStatus,
-  EmailMessage,
-  QueueBroadcastJobData,
+  Message,
   QueueBroadcastLog,
   Session,
   TransportApiConfig,
-} from '@rsconnect/sdk/types';
-import { ApiTransport } from '@rsconnect/transports';
+} from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { IDataProvider } from '../../data-providers/data-provider.interface';
 import { TransportWorker } from '../transport.worker';
 
 @Injectable()
 export class ApiWorker extends TransportWorker {
+  queueTransport: QUEUES = QUEUES.TRANSPORT_API;
+
+  private readonly logger = new Logger(ApiWorker.name);
   constructor(
     @Inject('IDataProvider')
     override readonly dataProvider: IDataProvider,
     @Inject('AMQP_CONNECTION')
     override readonly channel: ChannelWrapper,
-    private readonly transport: ApiTransport
+    override readonly transportQueue: TransportQueue,
+    private readonly transport: ApiTransport,
+    private readonly broadcastLogQueue: BroadcastLogQueue,
   ) {
-    super(dataProvider, channel);
+    super(dataProvider, channel, transportQueue);
   }
-  TransportQueue: QUEUES = QUEUES.TRANSPORT_API;
-  private readonly logger = new Logger(ApiWorker.name);
 
-  async process(
-    session: Session,
-    data: QueueBroadcastJobData
-  ): Promise<QueueBroadcastLog> {
-    const logData: QueueBroadcastLog = {
-      broadcast: data.broadcastId,
-      attempt: +data.attempt + 1,
-      status: BroadcastStatus.SUCCESS,
-      queue: this.TransportQueue,
-    };
+  async sendBroadcast(data: {
+    session: Session;
+    broadcast: Broadcast;
+    broadcastJob: BroadcastJobData;
+    broadcastLog: QueueBroadcastLog;
+  }): Promise<QueueBroadcastLog> {
+    const { session, broadcast, broadcastLog, broadcastJob } = data;
 
     try {
       this.transport.init(session.Transport?.config as TransportApiConfig);
       const res = await this.transport.send(
-        data.address,
-        session.message as EmailMessage
+        broadcastJob.address,
+        session.message as Message,
       );
 
-      logData.status = BroadcastStatus.SUCCESS;
-      logData.details = { messageId: res };
+      broadcastLog.status = BroadcastStatus.SUCCESS;
+      broadcastLog.details = { messageId: res };
     } catch (e: any) {
-      logData.status = BroadcastStatus.FAIL;
-      logData.details = { error: e.message };
+      broadcastLog.status = BroadcastStatus.FAIL;
+      broadcastLog.details = { error: e.message };
     }
 
-    // this.smtpService.send();
+    //send log to connect server
+    await this.broadcastLogQueue.add(broadcastLog);
+    //remove job from batchManager
+    await this.batchManager.endMonitoring(broadcastJob.broadcastLogId);
 
-    return logData;
+    return broadcastLog;
+  }
+
+  async makeTransportReady(session: Session): Promise<boolean> {
+    //TODO: Ping api to check if it is ready
+    return true;
   }
 }

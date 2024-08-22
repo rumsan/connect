@@ -2,6 +2,7 @@
 
 # compiled output
 dist
+/.data
 tmp
 /out-tsc
 /logs
@@ -43,5 +44,6 @@ Thumbs.db
 .nx/cache
 .nx/workspace-data
 .env
+.env--*
 dev.ts
 .npmrc

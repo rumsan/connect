@@ -1,4 +1,3 @@
-import { Message } from './broadcast.type';
 import { Transport } from './transport.type';
 
 export enum TriggerType {
@@ -19,8 +18,8 @@ export type Session = {
   cuid: string;
   app?: string;
   transport: string;
-  message: Message;
-  addresses: Record<string, any>;
+  message: Record<string, any>;
+  addresses: Array<string>;
   maxAttempts: number;
   triggerType: TriggerType;
   webhook: string | null;

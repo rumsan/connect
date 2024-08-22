@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import { TransportApiConfig } from '@rsconnect/sdk/types';
+import { TransportApiConfig } from '@rumsan/connect/types';
 import { ApiTransport } from './api.transport';
 
 @Injectable()

@@ -1,48 +1,78 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { QUEUES } from '@rsconnect/sdk';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { BroadcastLogQueue, TransportQueue } from '@rsconnect/queue';
+import { QUEUES } from '@rumsan/connect';
 import {
+  Broadcast,
+  BroadcastJobData,
   BroadcastStatus,
-  QueueBroadcastJobData,
   QueueBroadcastLog,
   Session,
-} from '@rsconnect/sdk/types';
+} from '@rumsan/connect/types';
+import { ChannelWrapper } from 'amqp-connection-manager';
 import axios from 'axios';
+import { IDataProvider } from '../../data-providers/data-provider.interface';
 import { TransportWorker } from '../transport.worker';
 @Injectable()
 export class EchoWorker extends TransportWorker {
-  TransportQueue: QUEUES = QUEUES.TRANSPORT_ECHO;
+  queueTransport: QUEUES = QUEUES.TRANSPORT_ECHO;
   private readonly logger = new Logger(EchoWorker.name);
 
-  async process(
-    session: Session,
-    data: QueueBroadcastJobData
-  ): Promise<QueueBroadcastLog> {
-    const addr = data.address.split('|');
-    let status = BroadcastStatus.SUCCESS;
+  constructor(
+    @Inject('IDataProvider')
+    override readonly dataProvider: IDataProvider,
+    @Inject('AMQP_CONNECTION')
+    override readonly channel: ChannelWrapper,
+    override readonly transportQueue: TransportQueue,
+    private readonly broadcastLogQueue: BroadcastLogQueue,
+  ) {
+    super(dataProvider, channel, transportQueue);
+  }
 
+  async sendBroadcast(data: {
+    session: Session;
+    broadcast: Broadcast;
+    broadcastJob: BroadcastJobData;
+    broadcastLog: QueueBroadcastLog;
+  }): Promise<QueueBroadcastLog> {
+    const { session, broadcast, broadcastLog, broadcastJob } = data;
+    const addr = broadcastJob.address.split('|');
+
+    console.log(broadcastJob.address);
     if (!isNaN(+addr[1])) {
-      if (+data.attempt + 1 < +addr[1]) status = BroadcastStatus.FAIL;
+      if (+broadcastJob.attempt < +addr[1])
+        broadcastLog.status = BroadcastStatus.FAIL;
     }
-    if (status === BroadcastStatus.SUCCESS) {
+    if (broadcastLog.status === BroadcastStatus.SUCCESS) {
       try {
         if (
           session.Transport?.config['slack_url'] &&
           session.Transport?.config['slack_email']
-        )
-          await axios.post(session.Transport.config['slack_url'], {
-            email: session.Transport.config['slack_email'],
-            message: `${addr[0]} -- ${session.message['content']}`,
-          });
+        ) {
+          const { data } = await axios.post(
+            session.Transport.config['slack_url'],
+            {
+              email: session.Transport.config['slack_email'],
+              message: `${addr[0]} -- ${session.message['content']}`,
+            },
+          );
+          broadcastLog.details = { response: data };
+        }
       } catch (e) {
         console.log(e);
-        status = BroadcastStatus.FAIL;
+        broadcastLog.status = BroadcastStatus.FAIL;
       }
     }
-    return {
-      broadcast: data.broadcastId,
-      attempt: +data.attempt + 1,
-      status,
-      queue: this.TransportQueue,
-    };
+
+    //send log to connect server
+    await this.broadcastLogQueue.add(broadcastLog);
+
+    //remove job from batchManager
+    await this.batchManager.endMonitoring(broadcastJob.broadcastLogId);
+
+    return broadcastLog;
+  }
+
+  async makeTransportReady(session: Session): Promise<boolean> {
+    return true;
   }
 }
