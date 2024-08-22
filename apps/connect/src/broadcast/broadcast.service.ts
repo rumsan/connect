@@ -178,18 +178,32 @@ export class BroadcastService {
     }
   }
 
-  async retryBroadcasts(sessionCuid: string, transportType: TransportType) {
+  async retryBroadcasts(
+    sessionCuid: string,
+    transportType: TransportType,
+    retryFailed?: boolean,
+  ) {
     const isSessionComplete = await this._checkIfSessionComplete(
       sessionCuid,
       // this.prisma,
     );
     if (isSessionComplete) {
-      return { count: 0 };
+      return { isComplete: true, count: 0 };
     }
+
+    const retryStatuses = retryFailed
+      ? [
+          BroadcastStatus.FAIL,
+          BroadcastStatus.SCHEDULED,
+          BroadcastStatus.PENDING,
+        ]
+      : [BroadcastStatus.SCHEDULED, BroadcastStatus.PENDING];
 
     const broadcasts = await this.prisma.broadcast.updateMany({
       where: {
-        //status: BroadcastStatus.FAIL,
+        status: {
+          in: retryStatuses,
+        },
         session: sessionCuid,
         isComplete: false,
       },
@@ -198,12 +212,24 @@ export class BroadcastService {
       },
     });
 
+    console.log(broadcasts);
+
+    if (broadcasts.count === 0) {
+      return {
+        isComplete: false,
+        count: 0,
+      };
+    }
+
     setTimeout(async () => {
       console.log('========== Retrying Failed Broadcasts ==========');
       await this.checkTransportReadiness(sessionCuid, transportType);
     }, 100);
 
-    return broadcasts;
+    return {
+      isComplete: false,
+      count: broadcasts.count,
+    };
   }
 
   private async _checkIfSessionComplete(
