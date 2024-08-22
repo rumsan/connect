@@ -3,8 +3,34 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/connect/src",
   "projectType": "application",
-  "tags": [],
   "targets": {
+    "build": {
+      "dependsOn": ["mainBuild"],
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cp -r prisma/ dist/apps/connect/prisma && node apps/connect/modify-package.js"
+        ]
+      }
+    },
+    "mainBuild": {
+      "executor": "@nx/webpack:webpack",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "target": "node",
+        "compiler": "tsc",
+        "generatePackageJson": true,
+        "outputPath": "dist/apps/connect",
+        "main": "apps/connect/src/main.ts",
+        "tsConfig": "apps/connect/tsconfig.app.json",
+        "assets": [],
+        "webpackConfig": "apps/connect/webpack.config.js"
+      },
+      "configurations": {
+        "development": {},
+        "production": {}
+      }
+    },
     "serve": {
       "executor": "@nx/js:node",
       "defaultConfiguration": "development",
@@ -20,5 +46,6 @@
         }
       }
     }
-  }
+  },
+  "tags": []
 }

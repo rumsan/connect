@@ -3,8 +3,34 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "apps/asterisk-worker/src",
   "projectType": "application",
-  "tags": [],
   "targets": {
+    "build": {
+      "dependsOn": ["mainBuild"],
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "cp -r prisma/ dist/apps/asterisk-worker/prisma && node apps/asterisk-worker/modify-package.js"
+        ]
+      }
+    },
+    "mainBuild": {
+      "executor": "@nx/webpack:webpack",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "target": "node",
+        "compiler": "tsc",
+        "generatePackageJson": true,
+        "outputPath": "dist/apps/asterisk-worker",
+        "main": "apps/asterisk-worker/src/main.ts",
+        "tsConfig": "apps/asterisk-worker/tsconfig.app.json",
+        "assets": [],
+        "webpackConfig": "apps/asterisk-worker/webpack.config.js"
+      },
+      "configurations": {
+        "development": {},
+        "production": {}
+      }
+    },
     "serve": {
       "executor": "@nx/js:node",
       "defaultConfiguration": "development",
@@ -20,5 +46,6 @@
         }
       }
     }
-  }
+  },
+  "tags": []
 }
