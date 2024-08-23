@@ -23,7 +23,7 @@ async function bootstrap() {
       instance: loggerInstance,
     }),
   });
-  const globalPrefix = 'v1';
+  const globalPrefix = 'api/v1';
   app.enableCors();
 
   // app.use(bodyParser.raw({ type: 'application/octet-stream' }));
@@ -59,7 +59,7 @@ async function bootstrap() {
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('', app, document);
+    SwaggerModule.setup('/', app, document);
   }
 
   await app.startAllMicroservices();
