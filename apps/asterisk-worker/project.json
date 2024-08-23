@@ -9,7 +9,7 @@
       "executor": "nx:run-commands",
       "options": {
         "commands": [
-          "node apps/asterisk-worker/modify-package.js"
+          "cp -r prisma/ dist/apps/connect/prisma && node apps/asterisk-worker/modify-package.js"
         ]
       }
     },
