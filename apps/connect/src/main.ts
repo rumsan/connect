@@ -39,7 +39,7 @@ async function bootstrap() {
       whitelist: true,
       transform: true,
       transformOptions: { enableImplicitConversion: true },
-    })
+    }),
   );
   app.useGlobalFilters(new RsExceptionFilter());
   app.useGlobalInterceptors(new ResponseTransformInterceptor());
@@ -54,20 +54,19 @@ async function bootstrap() {
       .setVersion('1.0')
       .addBearerAuth(
         { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-        'JWT'
+        'JWT',
       )
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('swagger', app, document);
+    SwaggerModule.setup('', app, document);
   }
 
   await app.startAllMicroservices();
   await app.listen(port);
   Logger.log(
-    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`
+    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`,
   );
-  Logger.log(`Swagger UI: http://localhost:${port}/swagger`);
 }
 
 bootstrap();
