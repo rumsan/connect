@@ -22,7 +22,7 @@ export class SessionClient {
   async listBroadcasts(cuid: string, config?: AxiosRequestConfig) {
     const response = await this._client.get(
       `${this._prefix}/${cuid}/broadcasts`,
-      config
+      config,
     );
     return formatResponse<Broadcast[]>(response);
   }
@@ -30,8 +30,23 @@ export class SessionClient {
   async listLogs(cuid: string, config?: AxiosRequestConfig) {
     const response = await this._client.get(
       `${this._prefix}/${cuid}/logs`,
-      config
+      config,
     );
     return formatResponse<BroadcastLog[]>(response);
+  }
+
+  async retryIncomplete(
+    cuid: string,
+    includeFailed = true,
+    config?: AxiosRequestConfig,
+  ) {
+    const response = await this._client.get(
+      `${this._prefix}/${cuid}/trigger?include_failed=${includeFailed}`,
+      config,
+    );
+    return formatResponse<{
+      isComplete: boolean;
+      count: number;
+    }>(response);
   }
 }
