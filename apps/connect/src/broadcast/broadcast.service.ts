@@ -1,13 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
-import { Broadcast, BroadcastLog, Transport } from '@prisma/client';
+import {
+  Broadcast,
+  BroadcastLog,
+  Session as PrismaSessionType,
+  Transport,
+} from '@prisma/client';
 import { BroadcastQueue, TransportQueue } from '@rsconnect/queue';
 import { QUEUES } from '@rumsan/connect';
 import {
   BroadcastStatus,
+  Session,
   SessionStatus,
   TransportType,
 } from '@rumsan/connect/types';
+
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import {
   dev_NewBatchAlert,
@@ -35,7 +42,7 @@ export class BroadcastService {
     await this.validateBroadcastData(transportId, message, addresses);
 
     let transport: Transport = null;
-    const sessionData = {
+    const sessionData: Session = {
       cuid: createId(),
       app: appId,
       transport: dto.transport,
@@ -61,7 +68,7 @@ export class BroadcastService {
       );
 
       const session = await tx.session.create({
-        data: sessionData,
+        data: sessionData as PrismaSessionType,
         include: {
           Transport: true,
         },
@@ -166,7 +173,7 @@ export class BroadcastService {
     }
 
     if (broadcasts.length > 0) {
-      await this._addToQueue(session.cuid, session.Transport, broadcasts);
+      await this._addToQueue(session as Session, session.Transport, broadcasts);
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();
@@ -211,8 +218,6 @@ export class BroadcastService {
         status: BroadcastStatus.SCHEDULED,
       },
     });
-
-    console.log(broadcasts);
 
     if (broadcasts.count === 0) {
       return {
@@ -289,7 +294,7 @@ export class BroadcastService {
   }
 
   private async _addToQueue(
-    sessionId: string,
+    session: Session,
     transport: Transport,
     broadcasts: Broadcast[],
   ) {
@@ -311,7 +316,7 @@ export class BroadcastService {
         return {
           cuid: broadcast.broadcastLogId,
           broadcast: broadcast.broadcastId,
-          session: sessionId,
+          session: session.cuid,
           app: transport.app,
           status: BroadcastStatus.PENDING,
           attempt: broadcast.attempt,
@@ -334,7 +339,7 @@ export class BroadcastService {
     });
 
     await this.broadcastQueue.broadcast(queueTransport, {
-      sessionId: sessionId,
+      sessionId: session.cuid,
       transportId: transport.cuid,
       broadcasts: broadcastQueueData,
     });
@@ -359,6 +364,17 @@ export class BroadcastService {
         perPage: dto.limit,
       },
     );
+  }
+
+  findSelected(appId: string, broadcastIds: string[]) {
+    return this.prisma.broadcast.findMany({
+      where: {
+        app: appId,
+        cuid: {
+          in: broadcastIds,
+        },
+      },
+    });
   }
 
   findOne(cuid: string) {

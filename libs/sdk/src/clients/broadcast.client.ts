@@ -19,6 +19,15 @@ export class BroadcastClient {
     return formatResponse<Broadcast[]>(response);
   }
 
+  async listSelected(broadcastIds: string[], config?: AxiosRequestConfig) {
+    const response = await this._client.post(
+      `${this._prefix}/list-selected`,
+      broadcastIds,
+      config,
+    );
+    return formatResponse<Broadcast[]>(response);
+  }
+
   async create(data: MessageBroadcast, config?: AxiosRequestConfig) {
     const response = await this._client.post(`${this._prefix}`, data, config);
     return formatResponse<Broadcast>(response);

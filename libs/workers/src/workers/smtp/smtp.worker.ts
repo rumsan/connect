@@ -39,7 +39,7 @@ export class SmtpWorker extends TransportWorker {
     broadcastJob: BroadcastJobData;
     broadcastLog: QueueBroadcastLog;
   }): Promise<QueueBroadcastLog> {
-    const { session, broadcast, broadcastLog, broadcastJob } = data;
+    const { session, broadcastLog, broadcastJob } = data;
 
     try {
       this.transport.init(session.Transport?.config as TransportSmtpConfig);
@@ -63,7 +63,7 @@ export class SmtpWorker extends TransportWorker {
     return broadcastLog;
   }
 
-  async makeTransportReady(session: Session): Promise<boolean> {
+  async makeTransportReady(sessionCuid: string): Promise<boolean> {
     //TODO: Ping smtp to check if it is ready
     return true;
   }

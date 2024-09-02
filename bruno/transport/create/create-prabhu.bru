@@ -21,12 +21,14 @@ body:json {
       "type": "API",
       "config": {
           "url": "https://smsml.creationsoftnepal.com/SendBulkV1?token={{prabhu-sms-token}}",
-          "body": [
+          "body" : {
+            "bulkData": [
               {
                   "Message": "{%message.content%}",
                   "MobileNumber": "{%address%}"
               }
-          ]
+            ]
+          }
       }
   }
 }

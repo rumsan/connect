@@ -25,6 +25,14 @@ export class BroadcastController {
     return this.broadcastService.findAll(appId, dto);
   }
 
+  @Post('list-selected')
+  @ApiOperation({
+    summary: 'List selected broadcasts based on cuids',
+  })
+  listSelected(@AppId() appId: string, @Body() broadcastIds: string[]) {
+    return this.broadcastService.findSelected(appId, broadcastIds);
+  }
+
   @Get(':cuid')
   @ApiOperation({
     summary: 'Get a broadcast details with logs by broadcast id',
