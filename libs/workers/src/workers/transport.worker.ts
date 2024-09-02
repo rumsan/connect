@@ -71,7 +71,6 @@ export abstract class TransportWorker implements OnModuleInit {
   }
 
   protected async _makeTransportReady(sessionCuid: string) {
-    // const session: Session = await this.dataProvider.getSession(sessionCuid);
     const isTransportReady = await this.makeTransportReady(sessionCuid);
     if (isTransportReady) {
       await this.transportQueue.confirmReadiness({
@@ -127,30 +126,7 @@ export abstract class TransportWorker implements OnModuleInit {
           broadcastLog,
         });
       }
-
-      //await this.wait(3000);
     }
-
-    // const broadcast: Broadcast = await this.dataProvider.getBroadcast(
-    //   jobData.broadcastId,
-    // );
-
-    // const broadcastLog: QueueBroadcastLog = {
-    //   broadcastLogId: jobData.broadcastLogId || createId(),
-    //   broadcastId: jobData.broadcastId,
-    //   sessionId: jobData.sessionId,
-    //   attempt: jobData.attempt,
-    //   status: BroadcastStatus.SUCCESS,
-    //   queue: this.queueTransport,
-    // };
-    // this.batchManager.startMonitoring(broadcastLog);
-
-    // await this.sendBroadcast({
-    //   session,
-    //   broadcast,
-    //   jobData,
-    //   broadcastLog,
-    // });
   }
 
   abstract sendBroadcast({
