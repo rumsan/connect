@@ -1,7 +1,0 @@
-1. create app
-2. create transport
-3. create broadcast
-   - add to queue (relevant queue)
-   - transport worker consumes
-   - return success or fail , increase attempt etc
-   - add log to queue

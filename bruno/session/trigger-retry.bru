@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{url}}/sessions/{{session-id}}/trigger
+  url: {{url}}/sessions/{{session-id}}/trigger?include_failed=true
   body: json
   auth: none
+}
+
+params:query {
+  include_failed: true
 }
 
 headers {

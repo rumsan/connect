@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { IDataProvider } from './data-provider.interface';
 import { getClient } from '@rumsan/connect/clients';
 import { Session } from '@rumsan/connect/types';
+import { IDataProvider } from './data-provider.interface';
 
 @Injectable()
 export class ApiProvider implements IDataProvider {
@@ -22,6 +22,11 @@ export class ApiProvider implements IDataProvider {
 
   async getBroadcast(broadcastCuid: string) {
     const { data } = await this._client.broadcast.get(broadcastCuid);
+    return data;
+  }
+
+  async getBroadcasts(broadcastCuids: string[]) {
+    const { data } = await this._client.broadcast.listSelected(broadcastCuids);
     return data;
   }
 }

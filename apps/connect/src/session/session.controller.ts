@@ -50,7 +50,10 @@ export class SessionController {
   @ApiOperation({
     summary: 'Trigger a broadcast to retry',
   })
-  triggerBroadcast(@Param('cuid') cuid: string) {
-    return this.sessionService.triggerBroadcast(cuid);
+  triggerBroadcast(
+    @Param('cuid') cuid: string,
+    @Query() dto: { include_failed?: boolean },
+  ) {
+    return this.sessionService.triggerBroadcast(cuid, dto.include_failed);
   }
 }

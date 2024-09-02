@@ -2,34 +2,11 @@ import { Injectable } from '@nestjs/common';
 
 import { IService, Message, TransportApiConfig } from '@rumsan/connect/types';
 import axios, { AxiosInstance } from 'axios';
-import { url } from 'inspector';
-
-export function replacePlaceholders(templateJson: any, data: any): any {
-  // Helper function to recursively replace placeholders
-  function recursiveReplace(obj: any, data: any): any {
-    if (typeof obj === 'string') {
-      return obj.replace(/{%(.*?)%}/g, (_, key) => {
-        const keys = key.split('.');
-        let value = data;
-        keys.forEach((k: any) => {
-          value = value ? value[k] : '';
-        });
-        return value || '';
-      });
-    } else if (Array.isArray(obj)) {
-      return obj.map((item) => recursiveReplace(item, data));
-    } else if (typeof obj === 'object') {
-      const newObj: { [key: string]: any } = {};
-      for (const key in obj) {
-        newObj[key] = recursiveReplace(obj[key], data);
-      }
-      return newObj;
-    }
-    return obj;
-  }
-
-  return recursiveReplace(templateJson, data);
-}
+import {
+  extractBulkDataTemplate,
+  replaceBulkData,
+  replacePlaceholders,
+} from '../utils';
 
 @Injectable()
 export class ApiTransport implements IService {
@@ -53,7 +30,28 @@ export class ApiTransport implements IService {
 
     requestData = replacePlaceholders(requestData, { address, message });
     const res = await this.transport.request(requestData);
+    return res.data;
+  }
 
+  async sendBulk(addresses: string[], message: Message) {
+    const requestData = {
+      url: this.config.url,
+      data: this.config.body,
+      headers: this.config.headers,
+    };
+
+    const bulkDataTpl = extractBulkDataTemplate(this.config);
+
+    const msgContent = addresses.map((address) => {
+      message = replacePlaceholders(message, { address });
+      return replacePlaceholders(bulkDataTpl, {
+        message: message,
+        address: address,
+      });
+    });
+    requestData.data = replaceBulkData(requestData.data, msgContent);
+
+    const res = await this.transport.request(requestData);
     return res.data;
   }
 }

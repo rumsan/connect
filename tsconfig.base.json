@@ -16,7 +16,6 @@
     "strictPropertyInitialization": false,
     "baseUrl": ".",
     "paths": {
-      "@rsconnect/connect/*": ["apps/connect/src/*"],
       "@rsconnect/queue": ["libs/queue/src/index.ts"],
       "@rsconnect/transports": ["libs/transports/src/index.ts"],
       "@rsconnect/transports/*": ["libs/transports/src/*"],

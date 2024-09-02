@@ -16,7 +16,7 @@ export class SessionService {
     private readonly broadcastService: BroadcastService,
   ) {}
 
-  async triggerBroadcast(sessionCuid: string) {
+  async triggerBroadcast(sessionCuid: string, retryFailed?: boolean) {
     const session = await this.prisma.session.findUnique({
       where: {
         cuid: sessionCuid,
@@ -32,6 +32,7 @@ export class SessionService {
     return this.broadcastService.retryBroadcasts(
       session.cuid,
       session.Transport.type as TransportType,
+      retryFailed,
     );
   }
 

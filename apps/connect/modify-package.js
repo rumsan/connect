@@ -24,6 +24,8 @@ try {
     '@prisma/client': '^5.1.0',
     dotenv: '16.4.5',
     readline: '1.3.0',
+    viem: '^2.18.1',
+
   };
 
   packageData.prisma = {

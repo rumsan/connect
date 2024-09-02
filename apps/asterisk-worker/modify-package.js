@@ -22,8 +22,11 @@ try {
     prisma: '^5.1.0',
     'ts-node': '^10.9.1',
     '@prisma/client': '^5.1.0',
-    dotenv: '16.4.5',
-    readline: '1.3.0',
+    'dotenv': '16.4.5',
+    'readline': '1.3.0',
+    'sequelize': '^6.37.3',
+    'sequelize-typescript': '^2.1.6',
+    'sqlite3': '^5.1.7',
   };
 
   packageData.prisma = {
