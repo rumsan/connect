@@ -1,12 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { TriggerType } from '@prisma/client';
 import {
   IsDate,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
 } from 'class-validator';
+
+import { TriggerType } from '@rumsan/connect';
+import { PaginationDto } from '../../utils/pagination.dto';
 
 export class MessageDto {
   @ApiProperty({ description: 'Message content', example: 'Hello World' })
@@ -74,9 +77,6 @@ export class BroadcastDto {
   @IsOptional()
   options?: BroadcastOptionsDto;
 }
-
-import { IsIn } from 'class-validator';
-import { PaginationDto } from '../../utils/pagination.dto';
 
 export class ListBroadcastDto extends PaginationDto {
   @IsIn(['createdAt'])

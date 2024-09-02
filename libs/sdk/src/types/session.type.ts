@@ -14,7 +14,7 @@ export enum SessionStatus {
 }
 
 export type Session = {
-  id: number;
+  id?: number;
   cuid: string;
   app?: string;
   transport: string;
@@ -22,7 +22,7 @@ export type Session = {
   addresses: Array<string>;
   maxAttempts: number;
   triggerType: TriggerType;
-  webhook: string | null;
+  webhook?: string | null;
   options?: Record<string, any> | null;
   status: SessionStatus;
   totalAddresses: number;

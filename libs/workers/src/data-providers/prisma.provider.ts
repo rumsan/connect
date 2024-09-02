@@ -25,4 +25,14 @@ export class PrismaProvider implements IDataProvider {
       },
     })) as Broadcast;
   }
+
+  async getBroadcasts(broadcastCuids: string[]): Promise<Broadcast[]> {
+    return (await this.prisma.broadcast.findMany({
+      where: {
+        cuid: {
+          in: broadcastCuids,
+        },
+      },
+    })) as Broadcast[];
+  }
 }

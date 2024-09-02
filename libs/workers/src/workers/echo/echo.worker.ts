@@ -72,7 +72,7 @@ export class EchoWorker extends TransportWorker {
     return broadcastLog;
   }
 
-  async makeTransportReady(session: Session): Promise<boolean> {
+  async makeTransportReady(sessionCuid: string): Promise<boolean> {
     return true;
   }
 }

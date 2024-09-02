@@ -70,9 +70,9 @@ export abstract class TransportWorker implements OnModuleInit {
     });
   }
 
-  private async _makeTransportReady(sessionCuid: string) {
-    const session: Session = await this.dataProvider.getSession(sessionCuid);
-    const isTransportReady = await this.makeTransportReady(session);
+  protected async _makeTransportReady(sessionCuid: string) {
+    // const session: Session = await this.dataProvider.getSession(sessionCuid);
+    const isTransportReady = await this.makeTransportReady(sessionCuid);
     if (isTransportReady) {
       await this.transportQueue.confirmReadiness({
         sessionCuid,
@@ -85,11 +85,12 @@ export abstract class TransportWorker implements OnModuleInit {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async _sendBroadcast(jobData: QueueBroadcastJobData) {
+  async _sendBroadcast(jobData: QueueBroadcastJobData) {
     const session: Session = await this.dataProvider.getSession(
       jobData.sessionId,
     );
 
+    const broadcastIds = [];
     for (const job of jobData.broadcasts) {
       const broadcastLog: QueueBroadcastLog = {
         broadcastLogId: job.broadcastLogId,
@@ -99,30 +100,33 @@ export abstract class TransportWorker implements OnModuleInit {
         status: BroadcastStatus.SUCCESS,
         queue: this.queueTransport,
       };
-
-      //this.batchManager.startMonitoring(broadcastLog);
+      broadcastIds.push(broadcastLog.broadcastId);
     }
 
+    const broadcasts: Broadcast[] = await this.dataProvider.getBroadcasts(
+      broadcastIds,
+    );
+
     for (const job of jobData.broadcasts) {
-      const broadcast: Broadcast = await this.dataProvider.getBroadcast(
-        job.broadcastId,
-      );
+      const broadcast = broadcasts.find((b) => b.cuid === job.broadcastId);
 
-      const broadcastLog: QueueBroadcastLog = {
-        broadcastLogId: job.broadcastLogId,
-        broadcastId: job.broadcastId,
-        sessionId: jobData.sessionId,
-        attempt: job.attempt,
-        status: BroadcastStatus.SUCCESS,
-        queue: this.queueTransport,
-      };
+      if (broadcast) {
+        const broadcastLog: QueueBroadcastLog = {
+          broadcastLogId: job.broadcastLogId,
+          broadcastId: job.broadcastId,
+          sessionId: jobData.sessionId,
+          attempt: job.attempt,
+          status: BroadcastStatus.SUCCESS,
+          queue: this.queueTransport,
+        };
 
-      await this.sendBroadcast({
-        session,
-        broadcast,
-        broadcastJob: job,
-        broadcastLog,
-      });
+        await this.sendBroadcast({
+          session,
+          broadcast,
+          broadcastJob: job,
+          broadcastLog,
+        });
+      }
 
       //await this.wait(3000);
     }
@@ -151,15 +155,15 @@ export abstract class TransportWorker implements OnModuleInit {
 
   abstract sendBroadcast({
     session,
-    broadcast,
     broadcastJob,
     broadcastLog,
+    broadcast,
   }: {
     session: Session;
-    broadcast: Broadcast;
     broadcastJob: BroadcastJobData;
     broadcastLog: QueueBroadcastLog;
+    broadcast?: Broadcast;
   }): Promise<QueueBroadcastLog>;
 
-  abstract makeTransportReady(session: Session): Promise<boolean>;
+  abstract makeTransportReady(sessionCuid: string): Promise<boolean>;
 }

@@ -1,12 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { BroadcastLogQueue, TransportQueue } from '@rsconnect/queue';
-import { ApiTransport } from '@rsconnect/transports';
+import { ApiTransport, extractBulkDataTemplate } from '@rsconnect/transports';
 import { QUEUES } from '@rumsan/connect';
 import {
-  Broadcast,
   BroadcastJobData,
   BroadcastStatus,
   Message,
+  QueueBroadcastJobData,
   QueueBroadcastLog,
   Session,
   TransportApiConfig,
@@ -32,23 +32,83 @@ export class ApiWorker extends TransportWorker {
     super(dataProvider, channel, transportQueue);
   }
 
+  override async _sendBroadcast(jobData: QueueBroadcastJobData) {
+    const session: Session = await this.dataProvider.getSession(
+      jobData.sessionId,
+    );
+
+    this.transport.init(session.Transport?.config as TransportApiConfig);
+    const bulkDataTpl = extractBulkDataTemplate(session.Transport?.config);
+
+    if (bulkDataTpl) {
+      this.sendBulkBroadcast(session, jobData);
+    } else {
+      for (const job of jobData.broadcasts) {
+        const broadcastLog: QueueBroadcastLog = {
+          broadcastLogId: job.broadcastLogId,
+          broadcastId: job.broadcastId,
+          sessionId: jobData.sessionId,
+          attempt: job.attempt,
+          status: BroadcastStatus.PENDING,
+          queue: this.queueTransport,
+        };
+
+        await this.sendBroadcast({
+          session,
+          broadcastLog,
+          broadcastJob: job,
+        });
+      }
+    }
+    await this._makeTransportReady(jobData.sessionId);
+  }
+
+  async sendBulkBroadcast(
+    session: Session,
+    jobData: QueueBroadcastJobData,
+  ): Promise<void> {
+    const addresses = jobData.broadcasts.map((b) => b.address);
+    let result;
+    let status = BroadcastStatus.SUCCESS;
+    try {
+      result = await this.transport.sendBulk(
+        addresses,
+        session.message as Message,
+      );
+    } catch (e: any) {
+      result = { error: e.message };
+      status = BroadcastStatus.FAIL;
+    }
+
+    for (const job of jobData.broadcasts) {
+      const broadcastLog: QueueBroadcastLog = {
+        broadcastLogId: job.broadcastLogId,
+        broadcastId: job.broadcastId,
+        sessionId: jobData.sessionId,
+        attempt: job.attempt,
+        status,
+        queue: this.queueTransport,
+        details: result,
+      };
+      await this.broadcastLogQueue.add(broadcastLog);
+    }
+  }
+
   async sendBroadcast(data: {
     session: Session;
-    broadcast: Broadcast;
     broadcastJob: BroadcastJobData;
     broadcastLog: QueueBroadcastLog;
   }): Promise<QueueBroadcastLog> {
-    const { session, broadcast, broadcastLog, broadcastJob } = data;
+    const { session, broadcastLog, broadcastJob } = data;
 
     try {
-      this.transport.init(session.Transport?.config as TransportApiConfig);
       const res = await this.transport.send(
         broadcastJob.address,
         session.message as Message,
       );
 
       broadcastLog.status = BroadcastStatus.SUCCESS;
-      broadcastLog.details = { messageId: res };
+      broadcastLog.details = res;
     } catch (e: any) {
       broadcastLog.status = BroadcastStatus.FAIL;
       broadcastLog.details = { error: e.message };
@@ -56,13 +116,10 @@ export class ApiWorker extends TransportWorker {
 
     //send log to connect server
     await this.broadcastLogQueue.add(broadcastLog);
-    //remove job from batchManager
-    await this.batchManager.endMonitoring(broadcastJob.broadcastLogId);
-
     return broadcastLog;
   }
 
-  async makeTransportReady(session: Session): Promise<boolean> {
+  async makeTransportReady(sessionCuid: string): Promise<boolean> {
     //TODO: Ping api to check if it is ready
     return true;
   }

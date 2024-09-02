@@ -60,8 +60,9 @@ export class AsteriskWorker extends TransportWorker {
     return broadcastLog;
   }
 
-  async makeTransportReady(session: Session) {
+  async makeTransportReady(sessionCuid: string) {
     try {
+      const session: Session = await this.dataProvider.getSession(sessionCuid);
       //return true;
       const cacheSession = await this.sessionCache.findOne({
         where: { cuid: session.cuid },
