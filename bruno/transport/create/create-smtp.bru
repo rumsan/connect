@@ -34,6 +34,8 @@ body:json {
 tests {
   var data = res.getBody().data;
   
-  bru.setVar("transport-id-smtp", data.cuid);
-  bru.setVar("transport-id", data.cuid);
+  if(data){
+    bru.setVar("transport-id-smtp", data.cuid);
+    bru.setVar("transport-id", data.cuid);
+  }
 }

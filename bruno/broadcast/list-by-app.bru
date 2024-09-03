@@ -16,5 +16,8 @@ headers {
 
 tests {
   var data = res.getBody().data;
-  bru.setVar("broadcast-id", data[0].cuid);
+  
+  if(data){
+    bru.setVar("broadcast-id", data[0].cuid);
+  }
 }

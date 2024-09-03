@@ -22,13 +22,13 @@ body:json {
       "meta": {}
     },
     "addresses": [
-      "9801234567"
+      "{{dev-phone}}"
     ],
     "maxAttempts": 2,
-    "trigger": "IMMEDIATE",
+    "trigger": "SCHEDULED",
     "webhook": "",
     "options": {
-      "scheduledTimestamp": "2021-09-01T00:00:00Z",
+      "scheduledTime": "2h",
       "allowedTimeFrame": "09:00-18:00",
       "attemptIntervalMinutes": "5"
     }
@@ -37,5 +37,8 @@ body:json {
 
 tests {
   var data = res.getBody().data;
-  bru.setVar("session-id", data.cuid);
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
 }

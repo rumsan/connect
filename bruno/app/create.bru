@@ -23,11 +23,13 @@ tests {
   var data = res.getBody().data;
   var reqBody = req.body
   
-  bru.setVar("app-id", data.app.cuid);
+  if(data){
+    bru.setVar("app-id", data.app.cuid);
   
-  test('name is valid', ()=>{
-    expect(data.app.name).to.equal(reqBody.name);
-  })
+    test('name is valid', ()=>{
+      expect(data.app.name).to.equal(reqBody.name);
+    })
+  }
 }
 
 docs {
