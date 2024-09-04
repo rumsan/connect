@@ -361,7 +361,7 @@ export class BroadcastService {
       },
       {
         page: dto.page,
-        perPage: dto.limit,
+        perPage: dto.perPage,
       },
     );
   }
