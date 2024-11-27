@@ -34,7 +34,11 @@
       "options": {
         "targetName": "test"
       },
-      "exclude": ["apps/connect-e2e/**/*", "apps/asterisk-worker-e2e/**/*"]
+      "exclude": [
+        "apps/connect-e2e/**/*",
+        "apps/asterisk-worker-e2e/**/*",
+        "apps/asterisk-ivr-e2e/**/*"
+      ]
     }
   ],
   "targetDefaults": {

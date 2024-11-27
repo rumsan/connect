@@ -1,0 +1,24 @@
+{
+  "name": "asterisk-ivr",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/asterisk-ivr/src",
+  "projectType": "application",
+  "tags": [],
+  "targets": {
+    "serve": {
+      "executor": "@nx/js:node",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "asterisk-ivr:build"
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "asterisk-ivr:build:development"
+        },
+        "production": {
+          "buildTarget": "asterisk-ivr:build:production"
+        }
+      }
+    }
+  }
+}
