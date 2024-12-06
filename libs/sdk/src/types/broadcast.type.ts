@@ -54,3 +54,11 @@ export type Broadcast = {
   Session?: Partial<Session> | null;
   Logs?: BroadcastLog[];
 };
+
+export type BroadcastCountsResponse = {
+  data: {
+    fail: number;
+    success: number;
+    total: number;
+  };
+};

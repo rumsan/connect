@@ -430,4 +430,34 @@ export class BroadcastService {
     }
     return true;
   }
+
+  async broadcastStatusCount(appId: string) {
+    const broadcastCounts = await this.prisma.broadcast.groupBy({
+      by: ['status'],
+      where: {
+        app: appId,
+      },
+      _count: {
+        status: true,
+      },
+    });
+    const totalCount = await this.prisma.broadcast.count({
+      where: {
+        app: appId,
+      },
+    });
+    const counts = broadcastCounts.reduce(
+      (acc, item) => {
+        acc[item.status.toLowerCase()] = item._count.status;
+        return acc;
+      },
+      { fail: 0, success: 0 },
+    );
+    return {
+      data: {
+        ...counts,
+        total: totalCount,
+      },
+    };
+  }
 }
