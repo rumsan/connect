@@ -1,6 +1,7 @@
 import { formatResponse } from '@rumsan/sdk/utils';
 import { AxiosInstance, AxiosRequestConfig } from 'axios';
-import { Session } from '../types';
+import { BroadcastLog } from '../types';
+import { PaginationTypes } from '../types/pagination.type';
 import { ApiClient } from './api.client';
 
 export class BroadcastLogClient {
@@ -9,8 +10,11 @@ export class BroadcastLogClient {
   constructor(private apiClient: ApiClient) {
     this._client = apiClient.client;
   }
-  async list(config?: AxiosRequestConfig) {
-    const response = await this._client.get(`${this._prefix}`, config);
-    return formatResponse<Session>(response);
+  async list(payload?: PaginationTypes, config?: AxiosRequestConfig) {
+    const response = await this._client.get(`${this._prefix}`, {
+      params: payload,
+      ...config,
+    });
+    return formatResponse<BroadcastLog[]>(response);
   }
 }
