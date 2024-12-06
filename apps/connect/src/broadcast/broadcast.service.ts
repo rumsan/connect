@@ -432,7 +432,6 @@ export class BroadcastService {
   }
 
   async broadcastStatusCount(appId: string) {
-    console.log(appId);
     const broadcastCounts = await this.prisma.broadcast.groupBy({
       by: ['status'],
       where: {

@@ -39,13 +39,4 @@ export class PaginationDto {
   @IsString()
   @IsIn(['asc', 'desc'])
   order: 'asc' | 'desc' = 'asc';
-
-  @ApiProperty({
-    example: 10,
-    description: 'number of items per page',
-    required: false,
-  })
-  @Type(() => Number)
-  @IsNumber()
-  perPage?: number = 100;
 }

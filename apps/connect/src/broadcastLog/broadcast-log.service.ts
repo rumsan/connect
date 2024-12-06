@@ -110,7 +110,7 @@ export class BroadcastLogService {
       },
       {
         page: dto.page,
-        perPage: dto.perPage,
+        perPage: dto.limit,
       },
     );
   }

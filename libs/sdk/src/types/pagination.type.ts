@@ -1,6 +1,6 @@
 export type PaginationTypes = {
   page?: number;
-  perPage?: number;
+  limit?: number;
   sort?: string;
-  filters?: string;
+  order?: string;
 };
