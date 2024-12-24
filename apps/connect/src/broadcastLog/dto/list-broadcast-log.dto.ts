@@ -1,5 +1,5 @@
-import { PaginationDto } from '../../utils/pagination.dto';
 import { IsIn } from 'class-validator';
+import { PaginationDto } from '../../utils/pagination.dto';
 
 export class ListBroadcastLogDto extends PaginationDto {
   @IsIn(['createdAt'])

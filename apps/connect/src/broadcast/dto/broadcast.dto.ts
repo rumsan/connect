@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsDate,
+  IsDateString,
   IsEnum,
   IsIn,
   IsNotEmpty,
@@ -8,7 +9,7 @@ import {
   IsString,
 } from 'class-validator';
 
-import { TriggerType } from '@rumsan/connect';
+import { BroadcastStatus, TriggerType } from '@rumsan/connect';
 import { PaginationDto } from '../../utils/pagination.dto';
 
 export class MessageDto {
@@ -83,4 +84,33 @@ export class ListBroadcastDto extends PaginationDto {
   override sort: string = 'createdAt';
 
   override order: 'asc' | 'desc' = 'desc';
+
+  @ApiProperty({
+    example: 'SUCCESS',
+    description: 'Filter by status (SUCCESS, PENDING, FAILED)',
+    required: false,
+  })
+  @IsOptional()
+  @IsEnum(BroadcastStatus, {
+    message: 'status must be one of PENDING,SCHEDULED, SUCCESS, or FAILED',
+  })
+  status?: BroadcastStatus;
+
+  @ApiProperty({
+    example: '2024-12-24',
+    description: 'Start date for filtering',
+    required: false,
+  })
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiProperty({
+    example: '2024-12-31',
+    description: 'End date for filtering',
+    required: false,
+  })
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 }

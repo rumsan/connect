@@ -1,4 +1,5 @@
 import { BroadcastLog } from './broadcastLog.type';
+import { PaginationTypes } from './pagination.type';
 import { Session, TriggerType } from './session.type';
 import { Transport } from './transport.type';
 
@@ -26,6 +27,12 @@ export type MessageBroadcast = {
     attemptIntervalMinutes?: string; //default: 60 or 15,60,120,240
   };
 };
+
+export interface ListBroadcast extends PaginationTypes {
+  status?: BroadcastStatus;
+  startDate?: Date;
+  endDate?: Date;
+}
 
 export interface EmailMessage extends Message {
   meta: {
