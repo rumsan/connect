@@ -15,9 +15,12 @@ import {
   Session,
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
+import { IvrModel } from '../entities/ivr.entity';
 import { SessionModel } from '../entities/session.entity';
+
 import { wait } from '../utils';
 import { AudioService } from './audio.service';
+import { IVRService } from './ivr.service';
 import { PbxService } from './pbx.service';
 
 @Injectable()
@@ -32,10 +35,13 @@ export class AsteriskWorker extends TransportWorker {
     override readonly channel: ChannelWrapper,
     @InjectModel(SessionModel)
     private sessionCache: typeof SessionModel,
+    @InjectModel(IvrModel)
+    private ivrCache: typeof IvrModel,
     private readonly audioService: AudioService,
     override readonly transportQueue: TransportQueue,
     private readonly broadcastLogQueue: BroadcastLogQueue,
     override readonly batchManager: BatchManger,
+    private readonly ivrService: IVRService,
     private readonly pbxService: PbxService,
   ) {
     super(dataProvider, channel, transportQueue);
@@ -49,9 +55,15 @@ export class AsteriskWorker extends TransportWorker {
   }): Promise<QueueBroadcastLog> {
     const { session, broadcast, broadcastLog } = data;
     broadcastLog.status = BroadcastStatus.PENDING;
-
     try {
-      await this.pbxService.sendBroadcast(broadcast, broadcastLog);
+      if (session?.message?.meta?.type === 'new-ivr') {
+        const { jsonData } = await this.ivrCache.findOne({
+          where: { url: session?.message?.content.split('/').pop() },
+        });
+        await this.ivrService.sendBroadcast(broadcast, broadcastLog, jsonData);
+      } else {
+        await this.pbxService.sendBroadcast(broadcast, broadcastLog);
+      }
     } catch (e: any) {
       console.log(e);
       broadcastLog.status = BroadcastStatus.FAIL;
@@ -59,7 +71,6 @@ export class AsteriskWorker extends TransportWorker {
     }
     return broadcastLog;
   }
-
   async makeTransportReady(sessionCuid: string) {
     try {
       const session: Session = await this.dataProvider.getSession(sessionCuid);
@@ -75,10 +86,22 @@ export class AsteriskWorker extends TransportWorker {
         });
       }
 
-      //console.log(cacheSession);
-
-      await this.audioService.makeAudioReady(session);
-
+      if (session.message.meta.type === 'new-ivr') {
+        const cacheIvr = await this.ivrCache.findOne({
+          where: { url: session?.message?.content.split('/').pop() },
+        });
+        if (!cacheIvr) {
+          const { url, preparedData } = await this.audioService.makeJSONReady(
+            session,
+          );
+          await this.ivrCache.create({
+            url,
+            jsonData: JSON.stringify(preparedData),
+          });
+        }
+      } else {
+        await this.audioService.makeAudioReady(session);
+      }
       await wait(1500);
       return true;
     } catch (e: any) {
