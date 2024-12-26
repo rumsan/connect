@@ -42,7 +42,7 @@ export class PbxService implements OnModuleInit, OnModuleDestroy {
       `${broadcastLog.broadcastId} <${broadcast.address}>`,
       [broadcastLog.broadcastLogId, broadcast.session, broadcast.address],
     );
-    this.batchManager.startMonitoring(channel.id, broadcastLog);
+    this.batchManager.startMonitoring(channel?.id, broadcastLog);
     console.log('=====BroadcastStarted=====', channel?.caller?.number);
   }
 
@@ -51,13 +51,13 @@ export class PbxService implements OnModuleInit, OnModuleDestroy {
     callerId: string,
     appArgs: string[] = [],
   ) {
-    return this.client.channels.originate({
+    return this?.client?.channels.originate({
       endpoint: callEndpoint,
       context: 'from-internal',
       //channelId: uniqueId,
       priority: 1,
-      callerId: callerId || this.config.callerId || 'Rumsan Connect <0000>',
-      app: this.config.appName,
+      callerId: callerId || this?.config?.callerId || 'Rumsan Connect <0000>',
+      app: this?.config?.appName,
       appArgs: appArgs.toString(),
     });
   }

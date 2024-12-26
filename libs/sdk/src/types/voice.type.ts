@@ -6,6 +6,7 @@ export type CallDetails = {
   duration?: number;
   hangupDetails?: Record<string, string>;
   cdr?: Record<string, string>;
+  ivrSequence?: string[];
 };
 
 export enum CallDisposition {

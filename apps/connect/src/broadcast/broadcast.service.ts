@@ -356,6 +356,15 @@ export class BroadcastService {
       {
         where: {
           app: appId,
+          status: dto.status,
+          ...(dto.startDate && dto.endDate
+            ? {
+                createdAt: {
+                  gte: new Date(dto.startDate),
+                  lte: new Date(dto.endDate),
+                },
+              }
+            : {}),
         },
         orderBy,
       },

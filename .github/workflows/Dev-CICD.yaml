@@ -10,7 +10,7 @@ on:
 
 env:
   CI: false
-  env_npmrc: ${{ secrets.ENV_NPMRC }}
+  # env_npmrc: ${{ secrets.ENV_NPMRC }}
 
 jobs:
   deploy:

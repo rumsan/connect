@@ -35,6 +35,7 @@ export class AMIService {
 
   connect() {
     console.log(amiConfig);
+    const ivrSequence: string[] = [];
     this.ami = new AsteriskManager(
       amiConfig.port,
       amiConfig.host,
@@ -67,10 +68,12 @@ export class AMIService {
             trunk: amiConfig.trunk,
             disposition,
             hangupDetails: evt,
+            ivrSequence,
           };
           await this.broadcastLogQueue.addVoice(broadcastLog);
           await this.batchManager.endMonitoring(evt.uniqueid);
           this.logger.log(`Call Hangup: ${evt.uniqueid}`);
+          ivrSequence.length = 0;
         } else {
           console.log('=====> Call Received: ', evt.calleridnum);
         }
@@ -97,6 +100,10 @@ export class AMIService {
             this.logger.log(`CDR Sent: ${broadcastLogId}`);
           }, 5000);
         }
+      }
+
+      if (eventType === 'DTMFEnd') {
+        ivrSequence.push(evt.digit);
       }
     });
   }
