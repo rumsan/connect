@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Session } from '@rumsan/connect/types';
+import axios from 'axios';
 import ffmpeg from 'fluent-ffmpeg';
 import * as fs from 'fs/promises';
 import { dirname } from 'path';
@@ -26,7 +27,7 @@ export class AudioService {
     const rawFile = `.data/${session.cuid}-raw.wav`;
     const convertedFile = `.data/${session.cuid}.wav`;
     const asteriskFile = `${sftpConfig.audioPath}/${session.cuid}.wav`;
-
+    console.log({ makeAudioReady: session, convertedFile, asteriskFile });
     // download file from message.content
     await this.downloadFile(session.message.content, rawFile);
 
@@ -39,6 +40,34 @@ export class AudioService {
     // delete local files
     await this.removeFiles([rawFile, convertedFile]);
     return true;
+  }
+
+  async makeJSONReady(session: Session) {
+    const { data: record } = await axios(session.message.content);
+    const messageContentHash = session.message.content.split('/').pop();
+    // TODO: Check if the JSON sample is following the pattern
+    const urls = await this.extractAudioURLs(record);
+    for (const url of urls) {
+      const urlHash = url.split('/').pop();
+      const rawFile = `.data/${urlHash}-raw.wav`;
+      const convertedFile = `.data/${urlHash}.wav`;
+      const asteriskFile = `${sftpConfig.audioPath}/${urlHash}.wav`;
+      // download file from message.content
+      await this.downloadFile(url, rawFile);
+
+      //convert file bitrate using ffmpeg
+      await this.convertAudio(rawFile, convertedFile);
+
+      // upload file to asterisk server
+      await this.uploadFileToRemote(convertedFile, asteriskFile);
+
+      // delete local files
+      await this.removeFiles([rawFile, convertedFile]);
+
+      // Update existing JSON with asteriskFileUrl
+      await this.replacePromptsIfMatch(record, url, asteriskFile);
+    }
+    return { url: messageContentHash, preparedData: record };
   }
 
   async downloadFile(url: string, outputPath: string) {
@@ -57,6 +86,7 @@ export class AudioService {
 
     await fs.writeFile(outputPath, buffer);
     this.logger.log('Audio file fetch complete.');
+    return true;
   }
 
   async convertAudio(inputFilePath: string, outputFilePath: string) {
@@ -82,16 +112,55 @@ export class AudioService {
     });
   }
 
+  async extractAudioURLs(data: unknown) {
+    // Regular expression to match URLs
+    const urlPattern = /https?:\/\/[^\s,]+/g;
+
+    // Function to recursively extract URLs from the JSON
+    function extractUrls(obj, parentKey = '') {
+      let urls = [];
+      if (typeof obj === 'object' && obj !== null) {
+        for (const key in obj) {
+          // Skip the 'destination' key
+          if (key !== 'destination') {
+            urls = urls.concat(extractUrls(obj[key], key));
+          }
+        }
+      } else if (typeof obj === 'string' && urlPattern.test(obj)) {
+        urls.push(obj.match(urlPattern)[0]); // Extract the URL from the string
+      }
+      return urls;
+    }
+
+    // Extract URLs and remove duplicates
+    const urls = [...new Set(extractUrls(data))];
+    return urls;
+  }
+
+  async replacePromptsIfMatch(obj: any, oldPrompt: string, newPrompt: string) {
+    for (const key in obj) {
+      if (typeof obj[key] === 'object') {
+        this.replacePromptsIfMatch(obj[key], oldPrompt, newPrompt); // Recursively call for nested objects
+      } else if (key === 'prompt' && obj[key] === oldPrompt) {
+        obj[key] = `sound:${newPrompt}`; // Replace only if the prompt matches the oldPrompt
+      }
+    }
+    return true;
+  }
+
   async uploadFileToRemote(inputFilePath: string, remoteFilePath: string) {
     try {
+      console.log({ sftpConfig });
       await this.sftp.connect(sftpConfig);
       await this.sftp.put(inputFilePath, remoteFilePath);
-      this.sftp.end();
+      console.log('Upload Completed');
       return true;
     } catch (err) {
+      console.log({ err });
       this.logger.error(err);
-      this.sftp.end();
       throw err;
+    } finally {
+      await this.sftp.end();
     }
   }
 
