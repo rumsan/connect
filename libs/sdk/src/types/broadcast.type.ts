@@ -1,4 +1,5 @@
 import { BroadcastLog } from './broadcastLog.type';
+import { PaginationTypes } from './pagination.type';
 import { Session, TriggerType } from './session.type';
 import { Transport } from './transport.type';
 
@@ -27,6 +28,12 @@ export type MessageBroadcast = {
   };
 };
 
+export interface ListBroadcast extends PaginationTypes {
+  status?: BroadcastStatus;
+  startDate?: Date;
+  endDate?: Date;
+}
+
 export interface EmailMessage extends Message {
   meta: {
     subject: string;
@@ -53,4 +60,12 @@ export type Broadcast = {
   Transport?: Partial<Transport> | null;
   Session?: Partial<Session> | null;
   Logs?: BroadcastLog[];
+};
+
+export type BroadcastCountsResponse = {
+  data: {
+    fail: number;
+    success: number;
+    total: number;
+  };
 };

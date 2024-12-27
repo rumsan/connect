@@ -1,6 +1,11 @@
 import { formatResponse } from '@rumsan/sdk/utils';
 import { AxiosInstance, AxiosRequestConfig } from 'axios';
-import { Broadcast, MessageBroadcast } from '../types';
+import {
+  Broadcast,
+  BroadcastCountsResponse,
+  ListBroadcast,
+  MessageBroadcast,
+} from '../types';
 import { ApiClient } from './api.client';
 
 export class BroadcastClient {
@@ -14,8 +19,11 @@ export class BroadcastClient {
     return formatResponse<Broadcast>(response);
   }
 
-  async list(config?: AxiosRequestConfig) {
-    const response = await this._client.get(`${this._prefix}`, config);
+  async list(payload?: ListBroadcast, config?: AxiosRequestConfig) {
+    const response = await this._client.get(`${this._prefix}`, {
+      params: payload,
+      ...config,
+    });
     return formatResponse<Broadcast[]>(response);
   }
 
@@ -31,5 +39,13 @@ export class BroadcastClient {
   async create(data: MessageBroadcast, config?: AxiosRequestConfig) {
     const response = await this._client.post(`${this._prefix}`, data, config);
     return formatResponse<Broadcast>(response);
+  }
+
+  async getStatusCount(config?: AxiosRequestConfig) {
+    const response = await this._client.get(
+      `${this._prefix}/status-count`,
+      config,
+    );
+    return formatResponse<BroadcastCountsResponse>(response);
   }
 }

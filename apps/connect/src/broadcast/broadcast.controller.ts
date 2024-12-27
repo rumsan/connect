@@ -25,6 +25,11 @@ export class BroadcastController {
     return this.broadcastService.findAll(appId, dto);
   }
 
+  @Get('status-count')
+  getStatusCount(@AppId() appId: string) {
+    return this.broadcastService.broadcastStatusCount(appId);
+  }
+
   @Post('list-selected')
   @ApiOperation({
     summary: 'List selected broadcasts based on cuids',
