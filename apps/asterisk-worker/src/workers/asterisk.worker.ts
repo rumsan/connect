@@ -99,6 +99,7 @@ export class AsteriskWorker extends TransportWorker {
             jsonData: JSON.stringify(preparedData),
           });
         }
+        await wait(5000);
       } else {
         await this.audioService.makeAudioReady(session);
       }
