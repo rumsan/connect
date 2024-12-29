@@ -25,7 +25,9 @@ body:json {
 
 tests {
   var data = res.getBody().data;
-    
-  bru.setVar("transport-id-voice", data.cuid);
-  bru.setVar("transport-id", data.cuid);
+  
+  if(data){
+    bru.setVar("transport-id-voice", data.cuid);
+    bru.setVar("transport-id", data.cuid);
+  }
 }

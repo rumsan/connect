@@ -27,10 +27,10 @@ body:json {
       "{{dev-email}}|6"
     ],
     "maxAttempts": 5,
-    "trigger": "IMMEDIATE",
+    "trigger": "SCHEDULED",
     "webhook": "",
     "options": {
-      "scheduledTimestamp": "2021-09-01T00:00:00Z",
+      "scheduledTime": "3d",
       "attemptIntervalMinutes": "4"
     }
   }
@@ -38,5 +38,8 @@ body:json {
 
 tests {
   var data = res.getBody().data;
-  bru.setVar("session-id", data.cuid);
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
 }

@@ -19,7 +19,7 @@ export class PaginationDto {
   })
   @Type(() => Number)
   @IsNumber()
-  limit?: number = 100;
+  perPage?: number = 100;
 
   @ApiProperty({
     example: 'createdAt',

@@ -30,7 +30,7 @@ body:json {
     "trigger": "IMMEDIATE",
     "webhook": "",
     "options": {
-      "scheduledTimestamp": "2021-09-01T00:00:00Z",
+      "scheduledTime": "2h",
       "attemptIntervalMinutes": "5"
     }
   }
@@ -38,5 +38,8 @@ body:json {
 
 tests {
   var data = res.getBody().data;
-  bru.setVar("session-id", data.cuid);
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
 }

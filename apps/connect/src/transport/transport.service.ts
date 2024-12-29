@@ -19,7 +19,7 @@ export class TransportService {
 
   findAll(
     appId: string,
-    dto: ListTransportDto
+    dto: ListTransportDto,
   ): Promise<PaginatorTypes.PaginatedResult<Transport>> {
     const where = {
       app: appId,
@@ -39,8 +39,8 @@ export class TransportService {
       },
       {
         page: dto.page,
-        perPage: dto.limit,
-      }
+        perPage: dto.perPage,
+      },
     );
   }
 

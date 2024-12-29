@@ -52,7 +52,7 @@ export class SessionService {
       },
       {
         page: dto.page,
-        perPage: dto.limit,
+        perPage: dto.perPage,
       },
     );
   }
@@ -84,7 +84,7 @@ export class SessionService {
       },
       {
         page: dto.page,
-        perPage: dto.limit,
+        perPage: dto.perPage,
       },
     );
   }
@@ -105,7 +105,7 @@ export class SessionService {
       },
       {
         page: dto.page,
-        perPage: dto.limit,
+        perPage: dto.perPage,
       },
     );
   }
