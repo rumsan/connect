@@ -70,7 +70,7 @@ export class PbxService implements OnModuleInit, OnModuleDestroy {
     playback.on('PlaybackFinished', async (event, media) => {
       try {
         await channel.hangup();
-      } catch (error) {}
+      } catch (error) { }
       console.log('=====PlaybackFinished=====', channel?.caller?.number);
     });
 
@@ -119,7 +119,7 @@ export class PbxService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit() {
-    await this.connect();
+    // await this.connect();
   }
 
   async onModuleDestroy() {
