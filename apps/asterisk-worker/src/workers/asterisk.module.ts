@@ -8,7 +8,6 @@ import { AMIService } from './ami.service';
 import { AsteriskWorker } from './asterisk.worker';
 import { AudioService } from './audio.service';
 import { IVRService } from './ivr.service';
-import { PbxService } from './pbx.service';
 
 @Module({
   imports: [
@@ -22,8 +21,8 @@ import { PbxService } from './pbx.service';
     AMIService,
     BatchManger,
     IVRService,
-    PbxService,
+    // PbxService,
   ],
   exports: [AsteriskWorker, AMIService],
 })
-export class AsteriskWorkerModule {}
+export class AsteriskWorkerModule { }

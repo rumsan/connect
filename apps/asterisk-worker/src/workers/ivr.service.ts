@@ -39,7 +39,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   async sendBroadcast(
     broadcast: Broadcast,
     broadcastLog: QueueBroadcastLog,
-    ivrJSON: string,
+    ivrJSON?: string,
   ) {
     this.ivrDialPlan = ivrJSON;
     let callEndpoint = broadcast.address;
@@ -91,6 +91,8 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onChannelDestroyed(event, channel: Channel) {
+    console.log("DESTROYED", { event, channel });
+
     console.log('=====ChannelDestroyed=====', channel?.caller?.number);
     this.logger.log(`Channel ${channel.id} was destroyed`);
   }
@@ -107,7 +109,8 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     const [broadcastLogId, sessionId, address] = event.args;
     console.log('=====StasisStart=====', address);
     this.logger.log('StasisStart', channel);
-    await this.executeIVR(channel);
+    if (this.ivrDialPlan) return this.executeIVR(channel);
+    return this.playAudio(sessionId, channel);
   }
 
   async onStasisEnd(event, channel) {
@@ -231,11 +234,32 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
   //============Actual Code for Logic Implementation===============
 
+  // Play voice message
+  async playAudio(sessionId: string, channel: Channel) {
+    //const audio = `${this.config.audioPath}/cb2ic9gls9afmjmsp0tom5mo`;
+    const audio = `${this.config.audioPath}/${sessionId}`;
+
+    const playback = this.client.Playback();
+    playback.on('PlaybackFinished', async (event, media) => {
+      try {
+        await channel.hangup();
+      } catch (error) { }
+      console.log('=====PlaybackFinished=====', channel?.caller?.number);
+    });
+
+    await channel.play({ media: `sound:${audio}` }, playback);
+    this.logger.log('Playing recording...');
+    playback.on('PlaybackStarted', (event, media) => {
+      console.log('=====PlaybackStarted=====', channel?.caller?.number);
+    });
+  }
+
   async executeIVR(channel: Channel, menuName = 'main') {
     try {
       this.logger.log('Starting Execute IVR...');
 
       // Check if channel exists
+      // TODO: Fallback plan if channel doesn't exist
       if (!(await this.channelExists(channel?.id))) {
         this.logger.log('Channel not found at start. Aborting IVR execution.');
         return;
