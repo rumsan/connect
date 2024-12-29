@@ -41,7 +41,6 @@ export class AsteriskWorker extends TransportWorker {
     private readonly broadcastLogQueue: BroadcastLogQueue,
     override readonly batchManager: BatchManger,
     private readonly ivrService: IVRService,
-    // private readonly pbxService: PbxService,
   ) {
     super(dataProvider, channel, transportQueue);
   }
