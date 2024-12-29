@@ -21,7 +21,6 @@ import { SessionModel } from '../entities/session.entity';
 import { wait } from '../utils';
 import { AudioService } from './audio.service';
 import { IVRService } from './ivr.service';
-import { PbxService } from './pbx.service';
 
 @Injectable()
 export class AsteriskWorker extends TransportWorker {
@@ -42,7 +41,7 @@ export class AsteriskWorker extends TransportWorker {
     private readonly broadcastLogQueue: BroadcastLogQueue,
     override readonly batchManager: BatchManger,
     private readonly ivrService: IVRService,
-    private readonly pbxService: PbxService,
+    // private readonly pbxService: PbxService,
   ) {
     super(dataProvider, channel, transportQueue);
   }
@@ -62,7 +61,7 @@ export class AsteriskWorker extends TransportWorker {
         });
         await this.ivrService.sendBroadcast(broadcast, broadcastLog, jsonData);
       } else {
-        await this.pbxService.sendBroadcast(broadcast, broadcastLog);
+        await this.ivrService.sendBroadcast(broadcast, broadcastLog);
       }
     } catch (e: any) {
       console.log(e);
