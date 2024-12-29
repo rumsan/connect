@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "license": "MIT",
   "scripts": {
+    "start:asterisk-worker": "nx serve asterisk-worker",
     "start:dev": "nx serve connect",
     "clean": "rm -rf dist node_modules",
     "build:all": "npx nx run-many --target=build --all",

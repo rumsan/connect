@@ -1,7 +1,7 @@
 meta {
-  name: send-voice
+  name: send-ivr
   type: http
-  seq: 5
+  seq: 6
 }
 
 post {
@@ -18,8 +18,10 @@ body:json {
   {
     "transport": "{{transport-id-voice}}",
     "message": {
-      "content": "https://rahat-rumsan.s3.us-east-1.amazonaws.com/aa/dev/QmavHqFK88getdySAC1v8bnYasbmW9aBWEGp9429Qw2nZv",
-      "meta": {}
+      "content": "https://rahat-rumsan.s3.us-east-1.amazonaws.com/aa/dev/Qmbfws68prEzRrVzRE8TLdYfpnf1hifJuRonW4aQPwh1rm",
+      "meta": {
+       "type": "new-ivr"
+      }
     },
     "addresses": [
       "9841602388"
@@ -37,5 +39,8 @@ body:json {
 
 tests {
   var data = res.getBody().data;
-  bru.setVar("session-id", data.cuid);
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
 }
