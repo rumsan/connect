@@ -20,8 +20,7 @@ import { IVRService } from './ivr.service';
     AudioService,
     AMIService,
     BatchManger,
-    IVRService,
-    // PbxService,
+    IVRService
   ],
   exports: [AsteriskWorker, AMIService],
 })
