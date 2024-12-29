@@ -36,18 +36,21 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     console.log('-----------------IVRService-----------------');
   }
 
+  callEndpoint = (broadcastAddress: string) => {
+    if (broadcastAddress.startsWith('+977')) {
+      broadcastAddress = broadcastAddress.slice(4);
+    }
+    return `${this.config.trunk}/${broadcastAddress}`;
+  }
+
   async sendBroadcast(
     broadcast: Broadcast,
     broadcastLog: QueueBroadcastLog,
     ivrJSON?: string,
   ) {
     this.ivrDialPlan = ivrJSON;
-    let callEndpoint = broadcast.address;
-    if (this.config.trunk)
-      callEndpoint = `${this.config.trunk}/${broadcast.address}`;
-
     const channel = await this.originateCall(
-      callEndpoint,
+      this.callEndpoint(broadcast.address),
       `${broadcastLog.broadcastId} <${broadcast.address}>`,
       [broadcastLog.broadcastLogId, broadcast.session, broadcast.address],
     );
@@ -91,8 +94,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onChannelDestroyed(event, channel: Channel) {
-    console.log("DESTROYED", { event, channel });
-
     console.log('=====ChannelDestroyed=====', channel?.caller?.number);
     this.logger.log(`Channel ${channel.id} was destroyed`);
   }
