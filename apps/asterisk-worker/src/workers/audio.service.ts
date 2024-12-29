@@ -12,7 +12,6 @@ const sftpConfig = {
   username: process.env.ASTERISK_SSH_USER,
   password: process.env.ASTERISK_SSH_PASS,
   audioPath: process.env.ASTERISK_AUDIO_PATH,
-  ivrAudioPath: process.env.IVR_AUDIO_PATH,
 };
 
 @Injectable()
@@ -52,7 +51,7 @@ export class AudioService {
       const urlHash = url.split('/').pop();
       const rawFile = `.data/${urlHash}-raw.wav`;
       const convertedFile = `.data/${urlHash}.wav`;
-      const asteriskFile = `${sftpConfig.ivrAudioPath}/${urlHash}.wav`;
+      const asteriskFile = `${sftpConfig.audioPath}/${urlHash}.wav`;
       // download file from message.content
       await this.downloadFile(url, rawFile);
 
