@@ -101,7 +101,7 @@ export class AsteriskWorker extends TransportWorker {
       } else {
         await this.audioService.makeAudioReady(session);
       }
-      await wait(1500);
+      await wait(15000);
       return true;
     } catch (e: any) {
       this.logger.error(e.message);
