@@ -4,22 +4,41 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { BatchManger, BroadcastLogQueue } from '@rsconnect/queue';
+import {
+  BatchManger as BatchManager,
+  BroadcastLogQueue,
+} from '@rsconnect/queue';
 import { Broadcast, QueueBroadcastLog } from '@rumsan/connect/types';
 import ari, { Channel, Client } from 'ari-client';
 
+interface IVRMenuOption {
+  digit: number;
+  prompt?: string;
+  hangup?: boolean;
+  action?: string; // For webhooks
+  destination?: string; // For webhooks
+}
+
+interface IVRMenu {
+  prompt: string;
+  options: IVRMenuOption[];
+}
+
+interface IVRDialPlan {
+  main: IVRMenu;
+  [key: string]: IVRMenu; // For other menus
+}
 @Injectable()
 export class IVRService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(IVRService.name);
   private client: Client;
   private config;
-  private ivrDialPlan;
-  private timeOut: NodeJS.Timeout;
-  private timeOutState: boolean;
-  private activePlaybacks: Set<string> = new Set();
+  private ivrDialPlan: IVRDialPlan | null;
+  private activePlaybacks;
+  private hangupTimers;
 
   constructor(
-    private readonly batchManager: BatchManger,
+    private readonly batchManager: BatchManager,
     private readonly broadcastLogQueue: BroadcastLogQueue,
   ) {
     this.config = {
@@ -32,8 +51,9 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       audioPath: process.env.ASTERISK_AUDIO_PATH,
       callerId: process.env.ASTERISK_CALLER_ID,
     };
-    console.log(this.config);
-    console.log('-----------------IVRService-----------------');
+    this.activePlaybacks = new Map(); // Maps channelId -> Playback instance
+    this.hangupTimers = new Map(); // Maps channelId -> hangup instance
+    this.logger.log('IVRService initialized', this.config);
   }
 
   callEndpoint = (broadcastAddress: string) => {
@@ -48,14 +68,43 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     broadcastLog: QueueBroadcastLog,
     ivrJSON?: string,
   ) {
-    this.ivrDialPlan = ivrJSON;
-    const channel = await this.originateCall(
-      this.callEndpoint(broadcast.address),
-      `${broadcastLog.broadcastId} <${broadcast.address}>`,
-      [broadcastLog.broadcastLogId, broadcast.session, broadcast.address],
-    );
-    this.batchManager.startMonitoring(channel?.id, broadcastLog);
-    console.log('=====BroadcastStarted for IVR=====', channel?.caller?.number);
+    try {
+      this.ivrDialPlan = ivrJSON ? JSON.parse(ivrJSON) : null;
+
+      const channel = await this.originateCall(
+        this.callEndpoint(broadcast.address),
+        `${broadcastLog.broadcastId} <${broadcast.address}>`,
+        [broadcastLog.broadcastLogId, broadcast.session, broadcast.address],
+      );
+
+      this.batchManager.startMonitoring(channel?.id, broadcastLog);
+      this.logger.log('Broadcast started for IVR', channel?.caller?.number);
+
+      this.client.on('StasisStart', async (event, incoming) => {
+        if (event.channel.id !== channel.id) return;
+        try {
+          await incoming.answer();
+          this.logger.log(`Call Answered: ${incoming.caller.number}`);
+          const mainPrompt = this.ivrDialPlan?.main?.prompt.replace('.wav', '');
+
+          if (mainPrompt) {
+            this.playPrompt(incoming?.id, mainPrompt);
+          }
+        } catch (error) {
+          this.logger.error('Error answering the call:', error);
+        }
+      });
+
+      this.client.on('ChannelDtmfReceived', async (event, channel) => {
+        try {
+          this.handleDTMF(channel, event.digit);
+        } catch (error) {
+          this.logger.error('Error at ChannelDtmfReceived the call:', error);
+        }
+      });
+    } catch (error) {
+      this.logger.error('Error at ChannelDtmfReceived', error);
+    }
   }
 
   async originateCall(
@@ -63,493 +112,170 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     callerId: string,
     appArgs: string[] = [],
   ) {
-    return this?.client?.channels.originate({
-      endpoint: callEndpoint,
-      context: 'from-internal',
-      priority: 1,
-      callerId: callerId || this?.config?.callerId || 'Rumsan Connect <0000>',
-      app: this?.config?.appName,
-      appArgs: appArgs.toString(),
-    });
+    try {
+      return await this.client.channels.originate({
+        endpoint: callEndpoint,
+        context: 'from-internal',
+        priority: 1,
+        callerId: callerId || this.config.callerId || 'Rumsan Connect <0000>',
+        app: this.config.appName,
+        appArgs: appArgs.toString(),
+      });
+    } catch (error) {
+      this.logger.error('Error originating call', error);
+      throw error;
+    }
   }
 
   private async connect() {
-    const { appName, server, user, password } = this.config;
-    this.client = await ari.connect(server, user, password);
+    try {
+      const { appName, server, user, password } = this.config;
+      this.logger.log('Initiating ARI connection');
 
-    this.client.on('StasisStart', (event, channel) =>
-      this.onStasisStart(event, channel),
-    );
-    this.client.on('ChannelDtmfReceived', (event, channel) =>
-      this.handleKeyPress(event, channel),
-    );
-    this.client.on('StasisEnd', (event, channel) =>
-      this.onStasisEnd(event, channel),
-    );
-    this.client.on('ChannelDestroyed', (event, channel) =>
-      this.onChannelDestroyed(event, channel),
-    );
+      this.client = await ari.connect(server, user, password);
+      await this.client.start(appName);
 
-    await this.client.start(appName);
-  }
-
-  async onChannelDestroyed(event, channel: Channel) {
-    console.log('=====ChannelDestroyed=====', channel?.caller?.number);
-    this.logger.log(`Channel ${channel.id} was destroyed`);
+      this.logger.log('ARI connected');
+    } catch (error) {
+      this.logger.error('Error connecting to ARI', error);
+      throw error;
+    }
   }
 
   async onModuleInit() {
+    this.logger.log('Module Init');
     await this.connect();
   }
 
   async onModuleDestroy() {
-    this.client.stop();
+    if (this.client) {
+      this.logger.log('Stopping ARI client');
+      this.client.stop();
+    }
   }
 
-  async onStasisStart(event, channel: Channel) {
-    const [broadcastLogId, sessionId, address] = event.args;
-    console.log('=====StasisStart=====', address);
-    this.logger.log('StasisStart', channel);
-    if (this.ivrDialPlan) return this.executeIVR(channel);
-    return this.playAudio(sessionId, channel);
-  }
+  //////////// WORK FLOW CODE ///////////
 
-  async onStasisEnd(event, channel) {
-    console.log(
-      '=StasisEnd=',
-      event?.channel?.dialplan?.app_data?.split(',')?.[3],
-    );
-    await this.cleanupResources(channel);
-    this.logger.log(`Cleaning up the resources before channel exits stasis`);
-    this.logger.log(`Channel ${channel.id} left Stasis`);
-  }
-
-  // Utility function to check if a channel exists
-  async channelExists(channelId: string): Promise<boolean> {
+  private async playPrompt(channelId, media) {
     try {
-      this.logger.log(`Starting channelExists for ${channelId}...`);
-      const channel = await this.client.channels.get({ channelId });
-      const status = !!channel || false;
-      this.logger.log(`Status is ${status} for ${channelId}...`);
-      return status;
+      // Stop any active playback
+      await this.stopActivePlayback(channelId);
+      this.cancelScheduledHangup(channelId);
+
+      // Create a new playback
+      const playback = this.client.Playback();
+      this.activePlaybacks.set(channelId, playback);
+      // console.log({ activePlaybacks: this.activePlaybacks });
+      await this.client.channels.play({
+        channelId: channelId,
+        playbackId: playback.id,
+        media: media,
+      });
+
+      console.log(`Playback started: ${media} on channel: ${channelId}`);
+
+      // Handle playback completion
+      playback.once('PlaybackFinished', () => {
+        console.log(`Playback finished on channel: ${channelId}`);
+        this.activePlaybacks.delete(channelId);
+        // Schedule hangup after 10 seconds
+        this.scheduleHangup(channelId, 10000); // 10000 ms = 10s
+      });
     } catch (error) {
-      this.logger.log(`Error on channelExists of Channel ${channelId}...`);
-      this.logger.log(
-        `Channel check failed for ID ${channelId}: ${error.message}`,
-      );
-      return false;
+      console.error(`Error playing prompt: ${error.message}`);
     }
   }
 
-  // Utility function to cleanup resource (playbacks, timeouts etc)
-  async cleanupResources(channel: Channel) {
+  // Stop any active playback on a channel
+  async stopActivePlayback(channelId) {
     try {
-      this.logger.log(`Cleanup started for ${channel?.id}`);
-      this.logger.log(`Timeout Id is ${this.timeOut}`);
-      if (this.timeOut) {
-        clearTimeout(this.timeOut);
-        this.logger.log(`Cleared timeout for channel ${channel?.id}`);
+      if (this.activePlaybacks.has(channelId)) {
+        const playback = this.activePlaybacks.get(channelId);
+        await playback.stop();
+        console.log(`Stopped active playback on channel: ${channelId}`);
+        this.activePlaybacks.delete(channelId);
       }
-
-      this.activePlaybacks.forEach((playbackId) => {
-        if (playbackId.includes(channel?.id)) {
-          const playback = this.client.Playback();
-          playback.id = playbackId;
-          playback
-            .stop()
-            .catch((e) =>
-              this.logger.log(
-                `Failed to stop playback ${playbackId} for channel ${channel?.id}: ${e.message}`,
-              ),
-            );
-          this.activePlaybacks.delete(playbackId);
-        }
-      });
-      this.logger.log(`Cleanup finished for ${channel?.id}`);
-      if (await this.channelExists(channel?.id)) {
-        await this.handleHangup(channel);
-        this.logger.log(`Channel ${channel?.id} successfully hung up.`);
-      } else {
-        this.logger.log('Channel not found during cleanup.');
-      }
-    } catch (e) {
-      this.logger.log(
-        `Error during resource cleanup of channel ${channel?.id}: ${e.message}`,
-      );
+    } catch (error) {
+      console.error(`Error stopping playback: ${error.message}`);
     }
   }
 
-  // Utility function to clean up active playbacks
-  cleanupActivePlaybacks(channel: Channel) {
-    try {
-      this.logger.log(`Cleanup Active Playbacks started for ${channel?.id}`);
-      this.activePlaybacks.forEach((playbackId) => {
-        this.logger.log(`=========${playbackId}========`);
-        if (playbackId.includes(channel?.id)) {
-          const playback = this.client.Playback();
-          playback.id = playbackId;
-          playback
-            .stop()
-            .catch((e) =>
-              this.logger.log(
-                `Failed to stop active playback ${playbackId}: ${e.message}`,
-              ),
-            );
-          this.activePlaybacks.delete(playbackId);
-        }
-      });
-      this.logger.log(
-        `All active playbacks stopped and cleaned up for ${channel?.id}`,
-      );
-    } catch (e) {
-      this.logger.log(
-        `Error during playback cleanup for channel ${channel?.id}: ${e.message}`,
-      );
+  // Schedule call hangup after a delay
+  async scheduleHangup(channelId, delay) {
+    if (this.hangupTimers.has(channelId)) {
+      this.cancelScheduledHangup(channelId);
     }
-  }
 
-  // Utility function for handling playback
-  async handlePlayback(channel: Channel, sound: string) {
-    try {
-      this.logger.log(`Starting handlePlayback for ${channel?.id}...`);
-      const playback = this.client.Playback();
-      const channelSpecificPbId = `${channel?.id}-${playback?.id}`;
-      this.activePlaybacks.add(channelSpecificPbId);
-
-      await channel.play(
-        { playbackId: `${channel.id}-${sound}`, media: sound },
-        playback,
-      );
-
-      playback.on('PlaybackFinished', () => {
-        this.logger.log(
-          `Playback finished for sound: ${sound} of channel ${channel?.id}`,
-        );
-        this.activePlaybacks.delete(playback?.id);
-      });
-    } catch (e) {
-      this.logger.log(
-        `Error during playback for sound: ${sound}. ${e.message}`,
-      );
-    }
-  }
-
-  // Utility function for handling playback
-  async handlePlaybackAndHangUp(channel: Channel, sound: string) {
-    try {
-      this.logger.log(`Starting handlePlaybackAndHangUp for ${channel?.id}...`);
-      const playback = this.client.Playback();
-      const channelSpecificPbId = `${channel?.id}-${playback?.id}`;
-      this.activePlaybacks.add(channelSpecificPbId);
-
-      await channel.play(
-        { playbackId: channelSpecificPbId, media: sound },
-        playback,
-      );
-
-      playback.on('PlaybackFinished', async () => {
-        this.logger.log(
-          `Playback finished for sound: ${sound} for channel ${channel?.id}`,
-        );
-        this.activePlaybacks.delete(playback?.id);
-        await channel.hangup();
-      });
-    } catch (e) {
-      this.logger.log(
-        `Error during playback for sound: ${sound} of channel ${channel?.id}. ${e.message}`,
-      );
-    }
-  }
-
-  //============Actual Code for Logic Implementation===============
-
-  // Play voice message
-  async playAudio(sessionId: string, channel: Channel) {
-    //const audio = `${this.config.audioPath}/cb2ic9gls9afmjmsp0tom5mo`;
-    const audio = `${this.config.audioPath}/${sessionId}`;
-
-    const playback = this.client.Playback();
-    playback.on('PlaybackFinished', async (event, media) => {
+    const timer = setTimeout(async () => {
       try {
-        await channel.hangup();
-      } catch (error) {}
-      console.log('=====PlaybackFinished=====', channel?.caller?.number);
-    });
+        console.log(`Attempting to hang up channel: ${channelId}`);
+        await this.client.channels.hangup({ channelId });
+        console.log(`Channel ${channelId} successfully hung up.`);
+        this.cleanupChannel(channelId);
+      } catch (error) {
+        console.error(
+          `Error hanging up channel ${channelId}: ${error.message}`,
+        );
+      }
+    }, delay);
 
-    await channel.play(
-      { playbackId: `${channel.id}-${audio}`, media: `sound:${audio}` },
-      playback,
+    this.hangupTimers.set(channelId, timer);
+    this.logger.log(
+      `Scheduled hangup for channel ${channelId} in ${delay / 1000} seconds`,
     );
-    this.logger.log('Playing recording...');
-    playback.on('PlaybackStarted', (event, media) => {
-      console.log('=====PlaybackStarted=====', channel?.caller?.number);
-    });
   }
 
-  async executeIVR(channel: Channel, menuName = 'main') {
-    try {
-      this.logger.log(`Starting Execute IVR for ${channel?.id}...`);
-
-      // Check if channel exists
-      // TODO: Fallback plan if channel doesn't exist
-      if (!(await this.channelExists(channel?.id))) {
-        this.logger.log('Channel not found at start. Aborting IVR execution.');
-        return;
-      }
-
-      this.timeOutState = true;
-      const menuConfig = await JSON.parse(this.ivrDialPlan);
-      const menu = menuConfig[menuName];
-      const playback = this.client.Playback();
-      const channelSpecificPbId = `${channel?.id}-${playback?.id}`;
-      this.activePlaybacks.add(channelSpecificPbId);
-
-      if (!menu?.prompt) {
-        this.logger.log('Menu prompt not found. Exiting.');
-        return;
-      }
-
-      const mainPromptSound = menu.prompt.replace('.wav', '');
-
-      const waitForInput = async () => {
-        const timeout = setTimeout(async () => {
-          this.logger.log('No input received. Playing wrong key prompt.');
-          if (!(await this.channelExists(channel?.id))) {
-            this.logger.log('Channel not found during timeout. Cleaning up.');
-            await this.cleanupResources(channel);
-            return;
-          }
-
-          const playback = this.client.Playback();
-          const channelSpecificPbId = `${channel?.id}-${playback?.id}`;
-          this.activePlaybacks.add(channelSpecificPbId);
-
-          await channel.play(
-            {
-              playbackId: channelSpecificPbId,
-              media: 'sound:you-dialed-wrong-number',
-            },
-            playback,
-          );
-
-          playback.on('PlaybackFinished', async () => {
-            this.activePlaybacks.delete(playback?.id);
-            const tqPlayback = this.client.Playback();
-            const channelSpecificPbId = `${channel?.id}-${tqPlayback?.id}`;
-            this.activePlaybacks.add(channelSpecificPbId);
-
-            await channel.play(
-              {
-                playbackId: channelSpecificPbId,
-                media: 'sound:privacy-thankyou',
-              },
-              tqPlayback,
-            );
-
-            tqPlayback.on('PlaybackFinished', async () => {
-              await this.cleanupResources(channel);
-            });
-          });
-        }, 10000);
-        this.logger.log(`Adding timerId ${timeout} to the timeOut...`);
-        this.timeOut = timeout;
-      };
-
-      playback.on('PlaybackFinished', async () => {
-        this.logger.log(
-          `Main prompt playback finished for channel ${channel?.id}`,
-        );
-        if (this.timeOutState && (await this.channelExists(channel?.id))) {
-          await waitForInput();
-        }
-      });
-
-      // Play main menu prompt
-      await channel.play(
-        { playbackId: channelSpecificPbId, media: mainPromptSound },
-        playback,
-      );
-      this.logger.log(`Playing main menu prompt for channel ${channel?.id}...`);
-    } catch (e) {
-      if (e.message.includes('Channel not found')) {
-        this.logger.log('Channel not found. Cleaning up resources.');
-      } else {
-        this.logger.log(`Unexpected error in Execute IVR: ${e.message}`);
-      }
-      await this.cleanupResources(channel);
+  // Cancel a scheduled hangup for a specific channel
+  cancelScheduledHangup(channelId) {
+    if (this.hangupTimers.has(channelId)) {
+      clearTimeout(this.hangupTimers.get(channelId));
+      this.hangupTimers.delete(channelId);
+      console.log(`Cancelled scheduled hangup for channel: ${channelId}`);
     }
   }
 
-  async handleKeyPress(event, channel: Channel) {
-    try {
-      this.logger.log(`Starting handleKeyPress for channel ${channel?.id}...`);
-
-      // Check if channel exists before proceeding
-      if (!(await this.channelExists(channel?.id))) {
-        this.logger.log(
-          'Channel not found during key press handling. Aborting.',
-        );
-        return;
-      }
-
-      // Stop and cleanup any ongoing playbacks
-      this.cleanupActivePlaybacks(channel);
-
-      // Load menu configuration
-      const menuConfig = await JSON.parse(this.ivrDialPlan);
-      const menu = menuConfig['main'];
-
-      // Clear any active timeout to prevent overlaps
-      if (this.timeOutState) {
-        clearTimeout(this.timeOut);
-        this.timeOutState = false;
-        this.logger.log(
-          `Cleared timeout during handleKeyPress for channel ${channel?.id}`,
-        );
-      }
-
-      // Find the selected menu option
-      const selectedOption = menu.options.find(
-        (o) => o.digit === parseInt(event.digit, 10),
-      );
-
-      if (!selectedOption) {
-        this.logger.log('Invalid option. Replaying "wrong number" prompt.');
-
-        // Play the "wrong number" prompt
-        await this.handlePlaybackAndHangUp(
-          channel,
-          'sound:you-dialed-wrong-number',
-        );
-      } else {
-        this.logger.log(
-          `Valid option selected: ${selectedOption.digit} for channel ${channel?.id}`,
-        );
-        await this.handleKeyOption(channel, selectedOption);
-      }
-    } catch (e) {
-      if (e.message.includes('Channel not found')) {
-        this.logger.log('Channel not found during key press. Cleaning up.');
-      } else {
-        this.logger.log(`Unexpected error in handleKeyPress: ${e.message}`);
-      }
-      await this.cleanupResources(channel);
-    }
+  // Cleanup resources when the call ends
+  cleanupChannel(channelId) {
+    this.stopActivePlayback(channelId);
+    this.cancelScheduledHangup(channelId);
+    console.log(`Cleaned up resources for channel: ${channelId}`);
   }
 
-  async handleKeyOption(channel: Channel, option: any) {
+  // HANDLE DTMF SIGNALS
+
+  async handleDTMF(channel: Channel, digit: string) {
     try {
-      this.logger.log(`Starting handleKeyOption for channel ${channel?.id}...`);
-
-      // Check if the channel exists before proceeding
-      if (!(await this.channelExists(channel?.id))) {
-        this.logger.log('Channel not found during handleKeyOption. Aborting.');
-        return;
-      }
-
-      switch (option?.action) {
-        case 'webhook': {
-          this.logger.log('Triggering webhook action...');
-
-          if (!option?.prompt) {
-            this.logger.log('No prompt specified for the webhook action.');
-            return;
-          }
-
-          const promptAudio = option.prompt.replace('.wav', '');
-          const playback = this.client.Playback();
-          const channelSpecificPbId = `${channel?.id}-${playback?.id}`;
-          this.activePlaybacks.add(channelSpecificPbId);
-
-          await channel.play(
-            { playbackId: channelSpecificPbId, media: promptAudio },
-            playback,
-          );
-
-          playback.on('PlaybackFinished', async () => {
-            this.activePlaybacks.delete(playback?.id);
-            this.logger.log('Webhook prompt playback finished.');
-
-            if (option?.hangup) {
-              this.logger.log('Hangup requested after webhook action.');
-              await this.cleanupResources(channel);
-            } else {
-              this.logger.log('Hangup not requested after webhook action.');
-            }
-          });
-
-          break;
+      this.logger.log(`DTMF received: ${digit} on channel: ${channel.id}`);
+      await this.stopActivePlayback(channel.id);
+      // Cancel any scheduled hangup if new interaction occurs
+      this.cancelScheduledHangup(channel.id);
+      const options = this.ivrDialPlan?.main?.options || [];
+      const option = options.find((opt) => opt.digit === parseInt(digit));
+      // switch (digit) {
+      //   case '1':
+      //     await this.playPrompt(channel.id, 'sound:morning');
+      //     break;
+      //   case '2':
+      //     await this.playPrompt(channel.id, 'sound:evening');
+      //     break;
+      //   default:
+      //     await this.playPrompt(channel.id, 'sound:option-is-invalid');
+      // }
+      // Play the corresponding prompt
+      if (option) {
+        if (option.prompt) {
+          await this.playPrompt(channel.id, option.prompt.replace('.wav', ''));
         }
-
-        default: {
-          this.logger.log(`Unknown action encountered: ${option?.action}`);
-          const playback = this.client.Playback();
-          const channelSpecificPbId = `${channel?.id}-${playback?.id}`;
-          this.activePlaybacks.add(channelSpecificPbId);
-
-          await channel.play(
-            {
-              playbackId: channelSpecificPbId,
-              media: 'sound:you-dialed-wrong-number',
-            },
-            playback,
-          );
-
-          playback.on('PlaybackFinished', async () => {
-            this.activePlaybacks.delete(playback?.id);
-            this.logger.log(
-              'Invalid option playback finished. Cleaning up resources.',
-            );
-            await this.cleanupResources(channel);
-          });
-
-          break;
-        }
-      }
-    } catch (e) {
-      if (e.message.includes('Channel not found')) {
-        this.logger.log(
-          'Channel not found during handleKeyOption. Cleaning up.',
-        );
       } else {
-        this.logger.log(`Unexpected error in handleKeyOption: ${e.message}`);
+        await this.playPrompt(channel.id, 'sound:option-is-invalid');
       }
-      await this.cleanupResources(channel);
-    }
-  }
 
-  async handleHangup(channel: Channel) {
-    try {
-      this.logger.log(`Starting handleHangup for channel ${channel?.id}...`);
-      for (const playbackId of this.activePlaybacks) {
-        if (playbackId.includes(channel?.id)) {
-          try {
-            await this.client.playbacks.stop({ playbackId });
-            this.logger.log(
-              `Stopped playback with ID: ${playbackId} for ${channel?.id}`,
-            );
-            this.activePlaybacks.delete(playbackId);
-          } catch (e) {
-            this.logger.error(
-              `Error stopping playback with ID: ${playbackId}`,
-              e,
-            );
-          }
-        }
-      }
-      // Verify if the channel still exists
-      if (channel && (await this.channelExists(channel.id))) {
-        await channel.hangup();
-        this.logger.log(`Channel ${channel.id} hung up successfully.`);
-      } else {
-        this.logger.warn(
-          `Channel ${channel?.id} does not exist or was already hung up.`,
-        );
-      }
-      this.logger.log(`Channel ${channel.id} hung up successfully.`);
-    } catch (e) {
-      this.logger.log('Error on handleHangup...');
-      console.log('Err >>>>>>>>>>', e);
+      // TODO: Trigger the webhook if provided
+      // if (option.action === 'webhook' && option.destination) {
+      //   this.sendWebhook(option.destination, { channelId: channel.id, digit });
+      // }
+    } catch (error) {
+      this.logger.error(`Error handling DTMF: ${error.message}`);
     }
   }
 }
