@@ -94,14 +94,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
           this.logger.error('Error answering the call:', error);
         }
       });
-
-      this.client.on('ChannelDtmfReceived', async (event, channel) => {
-        try {
-          this.handleDTMF(channel, event.digit);
-        } catch (error) {
-          this.logger.error('Error at ChannelDtmfReceived the call:', error);
-        }
-      });
     } catch (error) {
       this.logger.error('Error at ChannelDtmfReceived', error);
     }
@@ -145,6 +137,14 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     this.logger.log('Module Init');
     await this.connect();
+    // Register event listeners only once at startup
+    this.client.on('ChannelDtmfReceived', async (event, channel) => {
+      try {
+        this.handleDTMF(channel, event.digit);
+      } catch (error) {
+        this.logger.error('Error at ChannelDtmfReceived the call:', error);
+      }
+    });
   }
 
   async onModuleDestroy() {
@@ -154,8 +154,31 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  //////////// WORK FLOW CODE ///////////
+  async playAudio(sessionId: string, channel: Channel) {
+    //const audio = `${this.config.audioPath}/cb2ic9gls9afmjmsp0tom5mo`;
+    const audio = `${this.config.audioPath}/${sessionId}`;
 
+    const playback = this.client.Playback();
+    playback.on('PlaybackFinished', async (event, media) => {
+      try {
+        await channel.hangup();
+      } catch (error) {
+        this.logger.error(error);
+      }
+      console.log('=====PlaybackFinished=====', channel?.caller?.number);
+    });
+
+    await channel.play(
+      { playbackId: `${channel.id}-${audio}`, media: `sound:${audio}` },
+      playback,
+    );
+    this.logger.log('Playing recording...');
+    playback.on('PlaybackStarted', (event, media) => {
+      console.log('=====PlaybackStarted=====', channel?.caller?.number);
+    });
+  }
+
+  //////////// WORK FLOW CODE ///////////
   private async playPrompt(channelId, media) {
     try {
       // Stop any active playback
@@ -242,30 +265,23 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   }
 
   // HANDLE DTMF SIGNALS
-
   async handleDTMF(channel: Channel, digit: string) {
     try {
       this.logger.log(`DTMF received: ${digit} on channel: ${channel.id}`);
       await this.stopActivePlayback(channel.id);
       // Cancel any scheduled hangup if new interaction occurs
       this.cancelScheduledHangup(channel.id);
+      // If digit is '0', replay the main IVR prompt
+      if (digit === '0') {
+        const mainPrompt = this.ivrDialPlan?.main?.prompt;
+        await this.playPrompt(channel.id, mainPrompt.replace('.wav', ''));
+        return;
+      }
       const options = this.ivrDialPlan?.main?.options || [];
       const option = options.find((opt) => opt.digit === parseInt(digit));
-      // switch (digit) {
-      //   case '1':
-      //     await this.playPrompt(channel.id, 'sound:morning');
-      //     break;
-      //   case '2':
-      //     await this.playPrompt(channel.id, 'sound:evening');
-      //     break;
-      //   default:
-      //     await this.playPrompt(channel.id, 'sound:option-is-invalid');
-      // }
       // Play the corresponding prompt
-      if (option) {
-        if (option.prompt) {
-          await this.playPrompt(channel.id, option.prompt.replace('.wav', ''));
-        }
+      if (option && option.prompt) {
+        await this.playPrompt(channel.id, option.prompt.replace('.wav', ''));
       } else {
         await this.playPrompt(channel.id, 'sound:option-is-invalid');
       }
