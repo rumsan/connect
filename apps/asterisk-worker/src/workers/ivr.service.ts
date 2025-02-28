@@ -80,16 +80,19 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       this.batchManager.startMonitoring(channel?.id, broadcastLog);
       this.logger.log('Broadcast started for IVR', channel?.caller?.number);
 
-      this.client.on('StasisStart', async (event, incoming) => {
+      this.client.on('StasisStart', async (event, incomingChannel) => {
+        const [broadcastLogId, sessionId, incomingAddress] = event.args;
+        console.log(sessionId);
         if (event.channel.id !== channel.id) return;
         try {
-          await incoming.answer();
-          this.logger.log(`Call Answered: ${incoming.caller.number}`);
+          await incomingChannel.answer();
+          this.logger.log(`Call Answered: ${incomingChannel.caller.number}`);
           const mainPrompt = this.ivrDialPlan?.main?.prompt.replace('.wav', '');
-
           if (mainPrompt) {
-            this.playPrompt(incoming?.id, mainPrompt);
+            this.playPrompt(incomingChannel?.id, mainPrompt);
+            return;
           }
+          this.playAudio(sessionId, incomingChannel);
         } catch (error) {
           this.logger.error('Error answering the call:', error);
         }
