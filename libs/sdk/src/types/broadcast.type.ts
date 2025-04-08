@@ -51,6 +51,7 @@ export type Broadcast = {
   transport: string;
   address: string;
   status: BroadcastStatus;
+  xref?: string;
   maxAttempts: number;
   attempts?: number;
   lastAttempt?: Date | null;

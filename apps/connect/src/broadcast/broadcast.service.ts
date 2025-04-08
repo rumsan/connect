@@ -53,6 +53,7 @@ export class BroadcastService {
       options: dto.options as Record<string, any>,
       status: SessionStatus.NEW,
       totalAddresses: dto.addresses.length,
+      xref: dto.xref,
     };
 
     const newSession = await this.prisma.$transaction(async (tx) => {
@@ -83,6 +84,7 @@ export class BroadcastService {
           app: appId,
           maxAttempts: sessionData.maxAttempts,
           address,
+          xref: dto.xref,
         });
       }
 
