@@ -5,9 +5,6 @@
 The Connect app handles bulk communication (SMS, IVR, Voice, Email, etc.) across multiple organizations. Each organization operates under a unique `appId` and can run **multiple projects**. However, the current data structure doesn't support clear, structured **project-based reporting**, leading to the following challenges:
 
 - All communications are grouped under `appId`, making it hard to **segregate reports by project**.
-- Organizations use `xref` as an ad-hoc field to associate sessions with projects, which:
-  - Provides **flexibility**, but lacks **relational integrity**
-  - Makes **aggregations and analytics costly and unstructured**
 
 ---
 
