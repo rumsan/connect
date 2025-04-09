@@ -18,14 +18,15 @@ body:json {
   {
     "transport": "{{transport-id-smtp}}",
     "message": {
-      "content": "Rahat OTP mmmm",
+      "content": "send for test purpose",
       "meta": {
-          "subject": "Test Message"
+          "subject": "Test My message"
       }
     },
     "addresses": [
-      "{{dev-email}}", "rumsan@mailinator.com"
+    "pratiksha@mailinator.com"
     ],
+    "xref": "hqbdoaa5eh3o8jdto671yey3",
     "maxAttempts": 5,
     "trigger": "IMMEDIATE",
     "webhook": "",
@@ -40,5 +41,6 @@ tests {
   
   if(data){
     bru.setVar("session-id", data.cuid);
+    bru.setVar('xref',data.xref)
   }
 }

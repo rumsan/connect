@@ -507,10 +507,8 @@ export class BroadcastService {
 
   }
   async getProjectsReports(appId:string,dto: ListBroadcastDto,  xref: string){
-    const orderBy: Record<string, 'asc' | 'desc'> = {};
-    orderBy[dto.sort] = dto.order;
-    
-  const sessionCounts = await this.prisma.session.groupBy({
+  
+    const sessionCounts = await this.prisma.session.groupBy({
     by: ['xref'],
     where: {
       app: appId,
