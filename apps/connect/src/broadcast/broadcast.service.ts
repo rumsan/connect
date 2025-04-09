@@ -546,7 +546,7 @@ export class BroadcastService {
     const transportInfo = transportDetails.find(d => d.cuid === t.transport);
     return {
       transport: t.transport,
-      name: transportInfo?.name ?? 'Unknown',
+      name: transportInfo?.name ,
       type: transportInfo?.type,
       totalRecipients: t._sum.totalAddresses ?? 0,
     };
