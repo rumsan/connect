@@ -539,7 +539,7 @@ export class BroadcastService {
   ]);
 
   const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
-  const successCount = broadcastStats.find(stat => stat.status === 'SUCCESS')?._count._all ?? 0;
+  const successCount = broadcastStats.find(stat => stat.status === BroadcastStatus.SUCCESS)?._count._all ?? 0;
   const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
 
   const recipientsByTransport = transportRecipients.map(t => {
