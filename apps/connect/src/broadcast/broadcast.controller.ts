@@ -3,6 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AppId } from '@rumsan/app';
 import { BroadcastService } from './broadcast.service';
 import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
+import { ListBroadcastLogDto } from '../broadcastLog/dto/list-broadcast-log.dto';
 
 @Controller('broadcasts')
 @ApiTags('Broadcasts')
@@ -45,4 +46,20 @@ export class BroadcastController {
   findOne(@Param('cuid') cuid: string) {
     return this.broadcastService.findOne(cuid);
   }
+
+   @Get(":xref/logs")
+    @ApiOperation({
+      summary: 'Get all logged items for the registered app.',
+    })
+    getProjectLogs(@AppId() appId: string, @Query() dto: ListBroadcastLogDto, @Param("xref") xref: string) {
+      return this.broadcastService.getProjectsLogs(appId, dto, xref);
+   }
+  
+   @Get(":xref/reports")
+    @ApiOperation({
+      summary: 'Get all logged items for the registered app.',
+    })
+    getProjectReports(@AppId() appId: string, @Query() dto: ListBroadcastLogDto, @Param("xref") xref: string) {
+      return this.broadcastService.getProjectsReports(appId, dto, xref);
+    }
 }

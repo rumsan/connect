@@ -1,0 +1,15 @@
+meta {
+  name: get-project-reports
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{url}}/broadcasts/hqbdoaa5eh3o8jdto671yey3/logs
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
