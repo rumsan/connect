@@ -508,101 +508,57 @@ export class BroadcastService {
   }
   async getReportsByXref(appId: string, dto: ListBroadcastDto, xref: string) {
 
-    const sessionCounts = await this.prisma.session.groupBy({
-      by: ['xref'],
-      where: {
-        app: appId,
-        xref,
-      },
-      _count: {
-        id: true,
-      },
-    });
+  const dateFilter = dto.startDate && dto.endDate ? {
+    createdAt: { gte: new Date(dto.startDate), lte: new Date(dto.endDate) },
+  } : {};
+  const where = { app: appId, xref, ...dateFilter };
 
-    const broadcastStats = await this.prisma.broadcast.groupBy({
-      by: ['session'],
-      where: {
-        app: appId,
-        Session: { xref },
-        ...(dto.status && { status: dto.status }),
-        ...(dto.startDate && dto.endDate
-          ? {
-            createdAt: {
-              gte: new Date(dto.startDate),
-              lte: new Date(dto.endDate),
-            },
-          }
-          : {}),
-      },
-      _count: {
-        _all: true,
-      },
-    });
+  const [sessionStats, broadcastStats, transportRecipients, transportDetails] = await Promise.all([
+    
+    this.prisma.session.aggregate({ where, _count: { id: true }, _sum: { totalAddresses: true } }),
 
-    const successStats = await this.prisma.broadcast.groupBy({
-      by: ['session'],
-      where: {
-        app: appId,
-        Session: { xref },
 
-        status: 'SUCCESS',
-        ...(dto.startDate && dto.endDate
-          ? {
-            createdAt: {
-              gte: new Date(dto.startDate),
-              lte: new Date(dto.endDate),
-            },
-          }
-          : {}),
-      },
-      _count: {
-        id: true,
-      },
-    });
+    this.prisma.broadcast.groupBy({
+      by: ['status'],
+      where: { app: appId, Session: { xref }, ...dateFilter },
+      _count: { _all: true },
+    }),
 
-    const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
-    const successCount = successStats.reduce((sum, stat) => sum + stat._count.id, 0);
-    const successRate = {
-      xref,
-      totalMessages,
-      successCount,
-      successRate: totalMessages > 0 ? (successCount / totalMessages) * 100 : 0,
-    };
+    
+    this.prisma.session.groupBy({
+      by: ['transport'],
+      where,
+      _sum: { totalAddresses: true },
+    }),
 
-    const recipientCounts = await this.prisma.session.groupBy({
-      by: ['xref'],
-      where: {
-        app: appId,
-        xref,
-      },
-      _sum: {
-        totalAddresses: true,
-      },
-    });
+    
+    this.prisma.transport.findMany({
+      where: { app: appId },
+      select: { cuid: true, name: true, type: true },
+    }),
+  ]);
 
-    const recipientsByTransport = await this.prisma.session.groupBy({
-      by: ['transport', 'xref'],
-      where: {
-        app: appId,
-        xref,
-      },
-      _sum: {
-        totalAddresses: true,
-      },
-    });
+  const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
+  const successCount = broadcastStats.find(stat => stat.status === 'SUCCESS')?._count._all ?? 0;
+  const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
 
+  const recipientsByTransport = transportRecipients.map(t => {
+    const transportInfo = transportDetails.find(d => d.cuid === t.transport);
     return {
-      sessionCount: sessionCounts[0]?._count.id || 0,
-      successRate,
-      totalRecipients: recipientCounts[0]?._sum.totalAddresses || 0,
-      recipientsByTransport: recipientsByTransport.map((item) => ({
-        transport: item.transport,
-        xref: item.xref,
-        totalRecipients: item._sum.totalAddresses || 0,
-      })),
+      transport: t.transport,
+      name: transportInfo?.name ?? 'Unknown',
+      type: transportInfo?.type,
+      totalRecipients: t._sum.totalAddresses ?? 0,
     };
+  });
 
-
+  return {
+    sessionStats: { count: sessionStats._count.id ?? 0, totalRecipients: sessionStats._sum.totalAddresses ?? 0 },
+    messageStats: { totalMessages, successCount, successRate },
+    recipientsByTransport,
+    xref,
+  };
+ 
   }
 
 
