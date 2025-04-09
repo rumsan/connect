@@ -36,7 +36,7 @@ export class BroadcastService {
     private readonly prisma: PrismaService,
     private readonly transportQueue: TransportQueue,
     private readonly broadcastQueue: BroadcastQueue,
-  ) {}
+  ) { }
   async create(appId: string, dto: BroadcastDto) {
 
     const { transport: transportId, message, addresses } = dto;
@@ -203,10 +203,10 @@ export class BroadcastService {
 
     const retryStatuses = retryFailed
       ? [
-          BroadcastStatus.FAIL,
-          BroadcastStatus.SCHEDULED,
-          BroadcastStatus.PENDING,
-        ]
+        BroadcastStatus.FAIL,
+        BroadcastStatus.SCHEDULED,
+        BroadcastStatus.PENDING,
+      ]
       : [BroadcastStatus.SCHEDULED, BroadcastStatus.PENDING];
 
     const broadcasts = await this.prisma.broadcast.updateMany({
@@ -362,11 +362,11 @@ export class BroadcastService {
           status: dto.status,
           ...(dto.startDate && dto.endDate
             ? {
-                createdAt: {
-                  gte: new Date(dto.startDate),
-                  lte: new Date(dto.endDate),
-                },
-              }
+              createdAt: {
+                gte: new Date(dto.startDate),
+                lte: new Date(dto.endDate),
+              },
+            }
             : {}),
         },
         orderBy,
@@ -474,7 +474,7 @@ export class BroadcastService {
   }
 
 
-  async getProjectsLogs(appId:string,dto: ListBroadcastDto,  xref: string){
+  async getLogsByXref(appId: string, dto: ListBroadcastDto, xref: string) {
     const orderBy: Record<string, 'asc' | 'desc'> = {};
     orderBy[dto.sort] = dto.order;
     return paginate(
@@ -483,14 +483,14 @@ export class BroadcastService {
         where: {
           app: appId,
           status: dto.status,
-          Session:{xref},
+          Session: { xref },
           ...(dto.startDate && dto.endDate
             ? {
-                createdAt: {
-                  gte: new Date(dto.startDate),
-                  lte: new Date(dto.endDate),
-                },
-              }
+              createdAt: {
+                gte: new Date(dto.startDate),
+                lte: new Date(dto.endDate),
+              },
+            }
             : {}),
         },
         orderBy,
@@ -500,110 +500,110 @@ export class BroadcastService {
         perPage: dto.perPage,
       },
     );
-  
+
 
 
 
 
   }
-  async getProjectsReports(appId:string,dto: ListBroadcastDto,  xref: string){
-  
+  async getReportsByXref(appId: string, dto: ListBroadcastDto, xref: string) {
+
     const sessionCounts = await this.prisma.session.groupBy({
-    by: ['xref'],
-    where: {
-      app: appId,
-      xref, 
-    },
-    _count: {
-      id: true, 
-    },
-  });
-    
+      by: ['xref'],
+      where: {
+        app: appId,
+        xref,
+      },
+      _count: {
+        id: true,
+      },
+    });
+
     const broadcastStats = await this.prisma.broadcast.groupBy({
-    by: ['session'],
-    where: {
-      app: appId,
-      Session:{ xref }, 
-      ...(dto.status && { status: dto.status }), 
-      ...(dto.startDate && dto.endDate
-        ? {
+      by: ['session'],
+      where: {
+        app: appId,
+        Session: { xref },
+        ...(dto.status && { status: dto.status }),
+        ...(dto.startDate && dto.endDate
+          ? {
             createdAt: {
               gte: new Date(dto.startDate),
               lte: new Date(dto.endDate),
             },
           }
-        : {}),
-    },
-    _count: {
-      _all: true, 
-    },
+          : {}),
+      },
+      _count: {
+        _all: true,
+      },
     });
-    
+
     const successStats = await this.prisma.broadcast.groupBy({
-    by: ['session'],
-    where: {
-      app: appId,
-      Session:{ xref }, 
-    
-      status: 'SUCCESS', 
-      ...(dto.startDate && dto.endDate
-        ? {
+      by: ['session'],
+      where: {
+        app: appId,
+        Session: { xref },
+
+        status: 'SUCCESS',
+        ...(dto.startDate && dto.endDate
+          ? {
             createdAt: {
               gte: new Date(dto.startDate),
               lte: new Date(dto.endDate),
             },
           }
-        : {}),
-    },
-    _count: {
-      id: true, 
-    },
+          : {}),
+      },
+      _count: {
+        id: true,
+      },
     });
-    
-  const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
-  const successCount = successStats.reduce((sum, stat) => sum + stat._count.id, 0);
-  const successRate = {
-    xref,
-    totalMessages,
-    successCount,
-    successRate: totalMessages > 0 ? (successCount / totalMessages) * 100 : 0,
-  };
 
-const recipientCounts = await this.prisma.session.groupBy({
-    by: ['xref'],
-    where: {
-      app: appId,
-      xref, 
-    },
-    _sum: {
-      totalAddresses: true,
-    },
-});
-    
+    const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
+    const successCount = successStats.reduce((sum, stat) => sum + stat._count.id, 0);
+    const successRate = {
+      xref,
+      totalMessages,
+      successCount,
+      successRate: totalMessages > 0 ? (successCount / totalMessages) * 100 : 0,
+    };
+
+    const recipientCounts = await this.prisma.session.groupBy({
+      by: ['xref'],
+      where: {
+        app: appId,
+        xref,
+      },
+      _sum: {
+        totalAddresses: true,
+      },
+    });
+
     const recipientsByTransport = await this.prisma.session.groupBy({
-    by: ['transport', 'xref'],
-    where: {
-      app: appId,
-      xref, 
-    },
-    _sum: {
-      totalAddresses: true, 
-    },
+      by: ['transport', 'xref'],
+      where: {
+        app: appId,
+        xref,
+      },
+      _sum: {
+        totalAddresses: true,
+      },
     });
-    
+
     return {
-    sessionCount: sessionCounts[0]?._count.id || 0,
-    successRate, 
-    totalRecipients: recipientCounts[0]?._sum.totalAddresses || 0, 
-    recipientsByTransport: recipientsByTransport.map((item) => ({
-      transport: item.transport,
-      xref: item.xref,
-      totalRecipients: item._sum.totalAddresses || 0,
-    })),
-  };
+      sessionCount: sessionCounts[0]?._count.id || 0,
+      successRate,
+      totalRecipients: recipientCounts[0]?._sum.totalAddresses || 0,
+      recipientsByTransport: recipientsByTransport.map((item) => ({
+        transport: item.transport,
+        xref: item.xref,
+        totalRecipients: item._sum.totalAddresses || 0,
+      })),
+    };
 
 
-}
+  }
 
-  
+
 }

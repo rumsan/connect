@@ -1,14 +1,14 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AppId } from '@rumsan/app';
+import { ListBroadcastLogDto } from '../broadcastLog/dto/list-broadcast-log.dto';
 import { BroadcastService } from './broadcast.service';
 import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
-import { ListBroadcastLogDto } from '../broadcastLog/dto/list-broadcast-log.dto';
 
 @Controller('broadcasts')
 @ApiTags('Broadcasts')
 export class BroadcastController {
-  constructor(private readonly broadcastService: BroadcastService) {}
+  constructor(private readonly broadcastService: BroadcastService) { }
 
   @Post()
   @ApiOperation({
@@ -47,19 +47,19 @@ export class BroadcastController {
     return this.broadcastService.findOne(cuid);
   }
 
-   @Get(":xref/logs")
-    @ApiOperation({
-      summary: 'Get all logged items for the registered app.',
-    })
-    getProjectLogs(@AppId() appId: string, @Query() dto: ListBroadcastLogDto, @Param("xref") xref: string) {
-      return this.broadcastService.getProjectsLogs(appId, dto, xref);
-   }
-  
-   @Get(":xref/reports")
-    @ApiOperation({
-      summary: 'Get all logged items for the registered app.',
-    })
-    getProjectReports(@AppId() appId: string, @Query() dto: ListBroadcastLogDto, @Param("xref") xref: string) {
-      return this.broadcastService.getProjectsReports(appId, dto, xref);
-    }
+  @Get(":xref/logs")
+  @ApiOperation({
+    summary: 'Get all logged items for the registered app.',
+  })
+  getLogsByXref(@AppId() appId: string, @Query() dto: ListBroadcastLogDto, @Param("xref") xref: string) {
+    return this.broadcastService.getLogsByXref(appId, dto, xref);
+  }
+
+  @Get(":xref/reports")
+  @ApiOperation({
+    summary: 'Get all logged items for the registered app.',
+  })
+  getReportsByXref(@AppId() appId: string, @Query() dto: ListBroadcastLogDto, @Param("xref") xref: string) {
+    return this.broadcastService.getReportsByXref(appId, dto, xref);
+  }
 }
