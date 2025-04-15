@@ -9,5 +9,5 @@ WORKDIR /usr/src/app
 RUN apk add ffmpeg
 COPY ./dist/apps/asterisk-worker/ ./
 COPY --from=deps /usr/src/app/node_modules ./node_modules
-RUN npm install -g pnpm@8.14.1 && pnpx prisma generate
+RUN npm install -g pnpm@8.14.1 && pnpm prisma generate
 CMD [ "node", "main.js" ]
