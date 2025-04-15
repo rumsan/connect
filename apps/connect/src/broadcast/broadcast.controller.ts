@@ -47,13 +47,6 @@ export class BroadcastController {
     return this.broadcastService.findOne(cuid);
   }
 
-  @Get(":xref/logs")
-  @ApiOperation({
-    summary: 'Get all logged items for the registered app.',
-  })
-  getLogsByXref(@AppId() appId: string, @Query() dto: ListBroadcastLogDto, @Param("xref") xref: string) {
-    return this.broadcastService.getLogsByXref(appId, dto, xref);
-  }
 
   @Get(":xref/reports")
   @ApiOperation({

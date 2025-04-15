@@ -118,4 +118,12 @@ export class ListBroadcastDto extends PaginationDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @ApiProperty({
+    example: 'projectId-reference',
+    description: 'ProjectId Reference',
+    required: false,
+  })
+  @IsOptional()
+  xref?: string;
 }

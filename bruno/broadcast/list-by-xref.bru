@@ -1,0 +1,28 @@
+meta {
+  name: list-by-xref
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{url}}/broadcasts?xref=hqbdoaa5eh3o8jdto671yey3
+  body: json
+  auth: none
+}
+
+params:query {
+  xref: hqbdoaa5eh3o8jdto671yey3
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("broadcast-id", data[0].cuid);
+    bru.setVar("xref-id",data[0].xref)
+  }
+}

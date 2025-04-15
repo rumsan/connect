@@ -14,7 +14,7 @@ export class SessionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly broadcastService: BroadcastService,
-  ) {}
+  ) { }
 
   async triggerBroadcast(sessionCuid: string, retryFailed?: boolean) {
     const session = await this.prisma.session.findUnique({
@@ -47,6 +47,7 @@ export class SessionService {
       {
         where: {
           app: appId,
+          xref: dto.xref
         },
         orderBy,
       },
