@@ -24,6 +24,7 @@ export type Session = {
   triggerType: TriggerType;
   webhook?: string | null;
   options?: Record<string, any> | null;
+  xref?: string;
   status: SessionStatus;
   totalAddresses: number;
   stats?: Record<string, any> | null;

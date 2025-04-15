@@ -77,6 +77,11 @@ export class BroadcastDto {
   @ApiProperty({ description: 'Options for scheduled message' })
   @IsOptional()
   options?: BroadcastOptionsDto;
+
+  @ApiProperty({ description: 'Reference identifier for end user app' })
+  @IsOptional()
+  @IsString()
+  xref?: string;
 }
 
 export class ListBroadcastDto extends PaginationDto {
@@ -113,4 +118,12 @@ export class ListBroadcastDto extends PaginationDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @ApiProperty({
+    example: 'projectId-reference',
+    description: 'ProjectId Reference',
+    required: false,
+  })
+  @IsOptional()
+  xref?: string;
 }

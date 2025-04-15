@@ -85,6 +85,7 @@ model Session {
   status         SessionStatus @default(NEW)
   totalAddresses Int
   stats          Json?         @db.JsonB()
+  xref           String?
 
   Transport  Transport      @relation(fields: [transport], references: [cuid])
   Broadcasts Broadcast[]
@@ -109,8 +110,9 @@ model Broadcast {
   maxAttempts Int             @default(1)
   disposition Json?           @db.JsonB()
   attempts    Int             @default(0)
-  isComplete  Boolean @default(false)
+  isComplete  Boolean         @default(false)
   lastAttempt DateTime?
+  xref        String?
 
   Session   Session   @relation(fields: [session], references: [cuid])
   Transport Transport @relation(fields: [transport], references: [cuid])

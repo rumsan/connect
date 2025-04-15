@@ -1,0 +1,15 @@
+meta {
+  name: get-project-logs
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{url}}/broadcasts/{{xref-id}}/logs
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
