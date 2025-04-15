@@ -22,11 +22,12 @@ body:json {
       "meta": {}
     },
     "addresses": [
-      "{{dev-phone}}"
+      "9841602388"
     ],
     "maxAttempts": 2,
-    "trigger": "SCHEDULED",
+    "trigger": "IMMEDIATE",
     "webhook": "",
+    "xref":"test-1",
     "options": {
       "scheduledTime": "2h",
       "allowedTimeFrame": "09:00-18:00",
@@ -40,5 +41,6 @@ tests {
   
   if(data){
     bru.setVar("session-id", data.cuid);
+    bru.setVar("xref",data.xref);
   }
 }
