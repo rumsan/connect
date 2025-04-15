@@ -1,13 +1,17 @@
 meta {
-  name: list-by-app
+  name: list-by-xref
   type: http
-  seq: 1
+  seq: 5
 }
 
 get {
-  url: {{url}}/broadcasts
+  url: {{url}}/broadcasts?xref=hqbdoaa5eh3o8jdto671yey3
   body: json
   auth: none
+}
+
+params:query {
+  xref: hqbdoaa5eh3o8jdto671yey3
 }
 
 headers {

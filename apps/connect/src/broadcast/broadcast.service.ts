@@ -36,8 +36,9 @@ export class BroadcastService {
     private readonly prisma: PrismaService,
     private readonly transportQueue: TransportQueue,
     private readonly broadcastQueue: BroadcastQueue,
-  ) {}
+  ) { }
   async create(appId: string, dto: BroadcastDto) {
+
     const { transport: transportId, message, addresses } = dto;
     await this.validateBroadcastData(transportId, message, addresses);
 
@@ -202,10 +203,10 @@ export class BroadcastService {
 
     const retryStatuses = retryFailed
       ? [
-          BroadcastStatus.FAIL,
-          BroadcastStatus.SCHEDULED,
-          BroadcastStatus.PENDING,
-        ]
+        BroadcastStatus.FAIL,
+        BroadcastStatus.SCHEDULED,
+        BroadcastStatus.PENDING,
+      ]
       : [BroadcastStatus.SCHEDULED, BroadcastStatus.PENDING];
 
     const broadcasts = await this.prisma.broadcast.updateMany({
@@ -359,13 +360,14 @@ export class BroadcastService {
         where: {
           app: appId,
           status: dto.status,
+          xref: dto.xref,
           ...(dto.startDate && dto.endDate
             ? {
-                createdAt: {
-                  gte: new Date(dto.startDate),
-                  lte: new Date(dto.endDate),
-                },
-              }
+              createdAt: {
+                gte: new Date(dto.startDate),
+                lte: new Date(dto.endDate),
+              },
+            }
             : {}),
         },
         orderBy,
@@ -471,4 +473,61 @@ export class BroadcastService {
       },
     };
   }
+
+  async getReportsByXref(appId: string, dto: ListBroadcastDto, xref: string) {
+
+    const dateFilter = dto.startDate && dto.endDate ? {
+      createdAt: { gte: new Date(dto.startDate), lte: new Date(dto.endDate) },
+    } : {};
+    const where = { app: appId, xref, ...dateFilter };
+
+    const [sessionStats, broadcastStats, transportRecipients, transportDetails] = await Promise.all([
+
+      this.prisma.session.aggregate({ where, _count: { id: true }, _sum: { totalAddresses: true } }),
+
+
+      this.prisma.broadcast.groupBy({
+        by: ['status'],
+        where: { app: appId, Session: { xref }, ...dateFilter },
+        _count: { _all: true },
+      }),
+
+
+      this.prisma.session.groupBy({
+        by: ['transport'],
+        where,
+        _sum: { totalAddresses: true },
+      }),
+
+
+      this.prisma.transport.findMany({
+        where: { app: appId },
+        select: { cuid: true, name: true, type: true },
+      }),
+    ]);
+
+    const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
+    const successCount = broadcastStats.find(stat => stat.status === BroadcastStatus.SUCCESS)?._count._all ?? 0;
+    const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
+
+    const recipientsByTransport = transportRecipients.map(t => {
+      const transportInfo = transportDetails.find(d => d.cuid === t.transport);
+      return {
+        transport: t.transport,
+        name: transportInfo?.name,
+        type: transportInfo?.type,
+        totalRecipients: t._sum.totalAddresses ?? 0,
+      };
+    });
+
+    return {
+      sessionStats: { count: sessionStats._count.id ?? 0, totalRecipients: sessionStats._sum.totalAddresses ?? 0 },
+      messageStats: { totalMessages, successCount, successRate },
+      recipientsByTransport,
+      xref,
+    };
+
+  }
+
+
 }
