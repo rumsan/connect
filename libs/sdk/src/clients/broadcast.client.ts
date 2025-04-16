@@ -3,6 +3,7 @@ import { AxiosInstance, AxiosRequestConfig } from 'axios';
 import {
   Broadcast,
   BroadcastCountsResponse,
+  BrodcastReportFilter,
   ListBroadcast,
   MessageBroadcast,
 } from '../types';
@@ -46,6 +47,18 @@ export class BroadcastClient {
       `${this._prefix}/status-count`,
       config,
     );
+    return formatResponse<BroadcastCountsResponse>(response);
+  }
+
+  async getReport(
+    data: BrodcastReportFilter,
+    config?: AxiosRequestConfig,
+  ) {
+    const response = await this._client.get(
+      `${this._prefix}/${data.xref}/reports`,
+      config,
+    );
+
     return formatResponse<BroadcastCountsResponse>(response);
   }
 }
