@@ -474,12 +474,10 @@ export class BroadcastService {
     };
   }
 
-  async getReportsByXref(appId: string, dto: ListBroadcastDto, xref: string) {
+  async getReportsByXref(appId: string, xref: string) {
 
-    const dateFilter = dto.startDate && dto.endDate ? {
-      createdAt: { gte: new Date(dto.startDate), lte: new Date(dto.endDate) },
-    } : {};
-    const where = { app: appId, xref, ...dateFilter };
+
+    const where = { app: appId, xref };
 
     const [sessionStats, broadcastStats, transportRecipients, transportDetails] = await Promise.all([
 
@@ -488,7 +486,7 @@ export class BroadcastService {
 
       this.prisma.broadcast.groupBy({
         by: ['status'],
-        where: { app: appId, Session: { xref }, ...dateFilter },
+        where: { app: appId, Session: { xref } },
         _count: { _all: true },
       }),
 

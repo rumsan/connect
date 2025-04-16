@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AppId } from '@rumsan/app';
-import { ListBroadcastLogDto } from '../broadcastLog/dto/list-broadcast-log.dto';
 import { BroadcastService } from './broadcast.service';
 import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
 
@@ -52,7 +51,7 @@ export class BroadcastController {
   @ApiOperation({
     summary: 'Get all logged items for the registered app.',
   })
-  getReportsByXref(@AppId() appId: string, @Query() dto: ListBroadcastLogDto, @Param("xref") xref: string) {
-    return this.broadcastService.getReportsByXref(appId, dto, xref);
+  getReportsByXref(@AppId() appId: string, @Param("xref") xref: string) {
+    return this.broadcastService.getReportsByXref(appId, xref);
   }
 }

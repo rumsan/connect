@@ -3,8 +3,8 @@ import { AxiosInstance, AxiosRequestConfig } from 'axios';
 import {
   Broadcast,
   BroadcastCountsResponse,
+  BrodcastReportFilter,
   ListBroadcast,
-  ListXrefBroadcastReport,
   MessageBroadcast,
 } from '../types';
 import { ApiClient } from './api.client';
@@ -50,8 +50,8 @@ export class BroadcastClient {
     return formatResponse<BroadcastCountsResponse>(response);
   }
 
-  async listXrefCommunicationReport(
-    data: ListXrefBroadcastReport,
+  async getReport(
+    data: BrodcastReportFilter,
     config?: AxiosRequestConfig,
   ) {
     const response = await this._client.get(

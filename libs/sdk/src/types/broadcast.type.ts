@@ -35,7 +35,7 @@ export interface ListBroadcast extends PaginationTypes {
   endDate?: Date;
 }
 
-export interface ListXrefBroadcastReport {
+export interface BrodcastReportFilter {
   xref?: string;
 }
 
