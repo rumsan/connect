@@ -26,12 +26,17 @@ export type MessageBroadcast = {
     scheduledTimestamp?: Date;
     attemptIntervalMinutes?: string; //default: 60 or 15,60,120,240
   };
+  xref?: string;
 };
 
 export interface ListBroadcast extends PaginationTypes {
   status?: BroadcastStatus;
   startDate?: Date;
   endDate?: Date;
+}
+
+export interface BrodcastReportFilter {
+  xref?: string;
 }
 
 export interface EmailMessage extends Message {

@@ -1,15 +1,15 @@
 import { AxiosHeaderValue, CreateAxiosDefaults } from 'axios';
-import { SessionClient } from './session.client';
+import { ApiClient } from './api.client';
 import { BroadcastLogClient } from './broadcast-log.client';
 import { BroadcastClient } from './broadcast.client';
-import { ApiClient } from './api.client';
+import { SessionClient } from './session.client';
 import { TransportClient } from './transport.client';
 
 export {
   ApiClient,
-  SessionClient,
-  BroadcastLogClient,
   BroadcastClient,
+  BroadcastLogClient,
+  SessionClient,
   TransportClient,
 };
 
