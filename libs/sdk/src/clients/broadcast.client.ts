@@ -4,6 +4,7 @@ import {
   Broadcast,
   BroadcastCountsResponse,
   ListBroadcast,
+  ListXrefBroadcastReport,
   MessageBroadcast,
 } from '../types';
 import { ApiClient } from './api.client';
@@ -46,6 +47,18 @@ export class BroadcastClient {
       `${this._prefix}/status-count`,
       config,
     );
+    return formatResponse<BroadcastCountsResponse>(response);
+  }
+
+  async listXrefCommunicationReport(
+    data: ListXrefBroadcastReport,
+    config?: AxiosRequestConfig,
+  ) {
+    const response = await this._client.get(
+      `${this._prefix}/${data.xref}/reports`,
+      config,
+    );
+
     return formatResponse<BroadcastCountsResponse>(response);
   }
 }
