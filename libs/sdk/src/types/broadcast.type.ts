@@ -33,6 +33,7 @@ export interface ListBroadcast extends PaginationTypes {
   status?: BroadcastStatus;
   startDate?: Date;
   endDate?: Date;
+  xref?: string;
 }
 
 export interface BrodcastReportFilter {
