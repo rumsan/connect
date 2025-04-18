@@ -474,58 +474,120 @@ export class BroadcastService {
     };
   }
 
-  async getReportsByXref(appId: string, xref: string) {
+  async fetchReportData(appId: string, where: any, xref: string) {
 
+    return Promise.all([
 
-    const where = { app: appId, xref };
-
-    const [sessionStats, broadcastStats, transportRecipients, transportDetails] = await Promise.all([
-
-      this.prisma.session.aggregate({ where, _count: { id: true }, _sum: { totalAddresses: true } }),
-
-
+   this.prisma.session.aggregate({ where, _count: { id: true }, _sum: { totalAddresses: true } }),
       this.prisma.broadcast.groupBy({
         by: ['status'],
         where: { app: appId, Session: { xref } },
         _count: { _all: true },
       }),
-
-
+      
       this.prisma.session.groupBy({
         by: ['transport'],
         where,
         _sum: { totalAddresses: true },
       }),
-
-
       this.prisma.transport.findMany({
         where: { app: appId },
         select: { cuid: true, name: true, type: true },
       }),
-    ]);
+      this.prisma.broadcast.groupBy({
+        by: ['transport', 'status'],
+        where: { app: appId, Session: { xref } },
+        _count: { _all: true },
+      }),
+      this.prisma.broadcast.aggregate({
+        where: { app: appId, Session: { xref } },
+        _avg: { attempts: true },
+        _max: { attempts: true }
+      })
+
+
+
+
+
+    ])
+    
+
+  }
+
+ async calculateTransportStats(
+    transportRecipients: any[],
+    transportDetails: any[],
+    broadcastsByTransport: any[],
+   attemptStats: any,
+  
+) {
+    
+    return transportRecipients.map(t => {
+      const transportInfo = transportDetails.find(d => d.cuid === t.transport);
+        
+        
+        const transportBroadcasts = broadcastsByTransport
+            .filter(b => b.transport === t.transport)
+            .reduce((acc, b) => {
+                acc.total += b._count._all;
+                if (b.status === BroadcastStatus.SUCCESS) acc.success = b._count._all;
+                if (b.status === BroadcastStatus.FAIL) acc.failed = b._count._all;
+                if (b.status === BroadcastStatus.PENDING) acc.pending = b._count._all;
+                return acc;
+            }, { total: 0, success: 0, failed: 0, pending: 0 });
+
+
+        return {
+            transport: t.transport,
+            name: transportInfo?.name,
+            type: transportInfo?.type,
+            totalRecipients: t._sum.totalAddresses ?? 0,
+            broadcasts: {
+                ...transportBroadcasts,
+                averageAttempts: Number(attemptStats._avg.attempts?.toFixed(2)) ?? 0,
+                maxAttempts: attemptStats._max.attempts ?? 0
+            }
+        };
+    });
+}
+
+  async getReportsByXref(appId: string, xref: string) {
+    const where = { app: appId, xref };
+    
+    const [
+      sessionStats, 
+      broadcastStats, 
+      
+      transportRecipients, 
+      transportDetails, 
+      broadcastsByTransport,
+      attemptStats
+    ] = await this.fetchReportData(appId, where, xref);
 
     const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
     const successCount = broadcastStats.find(stat => stat.status === BroadcastStatus.SUCCESS)?._count._all ?? 0;
     const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
 
-    const recipientsByTransport = transportRecipients.map(t => {
-      const transportInfo = transportDetails.find(d => d.cuid === t.transport);
-      return {
-        transport: t.transport,
-        name: transportInfo?.name,
-        type: transportInfo?.type,
-        totalRecipients: t._sum.totalAddresses ?? 0,
-      };
-    });
+    const recipientsByTransport = await this.calculateTransportStats(
+      transportRecipients,
+      transportDetails,
+      broadcastsByTransport,
+      attemptStats,
+    
+    );
 
     return {
-      sessionStats: { count: sessionStats._count.id ?? 0, totalRecipients: sessionStats._sum.totalAddresses ?? 0 },
-      messageStats: { totalMessages, successCount, successRate },
+      sessionStats: { 
+        count: sessionStats._count.id ?? 0, 
+        totalRecipients: sessionStats._sum.totalAddresses ?? 0 
+      },
+      messageStats: { 
+        totalMessages, 
+        successCount, 
+        successRate,
+      },
       recipientsByTransport,
       xref,
     };
-
   }
-
-
 }
