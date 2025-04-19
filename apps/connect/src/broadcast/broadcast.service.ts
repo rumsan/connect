@@ -21,6 +21,7 @@ import {
   dev_SessionAttemptComplete,
   dev_SessionCompletionAlert,
 } from '../utils/dev.alert';
+import { TransportStatsRaw } from '../utils/types/report';
 import {
   BroadcastDto,
   ListBroadcastDto,
@@ -474,82 +475,67 @@ export class BroadcastService {
     };
   }
 
-  async fetchReportData(appId: string, where: any, xref: string) {
-
+   async fetchReportData(appId: string, where: any, xref: string) {
     return Promise.all([
+    
+      this.prisma.session.aggregate({ 
+        where,
+        _count: { id: true },
+        _sum: { totalAddresses: true }
+      }),
 
-   this.prisma.session.aggregate({ where, _count: { id: true }, _sum: { totalAddresses: true } }),
+    
       this.prisma.broadcast.groupBy({
         by: ['status'],
-        where: { app: appId, Session: { xref } },
-        _count: { _all: true },
+        where: {
+          app: appId,
+          Session: { xref }
+        },
+        _count: { _all: true }
       }),
+
+this.prisma.$queryRaw<TransportStatsRaw[]>`
+          SELECT 
+            t.cuid as transport_id,
+            t.name as transport_name,
+            t.type as transport_type,
+            COUNT(b.id) as total_broadcasts,
+            SUM(CASE WHEN b.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
+            SUM(CASE WHEN b.status = 'FAIL' THEN 1 ELSE 0 END) as failed_count,
+            SUM(CASE WHEN b.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+            ROUND(AVG(CAST(b.attempts as float))::numeric, 2) as average_attempts,
+            MAX(b.attempts) as max_attempts,
+            SUM(s."totalAddresses") as total_recipients
+          FROM "tbl_transports" t
+          LEFT JOIN "tbl_broadcasts" b ON b.transport = t.cuid
+          LEFT JOIN "tbl_sessions" s ON s.cuid = b.session
+          WHERE t.app = ${appId}
+          AND s.xref = ${xref}
+          GROUP BY t.cuid, t.name, t.type
+          HAVING COUNT(b.id) > 0
+        `,
       
-      this.prisma.session.groupBy({
-        by: ['transport'],
-        where,
-        _sum: { totalAddresses: true },
-      }),
-      this.prisma.transport.findMany({
-        where: { app: appId },
-        select: { cuid: true, name: true, type: true },
-      }),
-      this.prisma.broadcast.groupBy({
-        by: ['transport', 'status'],
-        where: { app: appId, Session: { xref } },
-        _count: { _all: true },
-      }),
-      this.prisma.broadcast.aggregate({
-        where: { app: appId, Session: { xref } },
-        _avg: { attempts: true },
-        _max: { attempts: true }
-      })
-
-
-
-
-
-    ])
-    
-
+      
+    ]);
   }
 
- async calculateTransportStats(
-    transportRecipients: any[],
-    transportDetails: any[],
-    broadcastsByTransport: any[],
-   attemptStats: any,
-  
-) {
-    
-    return transportRecipients.map(t => {
-      const transportInfo = transportDetails.find(d => d.cuid === t.transport);
-        
-        
-        const transportBroadcasts = broadcastsByTransport
-            .filter(b => b.transport === t.transport)
-            .reduce((acc, b) => {
-                acc.total += b._count._all;
-                if (b.status === BroadcastStatus.SUCCESS) acc.success = b._count._all;
-                if (b.status === BroadcastStatus.FAIL) acc.failed = b._count._all;
-                if (b.status === BroadcastStatus.PENDING) acc.pending = b._count._all;
-                return acc;
-            }, { total: 0, success: 0, failed: 0, pending: 0 });
-
-
-        return {
-            transport: t.transport,
-            name: transportInfo?.name,
-            type: transportInfo?.type,
-            totalRecipients: t._sum.totalAddresses ?? 0,
-            broadcasts: {
-                ...transportBroadcasts,
-                averageAttempts: Number(attemptStats._avg.attempts?.toFixed(2)) ?? 0,
-                maxAttempts: attemptStats._max.attempts ?? 0
-            }
-        };
-    });
-}
+  async calculateTransportStats(transportStats: TransportStatsRaw[]) {
+   
+   return transportStats.map(t => ({
+    transport: t.transport_id,
+    name: t.transport_name,
+    type: t.transport_type,
+    totalRecipients: Number(t.total_recipients || 0),
+    broadcasts: {
+      total: Number(t.total_broadcasts),
+      success: Number(t.success_count),
+      failed: Number(t.failed_count),
+      pending: Number(t.pending_count),
+      averageAttempts: Number(t.average_attempts || 0),
+      maxAttempts: Number(t.max_attempts || 0),
+    },
+  }));
+  }
 
   async getReportsByXref(appId: string, xref: string) {
     const where = { app: appId, xref };
@@ -557,24 +543,13 @@ export class BroadcastService {
     const [
       sessionStats, 
       broadcastStats, 
-      
-      transportRecipients, 
-      transportDetails, 
-      broadcastsByTransport,
-      attemptStats
+      transportStats
     ] = await this.fetchReportData(appId, where, xref);
+
 
     const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
     const successCount = broadcastStats.find(stat => stat.status === BroadcastStatus.SUCCESS)?._count._all ?? 0;
     const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
-
-    const recipientsByTransport = await this.calculateTransportStats(
-      transportRecipients,
-      transportDetails,
-      broadcastsByTransport,
-      attemptStats,
-    
-    );
 
     return {
       sessionStats: { 
@@ -586,7 +561,7 @@ export class BroadcastService {
         successCount, 
         successRate,
       },
-      recipientsByTransport,
+      recipientsByTransport: await this.calculateTransportStats(transportStats),
       xref,
     };
   }
