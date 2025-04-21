@@ -27,6 +27,7 @@ import {
   ListBroadcastDto,
   MessageDto,
 } from './dto/broadcast.dto';
+import { ReportWhereClause } from './dto/report.dto';
 import { getAddressValidator, getContentValidator } from './validators';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
@@ -475,16 +476,13 @@ export class BroadcastService {
     };
   }
 
-   async fetchReportData(appId: string, where: any, xref: string) {
+  async fetchReportData(appId: string, where: ReportWhereClause, xref: string) {
     return Promise.all([
-    
       this.prisma.session.aggregate({ 
         where,
         _count: { id: true },
         _sum: { totalAddresses: true }
       }),
-
-    
       this.prisma.broadcast.groupBy({
         by: ['status'],
         where: {
@@ -493,29 +491,39 @@ export class BroadcastService {
         },
         _count: { _all: true }
       }),
-
-this.prisma.$queryRaw<TransportStatsRaw[]>`
+      this.prisma.$queryRaw<TransportStatsRaw[]>`
+        WITH transport_recipients AS (
           SELECT 
-            t.cuid as transport_id,
-            t.name as transport_name,
-            t.type as transport_type,
-            COUNT(b.id) as total_broadcasts,
-            SUM(CASE WHEN b.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
-            SUM(CASE WHEN b.status = 'FAIL' THEN 1 ELSE 0 END) as failed_count,
-            SUM(CASE WHEN b.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
-            ROUND(AVG(CAST(b.attempts as float))::numeric, 2) as average_attempts,
-            MAX(b.attempts) as max_attempts,
+            t.cuid,
             SUM(s."totalAddresses") as total_recipients
           FROM "tbl_transports" t
-          LEFT JOIN "tbl_broadcasts" b ON b.transport = t.cuid
-          LEFT JOIN "tbl_sessions" s ON s.cuid = b.session
-          WHERE t.app = ${appId}
+          JOIN "tbl_sessions" s ON s.transport = t.cuid
+          WHERE t.app = ${appId} AND s.xref = ${xref}
+          GROUP BY t.cuid
+        )
+        SELECT 
+          t.cuid as transport_id,
+          t.name as transport_name,
+          t.type as transport_type,
+          COUNT(DISTINCT b.id) as total_broadcasts,
+          SUM(CASE WHEN b.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
+          SUM(CASE WHEN b.status = 'FAIL' THEN 1 ELSE 0 END) as failed_count,
+          SUM(CASE WHEN b.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+          ROUND(AVG(CAST(b.attempts as float))::numeric, 2) as average_attempts,
+          MAX(b.attempts) as max_attempts,
+          COALESCE(tr.total_recipients, 0) as total_recipients
+        FROM "tbl_transports" t
+        LEFT JOIN "tbl_broadcasts" b ON b.transport = t.cuid
+        LEFT JOIN transport_recipients tr ON tr.cuid = t.cuid
+        WHERE t.app = ${appId}
+        AND EXISTS (
+          SELECT 1 FROM "tbl_sessions" s 
+          WHERE s.transport = t.cuid 
           AND s.xref = ${xref}
-          GROUP BY t.cuid, t.name, t.type
-          HAVING COUNT(b.id) > 0
-        `,
-      
-      
+        )
+        GROUP BY t.cuid, t.name, t.type, tr.total_recipients
+        HAVING COUNT(DISTINCT b.id) > 0
+      `
     ]);
   }
 
@@ -545,10 +553,13 @@ this.prisma.$queryRaw<TransportStatsRaw[]>`
       broadcastStats, 
       transportStats
     ] = await this.fetchReportData(appId, where, xref);
+  
 
 
     const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
     const successCount = broadcastStats.find(stat => stat.status === BroadcastStatus.SUCCESS)?._count._all ?? 0;
+    const failedCount = broadcastStats.find(stat => stat.status === BroadcastStatus.FAIL)?._count._all ?? 0;
+    const pendingCount = broadcastStats.find(stat => stat.status === BroadcastStatus.PENDING)?._count._all ?? 0;
     const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
 
     return {
@@ -559,9 +570,11 @@ this.prisma.$queryRaw<TransportStatsRaw[]>`
       messageStats: { 
         totalMessages, 
         successCount, 
+        failedCount,
+        pendingCount,
         successRate,
       },
-      recipientsByTransport: await this.calculateTransportStats(transportStats),
+      transportStats: await this.calculateTransportStats(transportStats),
       xref,
     };
   }
