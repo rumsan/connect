@@ -21,11 +21,13 @@ import {
   dev_SessionAttemptComplete,
   dev_SessionCompletionAlert,
 } from '../utils/dev.alert';
+import { TransportStatsRaw } from '../utils/types/report';
 import {
   BroadcastDto,
   ListBroadcastDto,
   MessageDto,
 } from './dto/broadcast.dto';
+import { ReportWhereClause } from './dto/report.dto';
 import { getAddressValidator, getContentValidator } from './validators';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
@@ -474,58 +476,106 @@ export class BroadcastService {
     };
   }
 
-  async getReportsByXref(appId: string, xref: string) {
-
-
-    const where = { app: appId, xref };
-
-    const [sessionStats, broadcastStats, transportRecipients, transportDetails] = await Promise.all([
-
-      this.prisma.session.aggregate({ where, _count: { id: true }, _sum: { totalAddresses: true } }),
-
-
+  async fetchReportData(appId: string, where: ReportWhereClause, xref: string) {
+    return Promise.all([
+      this.prisma.session.aggregate({ 
+        where,
+        _count: { id: true },
+        _sum: { totalAddresses: true }
+      }),
       this.prisma.broadcast.groupBy({
         by: ['status'],
-        where: { app: appId, Session: { xref } },
-        _count: { _all: true },
+        where: {
+          app: appId,
+          Session: { xref }
+        },
+        _count: { _all: true }
       }),
-
-
-      this.prisma.session.groupBy({
-        by: ['transport'],
-        where,
-        _sum: { totalAddresses: true },
-      }),
-
-
-      this.prisma.transport.findMany({
-        where: { app: appId },
-        select: { cuid: true, name: true, type: true },
-      }),
+      this.prisma.$queryRaw<TransportStatsRaw[]>`
+        WITH transport_recipients AS (
+          SELECT 
+            t.cuid,
+            SUM(s."totalAddresses") as total_recipients
+          FROM "tbl_transports" t
+          JOIN "tbl_sessions" s ON s.transport = t.cuid
+          WHERE t.app = ${appId} AND s.xref = ${xref}
+          GROUP BY t.cuid
+        )
+        SELECT 
+          t.cuid as transport_id,
+          t.name as transport_name,
+          t.type as transport_type,
+          COUNT(DISTINCT b.id) as total_broadcasts,
+          SUM(CASE WHEN b.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
+          SUM(CASE WHEN b.status = 'FAIL' THEN 1 ELSE 0 END) as failed_count,
+          SUM(CASE WHEN b.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+          ROUND(AVG(CAST(b.attempts as float))::numeric, 2) as average_attempts,
+          MAX(b.attempts) as max_attempts,
+          COALESCE(tr.total_recipients, 0) as total_recipients
+        FROM "tbl_transports" t
+        LEFT JOIN "tbl_broadcasts" b ON b.transport = t.cuid
+        LEFT JOIN transport_recipients tr ON tr.cuid = t.cuid
+        WHERE t.app = ${appId}
+        AND EXISTS (
+          SELECT 1 FROM "tbl_sessions" s 
+          WHERE s.transport = t.cuid 
+          AND s.xref = ${xref}
+        )
+        GROUP BY t.cuid, t.name, t.type, tr.total_recipients
+        HAVING COUNT(DISTINCT b.id) > 0
+      `
     ]);
+  }
+
+  async calculateTransportStats(transportStats: TransportStatsRaw[]) {
+   
+   return transportStats.map(t => ({
+    transport: t.transport_id,
+    name: t.transport_name,
+    type: t.transport_type,
+    totalRecipients: Number(t.total_recipients || 0),
+    broadcasts: {
+      total: Number(t.total_broadcasts),
+      success: Number(t.success_count),
+      failed: Number(t.failed_count),
+      pending: Number(t.pending_count),
+      averageAttempts: Number(t.average_attempts || 0),
+      maxAttempts: Number(t.max_attempts || 0),
+    },
+  }));
+  }
+
+  async getReportsByXref(appId: string, xref: string) {
+    const where = { app: appId, xref };
+    
+    const [
+      sessionStats, 
+      broadcastStats, 
+      transportStats
+    ] = await this.fetchReportData(appId, where, xref);
+  
+
 
     const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
     const successCount = broadcastStats.find(stat => stat.status === BroadcastStatus.SUCCESS)?._count._all ?? 0;
+    const failedCount = broadcastStats.find(stat => stat.status === BroadcastStatus.FAIL)?._count._all ?? 0;
+    const pendingCount = broadcastStats.find(stat => stat.status === BroadcastStatus.PENDING)?._count._all ?? 0;
     const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
 
-    const recipientsByTransport = transportRecipients.map(t => {
-      const transportInfo = transportDetails.find(d => d.cuid === t.transport);
-      return {
-        transport: t.transport,
-        name: transportInfo?.name,
-        type: transportInfo?.type,
-        totalRecipients: t._sum.totalAddresses ?? 0,
-      };
-    });
-
     return {
-      sessionStats: { count: sessionStats._count.id ?? 0, totalRecipients: sessionStats._sum.totalAddresses ?? 0 },
-      messageStats: { totalMessages, successCount, successRate },
-      recipientsByTransport,
+      sessionStats: { 
+        count: sessionStats._count.id ?? 0, 
+        totalRecipients: sessionStats._sum.totalAddresses ?? 0 
+      },
+      messageStats: { 
+        totalMessages, 
+        successCount, 
+        failedCount,
+        pendingCount,
+        successRate,
+      },
+      transportStats: await this.calculateTransportStats(transportStats),
       xref,
     };
-
   }
-
-
 }
