@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AppId } from '@rumsan/app';
 import { ListBroadcastDto } from '../broadcast/dto/broadcast.dto';
@@ -9,7 +9,7 @@ import { SessionService } from './session.service';
 @Controller('sessions')
 @ApiTags('Sessions')
 export class SessionController {
-  constructor(private readonly sessionService: SessionService) {}
+  constructor(private readonly sessionService: SessionService) { }
 
   @Get()
   @ApiOperation({
@@ -55,5 +55,16 @@ export class SessionController {
     @Query() dto: { include_failed?: boolean },
   ) {
     return this.sessionService.triggerBroadcast(cuid, dto.include_failed);
+  }
+
+  @Post('addresses')
+  @ApiOperation({
+    summary: 'Get the sum of addresses for multiple sessions',
+  })
+  async getSumOfAddresses(@Body('sessions') sessions: string[]) {
+    if (!Array.isArray(sessions)) {
+      throw new Error('sessionCuids must be an array of strings');
+    }
+    return this.sessionService.getSumOfAddresses(sessions);
   }
 }
