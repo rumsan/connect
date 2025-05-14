@@ -57,14 +57,14 @@ export class SessionController {
     return this.sessionService.triggerBroadcast(cuid, dto.include_failed);
   }
 
-  @Post('addresses')
+  @Post('broadcast-counts')
   @ApiOperation({
-    summary: 'Get the sum of addresses for multiple sessions',
+    summary: 'Get the count of broadcasts grouped by status for multiple sessions',
   })
-  async getSumOfAddresses(@Body('sessions') sessions: string[]) {
+  async getBroadcastCountByStatuses(@Body('sessions') sessions: string[]) {
     if (!Array.isArray(sessions)) {
       throw new Error('sessionCuids must be an array of strings');
     }
-    return this.sessionService.getSumOfAddresses(sessions);
+    return this.sessionService.getBroadcastCountByStatuses(sessions);
   }
 }

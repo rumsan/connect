@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BroadcastLog, Session } from '@prisma/client';
-import { TransportType } from '@rumsan/connect/types';
+import { BroadcastCount, BroadcastStatus, TransportType } from '@rumsan/connect/types';
 import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
 import { BroadcastService } from '../broadcast/broadcast.service';
 import { ListBroadcastDto } from '../broadcast/dto/broadcast.dto';
@@ -111,16 +111,23 @@ export class SessionService {
     );
   }
 
-  async getSumOfAddresses(sessionCuids: string[]): Promise<number> {
-    const sessions = await this.prisma.session.findMany({
+  async getBroadcastCountByStatuses(sessionCuids: string[]): Promise<Record<BroadcastStatus | 'TOTAL', number>> {
+    const counts = await this.prisma.broadcast.groupBy({
+      by: ['status'],
       where: {
-        cuid: { in: sessionCuids },
+        session: { in: sessionCuids },
       },
-      select: {
-        totalAddresses: true,
+      _count: {
+        status: true,
       },
     });
 
-    return sessions.reduce((sum, session) => sum + session.totalAddresses, 0);
+    const result = counts.reduce((acc, item) => {
+      acc[item.status] = item._count.status;
+      acc['TOTAL'] = (acc['TOTAL'] || 0) + item._count.status;
+      return acc;
+    }, {} as BroadcastCount);
+
+    return result;
   }
 }
