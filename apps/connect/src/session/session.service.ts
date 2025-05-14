@@ -110,4 +110,17 @@ export class SessionService {
       },
     );
   }
+
+  async getSumOfAddresses(sessionCuids: string[]): Promise<number> {
+    const sessions = await this.prisma.session.findMany({
+      where: {
+        cuid: { in: sessionCuids },
+      },
+      select: {
+        totalAddresses: true,
+      },
+    });
+
+    return sessions.reduce((sum, session) => sum + session.totalAddresses, 0);
+  }
 }
