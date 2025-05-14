@@ -1,7 +1,8 @@
 import { formatResponse } from '@rumsan/sdk/utils';
 import { AxiosInstance, AxiosRequestConfig } from 'axios';
-import { Broadcast, BroadcastLog, Session } from '../types';
+import { Broadcast, BroadcastCount, BroadcastLog, Session } from '../types';
 import { ApiClient } from './api.client';
+
 
 export class SessionClient {
   private _client: AxiosInstance;
@@ -33,5 +34,17 @@ export class SessionClient {
       config
     );
     return formatResponse<BroadcastLog[]>(response);
+  }
+
+  async broadcastCount(
+    data: { sessions: string[] },
+    config?: AxiosRequestConfig
+  ) {
+    const response = await this._client.post(
+      `${this._prefix}/broadcast-counts`,
+      data,
+      config
+    );
+    return formatResponse<BroadcastCount>(response);
   }
 }

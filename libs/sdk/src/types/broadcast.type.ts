@@ -76,3 +76,6 @@ export type BroadcastCountsResponse = {
     total: number;
   };
 };
+
+export type BroadcastCount = Record<BroadcastStatus | 'TOTAL', number>;
+
