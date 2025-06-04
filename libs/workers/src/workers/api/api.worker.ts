@@ -33,6 +33,9 @@ export class ApiWorker extends TransportWorker {
   }
 
   override async _sendBroadcast(jobData: QueueBroadcastJobData) {
+    this.logger.log(
+      `Processing broadcast job for session: ${jobData.sessionId}`,
+    );
     const session: Session = await this.dataProvider.getSession(
       jobData.sessionId,
     );
@@ -67,6 +70,9 @@ export class ApiWorker extends TransportWorker {
     session: Session,
     jobData: QueueBroadcastJobData,
   ): Promise<void> {
+    this.logger.log(
+      `Processing bulk broadcast job for session: ${jobData.sessionId}`,
+    );
     const addresses = jobData.broadcasts.map((b) => b.address);
     let result;
     let status = BroadcastStatus.SUCCESS;
@@ -76,7 +82,11 @@ export class ApiWorker extends TransportWorker {
         session.message as Message,
       );
     } catch (e: any) {
-      result = { error: e.message };
+      this.logger.error(
+        `Failed to send bulk broadcast for session: ${jobData.sessionId}`,
+        e,
+      );
+      result = { error: e.message, data: e?.response?.data };
       status = BroadcastStatus.FAIL;
     }
 
@@ -99,6 +109,9 @@ export class ApiWorker extends TransportWorker {
     broadcastJob: BroadcastJobData;
     broadcastLog: QueueBroadcastLog;
   }): Promise<QueueBroadcastLog> {
+    this.logger.log(
+      `Sending broadcast for session: ${data.session.cuid}, address: ${data.broadcastJob.address}`,
+    );
     const { session, broadcastLog, broadcastJob } = data;
 
     try {
@@ -110,8 +123,12 @@ export class ApiWorker extends TransportWorker {
       broadcastLog.status = BroadcastStatus.SUCCESS;
       broadcastLog.details = res;
     } catch (e: any) {
+      this.logger.error(
+        `Failed to send broadcast for session: ${session.cuid}, address: ${broadcastJob.address}`,
+        e,
+      );
       broadcastLog.status = BroadcastStatus.FAIL;
-      broadcastLog.details = { error: e.message };
+      broadcastLog.details = { error: e.message, data: e?.response?.data };
     }
 
     //send log to connect server
