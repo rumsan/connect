@@ -10,7 +10,7 @@ const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
 @Injectable()
 export class TransportService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
   create(appId: string, dto: CreateTransportDto) {
     return this.prisma.transport.create({
       data: { cuid: createId(), ...{ app: appId }, ...dto },
@@ -21,6 +21,9 @@ export class TransportService {
     appId: string,
     dto: ListTransportDto,
   ): Promise<PaginatorTypes.PaginatedResult<Transport>> {
+    if (!appId) {
+      throw new Error('App ID is required to list transports');
+    }
     const where = {
       app: appId,
       deletedAt: null,
