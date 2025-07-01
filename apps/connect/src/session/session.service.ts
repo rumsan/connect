@@ -80,6 +80,16 @@ export class SessionService {
       {
         where: {
           session: cuid,
+          status: dto.status,
+          xref: dto.xref,
+          ...(dto.startDate && dto.endDate
+            ? {
+              createdAt: {
+                gte: new Date(dto.startDate),
+                lte: new Date(dto.endDate),
+              },
+            }
+            : {}),
         },
         orderBy,
       },
