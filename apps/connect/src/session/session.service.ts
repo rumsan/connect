@@ -82,6 +82,14 @@ export class SessionService {
           session: cuid,
           status: dto.status,
           xref: dto.xref,
+          ...(dto.address
+            ? {
+              address: {
+                contains: dto.address,
+                mode: 'insensitive',
+              },
+            }
+            : {}),
           ...(dto.startDate && dto.endDate
             ? {
               createdAt: {

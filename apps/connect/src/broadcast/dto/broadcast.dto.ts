@@ -86,7 +86,7 @@ export class BroadcastDto {
 
 export class ListBroadcastDto extends PaginationDto {
   @IsIn(['createdAt'])
-  override sort: string = 'createdAt';
+  override sort = 'createdAt';
 
   override order: 'asc' | 'desc' = 'desc';
 
@@ -126,4 +126,13 @@ export class ListBroadcastDto extends PaginationDto {
   })
   @IsOptional()
   xref?: string;
+
+  @ApiProperty({
+    example: '+1234567890',
+    description: 'Search by address',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  address?: string;
 }
