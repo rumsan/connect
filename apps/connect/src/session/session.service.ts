@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { BroadcastLog, Session } from '@prisma/client';
 import { BroadcastStatus, TransportType } from '@rumsan/connect/types';
 import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
@@ -11,12 +11,15 @@ const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 100 });
 
 @Injectable()
 export class SessionService {
+  private readonly logger = new Logger(SessionService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly broadcastService: BroadcastService,
   ) { }
 
   async triggerBroadcast(sessionCuid: string, retryFailed?: boolean) {
+    this.logger.log(`Triggering broadcast for session: ${sessionCuid}`);
     const session = await this.prisma.session.findUnique({
       where: {
         cuid: sessionCuid,
@@ -73,6 +76,7 @@ export class SessionService {
     cuid: string,
     dto: ListBroadcastDto,
   ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
+    this.logger.log(`Listing broadcasts for session: ${cuid}`);
     const orderBy: Record<string, 'asc' | 'desc'> = {};
     orderBy[dto.sort] = dto.order;
     return paginate(
@@ -130,6 +134,7 @@ export class SessionService {
   }
 
   async getBroadcastCountByStatuses(sessionCuids: string[]): Promise<Record<BroadcastStatus | 'TOTAL', number>> {
+    this.logger.log(`Getting broadcast counts for sessions: ${sessionCuids.join(', ')}`);
     const counts = await this.prisma.broadcast.groupBy({
       by: ['status'],
       where: {
@@ -139,9 +144,6 @@ export class SessionService {
         status: true,
       },
     });
-
-    console.log(counts);
-
 
     const result: Record<BroadcastStatus | 'TOTAL', number> = {
       SCHEDULED: 0,
