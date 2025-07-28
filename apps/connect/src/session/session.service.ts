@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BroadcastLog, Session } from '@prisma/client';
-import { BroadcastCount, BroadcastStatus, TransportType } from '@rumsan/connect/types';
+import { BroadcastStatus, TransportType } from '@rumsan/connect/types';
 import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
 import { BroadcastService } from '../broadcast/broadcast.service';
 import { ListBroadcastDto } from '../broadcast/dto/broadcast.dto';
@@ -140,11 +140,22 @@ export class SessionService {
       },
     });
 
-    const result = counts.reduce((acc, item) => {
-      acc[item.status] = item._count.status;
-      acc['TOTAL'] = (acc['TOTAL'] || 0) + item._count.status;
-      return acc;
-    }, {} as BroadcastCount);
+    console.log(counts);
+
+
+    const result: Record<BroadcastStatus | 'TOTAL', number> = {
+      SCHEDULED: 0,
+      PENDING: 0,
+      SUCCESS: 0,
+      FAIL: 0,
+      TOTAL: 0,
+    };
+
+    // Update counts with actual data from database
+    counts.forEach((item) => {
+      result[item.status as BroadcastStatus] = item._count.status;
+      result['TOTAL'] += item._count.status;
+    });
 
     return result;
   }

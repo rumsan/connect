@@ -34,6 +34,7 @@ export interface ListBroadcast extends PaginationTypes {
   startDate?: Date;
   endDate?: Date;
   xref?: string;
+  address?: string; // search by address
 }
 
 export interface BrodcastReportFilter {
