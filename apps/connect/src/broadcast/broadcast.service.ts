@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
   BroadcastLog,
+  Prisma,
   Session as PrismaSessionType,
   Transport,
 } from '@prisma/client';
@@ -34,6 +35,8 @@ const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
 @Injectable()
 export class BroadcastService {
+  private readonly logger = new Logger(BroadcastService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly transportQueue: TransportQueue,
@@ -476,9 +479,9 @@ export class BroadcastService {
     };
   }
 
-  async fetchReportData(appId: string, where: ReportWhereClause, xref: string) {
+  async fetchReportData(appId: string, where: ReportWhereClause, xref?: string) {
     return Promise.all([
-      this.prisma.session.aggregate({ 
+      this.prisma.session.aggregate({
         where,
         _count: { id: true },
         _sum: { totalAddresses: true }
@@ -487,7 +490,7 @@ export class BroadcastService {
         by: ['status'],
         where: {
           app: appId,
-          Session: { xref }
+          ...(xref ? { Session: { xref } } : {})
         },
         _count: { _all: true }
       }),
@@ -498,7 +501,7 @@ export class BroadcastService {
             SUM(s."totalAddresses") as total_recipients
           FROM "tbl_transports" t
           JOIN "tbl_sessions" s ON s.transport = t.cuid
-          WHERE t.app = ${appId} AND s.xref = ${xref}
+          WHERE t.app = ${appId} ${xref ? Prisma.sql`AND s.xref = ${xref}` : Prisma.empty}
           GROUP BY t.cuid
         )
         SELECT 
@@ -516,11 +519,11 @@ export class BroadcastService {
         LEFT JOIN "tbl_broadcasts" b ON b.transport = t.cuid
         LEFT JOIN transport_recipients tr ON tr.cuid = t.cuid
         WHERE t.app = ${appId}
-        AND EXISTS (
+        ${xref ? Prisma.sql`AND EXISTS (
           SELECT 1 FROM "tbl_sessions" s 
           WHERE s.transport = t.cuid 
           AND s.xref = ${xref}
-        )
+        )` : Prisma.empty}
         GROUP BY t.cuid, t.name, t.type, tr.total_recipients
         HAVING COUNT(DISTINCT b.id) > 0
       `
@@ -528,32 +531,34 @@ export class BroadcastService {
   }
 
   async calculateTransportStats(transportStats: TransportStatsRaw[]) {
-   
-   return transportStats.map(t => ({
-    transport: t.transport_id,
-    name: t.transport_name,
-    type: t.transport_type,
-    totalRecipients: Number(t.total_recipients || 0),
-    broadcasts: {
-      total: Number(t.total_broadcasts),
-      success: Number(t.success_count),
-      failed: Number(t.failed_count),
-      pending: Number(t.pending_count),
-      averageAttempts: Number(t.average_attempts || 0),
-      maxAttempts: Number(t.max_attempts || 0),
-    },
-  }));
+
+    return transportStats.map(t => ({
+      transport: t.transport_id,
+      name: t.transport_name,
+      type: t.transport_type,
+      totalRecipients: Number(t.total_recipients || 0),
+      broadcasts: {
+        total: Number(t.total_broadcasts),
+        success: Number(t.success_count),
+        failed: Number(t.failed_count),
+        pending: Number(t.pending_count),
+        averageAttempts: Number(t.average_attempts || 0),
+        maxAttempts: Number(t.max_attempts || 0),
+      },
+    }));
   }
 
-  async getReportsByXref(appId: string, xref: string) {
-    const where = { app: appId, xref };
-    
+  async getReports(appId: string, xref?: string) {
+    console.log(`Fetching reports for app: ${appId}, xref: ${xref}`);
+    this.logger.log(`Fetching reports for app: ${appId}, xref: ${xref}`);
+    const where = xref ? { app: appId, xref } : { app: appId };
+
     const [
-      sessionStats, 
-      broadcastStats, 
+      sessionStats,
+      broadcastStats,
       transportStats
     ] = await this.fetchReportData(appId, where, xref);
-  
+
 
 
     const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
@@ -563,13 +568,13 @@ export class BroadcastService {
     const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
 
     return {
-      sessionStats: { 
-        count: sessionStats._count.id ?? 0, 
-        totalRecipients: sessionStats._sum.totalAddresses ?? 0 
+      sessionStats: {
+        count: sessionStats._count.id ?? 0,
+        totalRecipients: sessionStats._sum.totalAddresses ?? 0
       },
-      messageStats: { 
-        totalMessages, 
-        successCount, 
+      messageStats: {
+        totalMessages,
+        successCount,
         failedCount,
         pendingCount,
         successRate,

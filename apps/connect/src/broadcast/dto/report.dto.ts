@@ -1,6 +1,6 @@
 export interface ReportWhereClause {
   app: string;
-  xref: string;
+  xref?: string;
   createdAt?: {
     gte?: Date;
     lte?: Date;
