@@ -38,6 +38,15 @@ export class BroadcastController {
     return this.broadcastService.findSelected(appId, broadcastIds);
   }
 
+  @Get("reports")
+  @ApiOperation({
+    summary: 'Get all logged items for the registered app.',
+  })
+  getReports(@AppId() appId: string) {
+    console.log(`Fetching reports for app: ${appId}`);
+    return this.broadcastService.getReports(appId);
+  }
+
   @Get(':cuid')
   @ApiOperation({
     summary: 'Get a broadcast details with logs by broadcast id',
@@ -46,12 +55,13 @@ export class BroadcastController {
     return this.broadcastService.findOne(cuid);
   }
 
-
   @Get(":xref/reports")
   @ApiOperation({
-    summary: 'Get all logged items for the registered app.',
+    summary: 'Get all logged items for the registered app and xref.',
   })
   getReportsByXref(@AppId() appId: string, @Param("xref") xref: string) {
-    return this.broadcastService.getReportsByXref(appId, xref);
+    return this.broadcastService.getReports(appId, xref);
   }
+
+
 }

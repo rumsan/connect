@@ -50,4 +50,15 @@ export class SessionClient {
     );
     return formatResponse<BroadcastCount>(response);
   }
+
+  async retryIncomplete(cuid: string, includeFailed?: boolean, config?: AxiosRequestConfig) {
+    const response = await this._client.get(
+      `${this._prefix}/${cuid}/trigger?include_failed=${includeFailed}`,
+      config
+    );
+    return formatResponse<{
+      isComplete: boolean;
+      count: number;
+    }>(response);
+  }
 }
