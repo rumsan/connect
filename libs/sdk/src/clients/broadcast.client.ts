@@ -54,10 +54,16 @@ export class BroadcastClient {
     data: BrodcastReportFilter,
     config?: AxiosRequestConfig,
   ) {
-    const response = await this._client.get(
-      `${this._prefix}/${data.xref}/reports`,
-      config,
-    );
+    let response;
+    if (data.xref) {
+      response = await this._client.get(
+        `${this._prefix}/${data.xref}/reports`,
+        config,
+      );
+    }
+    else {
+      response = await this._client.get(`${this._prefix}/reports`, config);
+    }
 
     return formatResponse<BroadcastCountsResponse>(response);
   }
