@@ -203,7 +203,7 @@ export class BroadcastService {
       // this.prisma,
     );
     if (isSessionComplete) {
-      return { isComplete: true, count: 0 };
+      throw new Error('Session is completed');
     }
 
     const retryStatuses = retryFailed
@@ -240,6 +240,7 @@ export class BroadcastService {
     }, 100);
 
     return {
+      message: `Retrying ${broadcasts.count} Number of Failed Broadcasts`,
       isComplete: false,
       count: broadcasts.count,
     };
