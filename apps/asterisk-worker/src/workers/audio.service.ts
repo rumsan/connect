@@ -27,16 +27,18 @@ export class AudioService {
     const rawFile = `.data/${session.cuid}-raw.wav`;
     const convertedFile = `.data/${session.cuid}.wav`;
     const asteriskFile = `${sftpConfig.audioPath}/${session.cuid}.wav`;
-    console.log({ makeAudioReady: session, convertedFile, asteriskFile });
+    this.logger.log('Preparing audio file for Asterisk');
     // download file from message.content
     await this.downloadFile(session.message.content, rawFile);
+    this.logger.log('Audio file downloaded successfully');
 
     //convert file bitrate using ffmpeg
     await this.convertAudio(rawFile, convertedFile);
+    this.logger.log('Audio file converted successfully');
 
     // upload file to asterisk server
     await this.uploadFileToRemote(convertedFile, asteriskFile);
-
+    this.logger.log('Audio file uploaded to Asterisk server successfully');
     // delete local files
     await this.removeFiles([rawFile, convertedFile]);
     return true;
@@ -150,10 +152,8 @@ export class AudioService {
 
   async uploadFileToRemote(inputFilePath: string, remoteFilePath: string) {
     try {
-      console.log({ sftpConfig });
       await this.sftp.connect(sftpConfig);
       await this.sftp.put(inputFilePath, remoteFilePath);
-      console.log('Upload Completed');
       return true;
     } catch (err) {
       console.log({ err });

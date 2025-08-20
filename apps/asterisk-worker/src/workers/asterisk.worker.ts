@@ -53,6 +53,7 @@ export class AsteriskWorker extends TransportWorker {
   }): Promise<QueueBroadcastLog> {
     const { session, broadcast, broadcastLog } = data;
     broadcastLog.status = BroadcastStatus.PENDING;
+    this.logger.log('Sending broadcast for session:', session);
     try {
       if (session?.message?.meta?.type === 'new-ivr') {
         const { jsonData } = await this.ivrCache.findOne({
@@ -72,6 +73,7 @@ export class AsteriskWorker extends TransportWorker {
   async makeTransportReady(sessionCuid: string) {
     try {
       const session: Session = await this.dataProvider.getSession(sessionCuid);
+      this.logger.log('Preparing audio for Session:', session);
       //return true;
       const cacheSession = await this.sessionCache.findOne({
         where: { cuid: session.cuid },
@@ -99,6 +101,7 @@ export class AsteriskWorker extends TransportWorker {
         }
         await wait(5000);
       } else {
+        this.logger.log('Preparing audio file for Asterisk');
         await this.audioService.makeAudioReady(session);
       }
       await wait(15000);

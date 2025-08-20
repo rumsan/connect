@@ -47,6 +47,7 @@ export abstract class TransportWorker implements OnModuleInit {
               }
 
               if (job.action === QUEUE_ACTIONS.BROADCAST) {
+                console.log('Received broadcast job:', job);
                 this._sendBroadcast(job.data as QueueBroadcastJobData).then();
               }
 

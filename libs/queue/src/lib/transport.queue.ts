@@ -9,7 +9,7 @@ export class TransportQueue {
   constructor(
     @Inject('AMQP_CONNECTION')
     private readonly _channel: ChannelWrapper,
-  ) {}
+  ) { }
 
   async checkReadiness(data: {
     transportToCheck: QUEUES;
@@ -44,7 +44,7 @@ export class TransportQueue {
         action: QUEUE_ACTIONS.READINESS_CONFIRM,
         data,
       };
-
+      console.log('Confirming readiness for session:', data.sessionCuid);
       return this._channel.sendToQueue(
         QUEUES.TO_CONNECT,
         Buffer.from(JSON.stringify(queueJob)),
