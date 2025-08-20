@@ -137,6 +137,7 @@ export class BroadcastService {
   }
 
   async sendBroadcasts(sessionCuid: string, batchSize = 0) {
+    this.logger.log('Sending broadcasts for session:', sessionCuid);
     const session = await this.prisma.session.findUnique({
       where: {
         cuid: sessionCuid,
@@ -307,6 +308,7 @@ export class BroadcastService {
     transport: Transport,
     broadcasts: Broadcast[],
   ) {
+    this.logger.log('Adding broadcasts to queue:', session);
     const queueTransport = this._getQueueName(transport.type as TransportType);
 
     const broadcastQueueData = broadcasts.map((broadcast) => {

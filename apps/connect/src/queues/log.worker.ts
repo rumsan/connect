@@ -19,7 +19,7 @@ export class LogWorker implements OnModuleInit {
     private readonly broadcastService: BroadcastService,
     @Inject('AMQP_CONNECTION')
     private readonly channel: ChannelWrapper,
-  ) {}
+  ) { }
 
   public async onModuleInit() {
     try {
@@ -65,6 +65,7 @@ export class LogWorker implements OnModuleInit {
 
     if (action === QUEUE_ACTIONS.READINESS_CONFIRM) {
       try {
+        console.log("CONFIRMING READINESS")
         const data = job.data as { sessionCuid: string; maxBatchSize: number };
         this.broadcastService
           .sendBroadcasts(data.sessionCuid, data.maxBatchSize)
