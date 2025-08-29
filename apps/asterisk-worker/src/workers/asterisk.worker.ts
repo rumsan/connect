@@ -53,7 +53,7 @@ export class AsteriskWorker extends TransportWorker {
   }): Promise<QueueBroadcastLog> {
     const { session, broadcast, broadcastLog } = data;
     broadcastLog.status = BroadcastStatus.PENDING;
-    this.logger.log('Sending broadcast for session:', session);
+    this.logger.log('Sending broadcast for session:', session.cuid);
     try {
       if (session?.message?.meta?.type === 'new-ivr') {
         const { jsonData } = await this.ivrCache.findOne({
