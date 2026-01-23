@@ -1,0 +1,45 @@
+meta {
+  name: send-api
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-api}}",
+    "message": {
+      "content": "TWILIO SID",
+      "meta": {
+          "url": "test1"
+      }
+    },
+    "addresses": [
+      "{{whatsapp}}"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+      "scheduledTime": "2h",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
+}
