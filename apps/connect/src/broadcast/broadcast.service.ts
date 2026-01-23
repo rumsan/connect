@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -16,6 +16,7 @@ import {
   TransportType,
 } from '@rumsan/connect/types';
 
+import { TemplateVerificationService } from '@rsconnect/templates';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import {
   dev_NewBatchAlert,
@@ -41,6 +42,7 @@ export class BroadcastService {
     private readonly prisma: PrismaService,
     private readonly transportQueue: TransportQueue,
     private readonly broadcastQueue: BroadcastQueue,
+    private readonly templateVerificationService: TemplateVerificationService,
   ) { }
   async create(appId: string, dto: BroadcastDto) {
 
@@ -440,6 +442,13 @@ export class BroadcastService {
       },
     });
     if (!t) throw new Error('Transport not found.');
+
+    // Template verification gate:
+    // - If transport requires template verification, enforce verification.
+    // - If not required, keep existing validation flow unchanged.
+    const requiresTemplateVerification =
+      this.templateVerificationService.requiresTemplateVerification(t as any);
+
     const contentValidator = getContentValidator(t.validationContent);
     const addressValidator = getAddressValidator(t.validationAddress);
 
@@ -449,6 +458,27 @@ export class BroadcastService {
       if (!addressValidator(address))
         throw new Error(`Address: ${address} validation failed.`);
     }
+
+    if (requiresTemplateVerification) {
+      const templateExternalId = message?.content;
+      if (!templateExternalId) {
+        throw new BadRequestException(
+          'templateExternalId is required in message.content for this transport',
+        );
+      }
+
+      const parameters = message?.meta?.components?.[0]?.parameters;
+      const verification = await this.templateVerificationService.verifyTemplate(
+        transportId,
+        templateExternalId,
+        parameters,
+      );
+
+      if (!verification.isValid) {
+        throw new BadRequestException(verification.errors.join(', '));
+      }
+    }
+
     return true;
   }
 

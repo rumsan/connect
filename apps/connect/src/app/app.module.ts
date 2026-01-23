@@ -18,6 +18,7 @@ import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
 //import { QueueModule } from '../queues/queue.module';
 import { QueueModule } from '@rsconnect/queue';
 import { SessionModule } from '../session/session.module';
+import { TemplateModule } from '../template/template.module';
 import { TransportModule } from '../transport/transport.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -31,6 +32,7 @@ import { AppService } from './app.service';
     TransportModule,
     BroadcastModule,
     BroadcastLogModule,
+    TemplateModule,
     QueueModule,
 
     BullModule.forRootAsync({
@@ -64,7 +66,6 @@ import { AppService } from './app.service';
             channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
             channel.assertQueue(QUEUES.TRANSPORT_SMTP, { durable: true });
             channel.assertQueue(QUEUES.TRANSPORT_VOICE, { durable: true });
-            channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
             channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
           },
         });
@@ -78,4 +79,4 @@ import { AppService } from './app.service';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}

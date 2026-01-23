@@ -4,6 +4,7 @@ import { PrismaModule } from '@rumsan/prisma';
 import { BroadcastService } from '../broadcast/broadcast.service';
 import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
 import { BroadcastLogQueue } from '../broadcastLog/broadcast-log.queue';
+import { TemplateModule } from '../template/template.module';
 import { LogWorker } from './log.worker';
 
 export type ampqConfig = {
@@ -17,6 +18,7 @@ export type ampqConfig = {
     SmtpTransportModule,
     ApiTransportModule,
     BroadcastLogModule,
+    TemplateModule,
   ],
   providers: [LogWorker, BroadcastService, BroadcastLogQueue],
 })

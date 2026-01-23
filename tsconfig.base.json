@@ -17,6 +17,8 @@
     "baseUrl": ".",
     "paths": {
       "@rsconnect/queue": ["libs/queue/src/index.ts"],
+      "@rsconnect/templates": ["libs/templates/src/index.ts"],
+      "@rsconnect/templates/*": ["libs/templates/src/*"],
       "@rsconnect/transports": ["libs/transports/src/index.ts"],
       "@rsconnect/transports/*": ["libs/transports/src/*"],
       "@rsconnect/workers": ["libs/workers/src/index.ts"],
