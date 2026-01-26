@@ -96,7 +96,7 @@ export class TemplateService {
 
     const orderBy: Record<string, 'asc' | 'desc'> = {};
     orderBy[dto.sort || 'createdAt'] = dto.order || 'desc';
-
+    
     return paginate(
       this.prisma.template,
       {

@@ -1,5 +1,5 @@
 meta {
-  name: create-api
+  name: create-api-twilio-whatsapp
   type: http
   seq: 3
 }
@@ -22,20 +22,22 @@ body:json {
       "config": {
           "url": "{{twilio-url}}",
           "body": {
-              "From":"whatsapp:+14155238886",
-            "To": "{%address%}",
-            "ContentSid":"{%message.content%}",
+              "From": "whatsapp:+14155238886",
+              "To": "{%address%}",
+              "ContentSid": "{%message.content%}"
           },
-                   "headers": {
-      "Authorization": "Basic encoded",
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-     "provider": "twilio",
-    "apiSecret": "",
-    "accountSid": "",
-    "capabilities": [
-        "TEMPLATE_VERIFICATION"
-    ]
+   "headers": {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Authorization": "Basic encoded"
+      },
+            "meta": {
+          "provider": "twilio",
+          "apiSecret": "",
+          "accountSid": "",
+          "capabilities": [
+              "TEMPLATE_VERIFICATION"
+          ]
+      }
       }
   }
 }

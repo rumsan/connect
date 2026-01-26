@@ -1,6 +1,6 @@
 import { Transport } from '@prisma/client';
-import { TemplateProviderConfig } from '../interfaces/template-provider.interface';
 import { TemplateProviderConfigException } from '../exceptions/template-provider.exceptions';
+import { TemplateProviderConfig } from '../interfaces/template-provider.interface';
 
 /**
  * Extract and validate provider configuration from transport
@@ -17,9 +17,11 @@ export class ProviderConfigUtil {
       );
     }
 
-    const config = transport.config as any;
+    const config = transport.config as Record<string, any>;
+    const meta = (config['meta'] || {}) as Record<string, any>;
 
-    if (!config.provider) {
+    const provider = meta['provider'] ?? config['provider'];
+    if (!provider) {
       throw new TemplateProviderConfigException(
         transport.type,
         'provider',
@@ -27,28 +29,42 @@ export class ProviderConfigUtil {
     }
 
     return {
-      provider: config.provider,
-      apiKey: config.apiKey,
-      apiSecret: config.apiSecret,
-      accountSid: config.accountSid,
-      baseUrl: config.baseUrl,
+      provider,
+      apiKey: meta['apiKey'] ?? config['apiKey'],
+      apiSecret: meta['apiSecret'] ?? config['apiSecret'],
+      accountSid: meta['accountSid'] ?? config['accountSid'],
+      baseUrl: meta['baseUrl'] ?? config['baseUrl'],
+      capabilities: meta['capabilities'] ?? config['capabilities'],
       ...config,
-    };
+      ...meta,
+    } as TemplateProviderConfig;
   }
 
   /**
    * Validate required fields for Twilio provider
    */
   static validateTwilioConfig(config: TemplateProviderConfig): void {
-    if (!config.accountSid && !config.apiKey) {
+    const accountSid =
+      config.accountSid ||
+      process.env['TWILIO_ACCOUNT_SID'] ||
+      process.env['TWILIO_SID'];
+    const apiSecret =
+      config.apiSecret ||
+      process.env['TWILIO_AUTH_TOKEN'] ||
+      process.env['TWILIO_SECRET'];
+
+    if (!accountSid) {
       throw new TemplateProviderConfigException(
         'twilio',
-        'accountSid or apiKey',
+        'accountSid (or TWILIO_ACCOUNT_SID / TWILIO_SID)',
       );
     }
 
-    if (!config.apiSecret) {
-      throw new TemplateProviderConfigException('twilio', 'apiSecret');
+    if (!apiSecret) {
+      throw new TemplateProviderConfigException(
+        'twilio',
+        'apiSecret (or TWILIO_AUTH_TOKEN / TWILIO_SECRET)',
+      );
     }
   }
 
@@ -61,8 +77,13 @@ export class ProviderConfigUtil {
     password: string;
   } {
     const accountSid =
-      config.accountSid || process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID;
-    const apiSecret = config.apiSecret || process.env.TWILIO_AUTH_TOKEN || process.env.TWILIO_SECRET;
+      config.accountSid ||
+      process.env['TWILIO_ACCOUNT_SID'] ||
+      process.env['TWILIO_SID'];
+    const apiSecret =
+      config.apiSecret ||
+      process.env['TWILIO_AUTH_TOKEN'] ||
+      process.env['TWILIO_SECRET'];
 
     if (!accountSid || !apiSecret) {
       throw new TemplateProviderConfigException(

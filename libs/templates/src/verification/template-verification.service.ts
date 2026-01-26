@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Template, TemplateStatus, Transport } from '@prisma/client';
 import { PrismaService } from '@rumsan/prisma';
 import { TemplateCapability } from '../enums/template-capability.enum';
+import { ConfigMeta } from '../interfaces/template-provider.interface';
 
 export interface TemplateVerificationResult {
   isValid: boolean;
@@ -21,11 +22,12 @@ export class TemplateVerificationService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Get capabilities from transport config
+   * Get capabilities from transport config.meta
    */
   getCapabilities(transport: Transport): TemplateCapability[] {
-    const config = transport.config as any;
-    return config?.capabilities || [];
+    const meta = (transport.config as any)?.meta as ConfigMeta | undefined;
+    const caps = meta?.capabilities ?? [];
+    return Array.isArray(caps) ? caps as TemplateCapability[] : [];
   }
 
   /**
@@ -77,7 +79,9 @@ export class TemplateVerificationService {
     });
 
     if (!template) {
-      errors.push(`Template '${templateExternalId}' not found for transport ${transportId}`);
+      errors.push(
+        `Template '${templateExternalId}' not found for transport ${transportId}`,
+      );
       return {
         isValid: false,
         errors,

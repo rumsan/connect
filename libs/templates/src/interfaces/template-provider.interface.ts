@@ -17,6 +17,17 @@ export interface TemplateApprovalStatus {
 }
 
 /**
+ * Template/config metadata stored under `config.meta` for API transports.
+ * Used for template verification (e.g. Twilio) and provider config.
+ */
+export interface ConfigMeta {
+  provider?: string;
+  apiSecret?: string;
+  accountSid?: string;
+  capabilities?: string[];
+}
+
+/**
  * Provider configuration extracted from transport
  */
 export interface TemplateProviderConfig {
@@ -25,6 +36,7 @@ export interface TemplateProviderConfig {
   apiSecret?: string;
   accountSid?: string;
   baseUrl?: string;
+  capabilities?: string[];
   [key: string]: any;
 }
 
