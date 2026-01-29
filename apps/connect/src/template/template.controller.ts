@@ -9,6 +9,7 @@ import {
   Query
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { CreateTemplateDto } from './dto/create-template.dto';
 import { ListTemplateDto } from './dto/list-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 import { TemplateService } from './template.service';
@@ -21,7 +22,7 @@ export class TemplateController {
   ) {}
 
   @Post()
-  create(@Body() createTemplateDto: any) {
+  create(@Body() createTemplateDto: CreateTemplateDto) {
     return this.templateService.create(createTemplateDto);
   }
 

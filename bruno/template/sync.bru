@@ -1,20 +1,16 @@
 meta {
-  name: create
+  name: sync
   type: http
-  seq: 1
+  seq: 3
 }
 
 post {
-  url: {{url}}/template/:transportId/sync
+  url: {{url}}/template/{{transport-id-api}}/sync
   body: json
   auth: none
 }
 
 headers {
   app-id: {{app-id}}
-}
-
-body:json {
-  
 }
 

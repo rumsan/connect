@@ -50,6 +50,14 @@ export type TransportApiConfig = {
   headers?: Record<string, string>;
   body?: Record<string, any>;
   timeout?: number;
+  meta?: ConfigMeta;
+};
+
+export type ConfigMeta = {
+  provider?: string;
+  apiSecret?: string;
+  accountSid?: string;
+  capabilities?: string[];
 };
 
 export type TransportEchoConfig = {
