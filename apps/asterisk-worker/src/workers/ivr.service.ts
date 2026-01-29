@@ -306,6 +306,14 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     media: string,
     immediateHangup = false,
   ) {
+    const channelState = this.channelStates.get(channelId);
+    if (!channelState || !channelState.isActive) {
+      this.logger.warn(
+        `Attempted to play prompt on inactive or unknown channel: ${channelId}`,
+      );
+      return;
+    }
+
     try {
       // Stop any active playback
       await this.stopActivePlayback(channelId);
@@ -313,7 +321,10 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
       // Create a new playback
       const playback = this.client.Playback();
-      this.activePlaybacks.set(channelId, playback);
+      const playbackId = playback.id;
+      channelState.activePlayback = playback;
+      channelState.activePlaybackId = playbackId;
+
       await this.client.channels.play({
         channelId: channelId,
         playbackId: playbackId,
@@ -324,8 +335,17 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
       // Handle playback completion
       playback.once('PlaybackFinished', async () => {
+        // Only process if this is still the active playback
+        if (channelState.activePlaybackId !== playbackId) {
+          this.logger.log(
+            `PlaybackFinished for stale playback ${playbackId} on channel: ${channelId}, ignoring`,
+          );
+          return;
+        }
+
         this.logger.log(`Playback finished on channel: ${channelId}`);
-        this.activePlaybacks.delete(channelId);
+        channelState.activePlayback = null;
+        channelState.activePlaybackId = null;
         if (immediateHangup) {
           // Hang up immediately after playback (option has hangup: true)
           try {
@@ -342,11 +362,17 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
           }
         } else {
           // Schedule hangup after 10 seconds
-          this.scheduleHangup(channelId, 10000); // 10000 ms = 10s
+          if (channelState.isActive) {
+            this.scheduleHangup(channelId, 10000); // 10000 ms = 10s
+          }
         }
       });
     } catch (error) {
-      this.logger.error(`Error playing prompt: ${error.message}`);
+      this.logger.error(
+        `Error playing prompt on channel ${channelId}: ${error.message}`,
+      );
+      channelState.activePlayback = null;
+      channelState.activePlaybackId = null;
     }
   }
 
