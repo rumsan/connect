@@ -14,9 +14,12 @@ import {
   Session,
   SessionStatus,
   TransportType,
+  TriggerType,
 } from '@rumsan/connect/types';
 
+import { InjectQueue } from '@nestjs/bull';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
+import { Queue } from 'bull';
 import {
   dev_NewBatchAlert,
   dev_SessionAttemptComplete,
@@ -29,6 +32,7 @@ import {
   MessageDto,
 } from './dto/broadcast.dto';
 import { ReportWhereClause } from './dto/report.dto';
+import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
 import { getAddressValidator, getContentValidator } from './validators';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
@@ -38,12 +42,39 @@ export class BroadcastService {
   private readonly logger = new Logger(BroadcastService.name);
 
   constructor(
+    @InjectQueue(QUEUES.SCHEDULED) public scheduleQueue: Queue,
     private readonly prisma: PrismaService,
     private readonly transportQueue: TransportQueue,
     private readonly broadcastQueue: BroadcastQueue,
-  ) { }
-  async create(appId: string, dto: BroadcastDto) {
+    private readonly redisZsetScheduler: RedisZsetSchedulerService,
+  ) {}
 
+  private getScheduleWindowMs() {
+    const hours = Number(
+      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 48,
+    );
+    return hours * 60 * 60 * 1000;
+  }
+
+  async scheduleWithBullDelay(
+    sessionCuid: string,
+    transportType: TransportType,
+    delayMs: number,
+  ) {
+    await this.scheduleQueue.add(
+      'schedule',
+      {
+        sessionCuid,
+        transportType,
+      },
+      {
+        delay: Math.max(0, delayMs),
+        jobId: sessionCuid,
+      },
+    );
+  }
+
+  async create(appId: string, dto: BroadcastDto) {
     const { transport: transportId, message, addresses } = dto;
     await this.validateBroadcastData(transportId, message, addresses);
 
@@ -101,11 +132,40 @@ export class BroadcastService {
       return session;
     });
 
-    if (newSession.cuid) {
+    if (newSession.cuid && newSession.triggerType !== TriggerType.SCHEDULED) {
       this.checkTransportReadiness(
         newSession.cuid,
         newSession.Transport.type as TransportType,
       );
+    } else {
+      const runAtMs = new Date(dto.options.scheduledTimestamp).getTime();
+      const now = Date.now();
+      const delay = runAtMs - now;
+      const windowMs = this.getScheduleWindowMs();
+
+      console.log(
+        'Scheduling session with delay:',
+        delay
+      );
+
+      // Only push to Redis/Bull if the scheduled time is within the configured window.
+      if (runAtMs - now <= windowMs) {
+        if (this.redisZsetScheduler.isEnabled()) {
+          console.log('Scheduling session with Redis Zset Scheduler');
+          
+          await this.redisZsetScheduler.schedule(
+            newSession.cuid,
+            newSession.Transport.type as TransportType,
+            runAtMs,
+          );
+        } else {
+          await this.scheduleWithBullDelay(
+            newSession.cuid,
+            newSession.Transport.type as TransportType,
+            delay,
+          );
+        }
+      }
     }
     return newSession;
   }
@@ -209,10 +269,10 @@ export class BroadcastService {
 
     const retryStatuses = retryFailed
       ? [
-        BroadcastStatus.FAIL,
-        BroadcastStatus.SCHEDULED,
-        BroadcastStatus.PENDING,
-      ]
+          BroadcastStatus.FAIL,
+          BroadcastStatus.SCHEDULED,
+          BroadcastStatus.PENDING,
+        ]
       : [BroadcastStatus.SCHEDULED, BroadcastStatus.PENDING];
 
     const broadcasts = await this.prisma.broadcast.updateMany({
@@ -371,11 +431,11 @@ export class BroadcastService {
           xref: dto.xref,
           ...(dto.startDate && dto.endDate
             ? {
-              createdAt: {
-                gte: new Date(dto.startDate),
-                lte: new Date(dto.endDate),
-              },
-            }
+                createdAt: {
+                  gte: new Date(dto.startDate),
+                  lte: new Date(dto.endDate),
+                },
+              }
             : {}),
         },
         orderBy,
@@ -482,20 +542,24 @@ export class BroadcastService {
     };
   }
 
-  async fetchReportData(appId: string, where: ReportWhereClause, xref?: string) {
+  async fetchReportData(
+    appId: string,
+    where: ReportWhereClause,
+    xref?: string,
+  ) {
     return Promise.all([
       this.prisma.session.aggregate({
         where,
         _count: { id: true },
-        _sum: { totalAddresses: true }
+        _sum: { totalAddresses: true },
       }),
       this.prisma.broadcast.groupBy({
         by: ['status'],
         where: {
           app: appId,
-          ...(xref ? { Session: { xref } } : {})
+          ...(xref ? { Session: { xref } } : {}),
         },
-        _count: { _all: true }
+        _count: { _all: true },
       }),
       this.prisma.$queryRaw<TransportStatsRaw[]>`
         WITH transport_recipients AS (
@@ -504,7 +568,9 @@ export class BroadcastService {
             SUM(s."totalAddresses") as total_recipients
           FROM "tbl_transports" t
           JOIN "tbl_sessions" s ON s.transport = t.cuid
-          WHERE t.app = ${appId} ${xref ? Prisma.sql`AND s.xref = ${xref}` : Prisma.empty}
+          WHERE t.app = ${appId} ${
+        xref ? Prisma.sql`AND s.xref = ${xref}` : Prisma.empty
+      }
           GROUP BY t.cuid
         )
         SELECT 
@@ -522,20 +588,23 @@ export class BroadcastService {
         LEFT JOIN "tbl_broadcasts" b ON b.transport = t.cuid
         LEFT JOIN transport_recipients tr ON tr.cuid = t.cuid
         WHERE t.app = ${appId}
-        ${xref ? Prisma.sql`AND EXISTS (
+        ${
+          xref
+            ? Prisma.sql`AND EXISTS (
           SELECT 1 FROM "tbl_sessions" s 
           WHERE s.transport = t.cuid 
           AND s.xref = ${xref}
-        )` : Prisma.empty}
+        )`
+            : Prisma.empty
+        }
         GROUP BY t.cuid, t.name, t.type, tr.total_recipients
         HAVING COUNT(DISTINCT b.id) > 0
-      `
+      `,
     ]);
   }
 
   async calculateTransportStats(transportStats: TransportStatsRaw[]) {
-
-    return transportStats.map(t => ({
+    return transportStats.map((t) => ({
       transport: t.transport_id,
       name: t.transport_name,
       type: t.transport_type,
@@ -556,24 +625,30 @@ export class BroadcastService {
     this.logger.log(`Fetching reports for app: ${appId}, xref: ${xref}`);
     const where = xref ? { app: appId, xref } : { app: appId };
 
-    const [
-      sessionStats,
-      broadcastStats,
-      transportStats
-    ] = await this.fetchReportData(appId, where, xref);
+    const [sessionStats, broadcastStats, transportStats] =
+      await this.fetchReportData(appId, where, xref);
 
-
-
-    const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
-    const successCount = broadcastStats.find(stat => stat.status === BroadcastStatus.SUCCESS)?._count._all ?? 0;
-    const failedCount = broadcastStats.find(stat => stat.status === BroadcastStatus.FAIL)?._count._all ?? 0;
-    const pendingCount = broadcastStats.find(stat => stat.status === BroadcastStatus.PENDING)?._count._all ?? 0;
-    const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
+    const totalMessages = broadcastStats.reduce(
+      (sum, stat) => sum + stat._count._all,
+      0,
+    );
+    const successCount =
+      broadcastStats.find((stat) => stat.status === BroadcastStatus.SUCCESS)
+        ?._count._all ?? 0;
+    const failedCount =
+      broadcastStats.find((stat) => stat.status === BroadcastStatus.FAIL)
+        ?._count._all ?? 0;
+    const pendingCount =
+      broadcastStats.find((stat) => stat.status === BroadcastStatus.PENDING)
+        ?._count._all ?? 0;
+    const successRate = totalMessages
+      ? Number(((successCount / totalMessages) * 100).toFixed(2))
+      : 0;
 
     return {
       sessionStats: {
         count: sessionStats._count.id ?? 0,
-        totalRecipients: sessionStats._sum.totalAddresses ?? 0
+        totalRecipients: sessionStats._sum.totalAddresses ?? 0,
       },
       messageStats: {
         totalMessages,

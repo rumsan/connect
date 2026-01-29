@@ -1,12 +1,17 @@
 import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { QUEUES } from '@rumsan/connect';
 import { QueueModule } from '../queues/queue.module';
 import { BroadcastController } from './broadcast.controller';
 import { BroadcastService } from './broadcast.service';
+import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
+import { RedisZsetSchedulerWorker } from './redis-zset-scheduler.worker';
+import { ScheduledWindowWorker } from './scheduled-window.worker';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     BullModule.registerQueue({
       name: QUEUES.TRANSPORT_API,
     }),
@@ -19,9 +24,17 @@ import { BroadcastService } from './broadcast.service';
     BullModule.registerQueue({
       name: QUEUES.TRANSPORT_VOICE,
     }),
+    BullModule.registerQueue({
+      name: QUEUES.SCHEDULED,
+    }),
     QueueModule,
   ],
   controllers: [BroadcastController],
-  providers: [BroadcastService],
+  providers: [
+    BroadcastService,
+    RedisZsetSchedulerService,
+    RedisZsetSchedulerWorker,
+    ScheduledWindowWorker,
+  ],
 })
 export class BroadcastModule {}
