@@ -1,0 +1,16 @@
+meta {
+  name: sync
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{url}}/template/{{transport-id-api}}/sync
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+

@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QUEUES } from '@rumsan/connect';
+import { TemplateModule } from '../template/template.module';
 import { QueueModule } from '../queues/queue.module';
 import { BroadcastController } from './broadcast.controller';
 import { BroadcastService } from './broadcast.service';
@@ -28,6 +29,7 @@ import { ScheduledWindowWorker } from './scheduled-window.worker';
       name: QUEUES.SCHEDULED,
     }),
     QueueModule,
+    TemplateModule,
   ],
   controllers: [BroadcastController],
   providers: [

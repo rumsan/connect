@@ -46,6 +46,19 @@ enum ValidationAddress {
   PHONE
 }
 
+enum TemplateStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TemplateType {
+  TEXT
+  MEDIA
+}
+
+
 //TODO https://socket.dev/npm/package/prisma-extension-cuid2
 
 model Transport {
@@ -62,6 +75,7 @@ model Transport {
 
   Sessions   Session[]
   Broadcasts Broadcast[]
+  Templates  Template[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
@@ -70,6 +84,29 @@ model Transport {
 
   @@map("tbl_transports")
 }
+
+model Template {
+  id          Int      @id @default(autoincrement())
+  cuid        String   @unique @default(cuid())
+  app         String
+  transportId String
+  name        String
+  externalId  String  
+  status      TemplateStatus
+  type        TemplateType
+  isActive    Boolean  @default(true)
+  language    String   @default("en")
+  body        String?
+  xref        String?
+
+  Transport   Transport @relation(fields: [transportId], references: [cuid])
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime? @updatedAt()
+
+  @@map("tbl_templates")
+}
+
 
 model Session {
   id             Int           @id @default(autoincrement())

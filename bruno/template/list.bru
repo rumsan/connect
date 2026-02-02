@@ -1,0 +1,15 @@
+meta {
+  name: list
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{url}}/template?appId={{app-id}}
+  body: json
+  auth: none
+}
+
+params:query {
+  appId: {{app-id}}
+}

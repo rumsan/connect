@@ -6,12 +6,14 @@ import { RedisZsetSchedulerService } from '../broadcast/redis-zset-scheduler.ser
 import { RedisZsetSchedulerWorker } from '../broadcast/redis-zset-scheduler.worker';
 import { ScheduledWindowWorker } from '../broadcast/scheduled-window.worker';
 import { ScheduleProcessor } from '../processors/schedule.processor';
+import { TemplateModule } from '../template/template.module';
 import { BroadcastLogController } from './broadcast-log.controller';
 import { BroadcastLogQueue } from './broadcast-log.queue';
 import { BroadcastLogService } from './broadcast-log.service';
 
 @Module({
   imports: [
+    TemplateModule,
     BullModule.registerQueue({
       name: QUEUES.SCHEDULED,
     }),

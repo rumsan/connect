@@ -1,0 +1,52 @@
+meta {
+  name: create-api-twilio-whatsapp
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{url}}/transports
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+      "app": "{{app-id}}",
+      "name": "Whatsapp Twilio API",
+      "type": "API",
+      "config": {
+          "url": "{{twilio-url}}",
+          "body": {
+              "From": "whatsapp:+14155238886",
+              "To": "{%address%}",
+              "ContentSid": "{%message.content%}"
+          },
+   "headers": {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Authorization": "Basic encoded"
+      },
+            "meta": {
+          "provider": "twilio",
+          "apiSecret": "",
+          "accountSid": "",
+          "capabilities": [
+              "TEMPLATE_VERIFICATION"
+          ]
+      }
+      }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("transport-id-api", data.cuid);
+    bru.setVar("transport-id", data.cuid);
+  }
+}

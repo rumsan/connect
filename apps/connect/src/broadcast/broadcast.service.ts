@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -18,6 +18,7 @@ import {
 } from '@rumsan/connect/types';
 
 import { InjectQueue } from '@nestjs/bull';
+import { TemplateVerificationService } from '@rsconnect/templates';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
 import {
@@ -47,12 +48,11 @@ export class BroadcastService {
     private readonly transportQueue: TransportQueue,
     private readonly broadcastQueue: BroadcastQueue,
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
+    private readonly templateVerificationService: TemplateVerificationService,
   ) {}
 
   private getScheduleWindowMs() {
-    const hours = Number(
-      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 48,
-    );
+    const hours = Number(process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 48);
     return hours * 60 * 60 * 1000;
   }
 
@@ -143,16 +143,13 @@ export class BroadcastService {
       const delay = runAtMs - now;
       const windowMs = this.getScheduleWindowMs();
 
-      console.log(
-        'Scheduling session with delay:',
-        delay
-      );
+      console.log('Scheduling session with delay:', delay);
 
       // Only push to Redis/Bull if the scheduled time is within the configured window.
       if (runAtMs - now <= windowMs) {
         if (this.redisZsetScheduler.isEnabled()) {
           console.log('Scheduling session with Redis Zset Scheduler');
-          
+
           await this.redisZsetScheduler.schedule(
             newSession.cuid,
             newSession.Transport.type as TransportType,
@@ -500,6 +497,13 @@ export class BroadcastService {
       },
     });
     if (!t) throw new Error('Transport not found.');
+
+    // Template verification gate:
+    // - If transport requires template verification, enforce verification.
+    // - If not required, keep existing validation flow unchanged.
+    const requiresTemplateVerification =
+      this.templateVerificationService.requiresTemplateVerification(t as any);
+
     const contentValidator = getContentValidator(t.validationContent);
     const addressValidator = getAddressValidator(t.validationAddress);
 
@@ -509,6 +513,28 @@ export class BroadcastService {
       if (!addressValidator(address))
         throw new Error(`Address: ${address} validation failed.`);
     }
+
+    if (requiresTemplateVerification) {
+      const templateExternalId = message?.content;
+      if (!templateExternalId) {
+        throw new BadRequestException(
+          'templateExternalId is required in message.content for this transport',
+        );
+      }
+
+      const parameters = message?.meta?.components?.[0]?.parameters;
+      const verification =
+        await this.templateVerificationService.verifyTemplate(
+          transportId,
+          templateExternalId,
+          parameters,
+        );
+
+      if (!verification.isValid) {
+        throw new BadRequestException(verification.errors.join(', '));
+      }
+    }
+
     return true;
   }
 
