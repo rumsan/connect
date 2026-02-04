@@ -1,14 +1,33 @@
+import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
-import { BroadcastLogService } from './broadcast-log.service';
+import { QUEUES } from '@rumsan/connect';
+import { BroadcastService } from '../broadcast/broadcast.service';
+import { RedisZsetSchedulerService } from '../broadcast/redis-zset-scheduler.service';
+import { RedisZsetSchedulerWorker } from '../broadcast/redis-zset-scheduler.worker';
+import { ScheduledWindowWorker } from '../broadcast/scheduled-window.worker';
+import { ScheduleProcessor } from '../processors/schedule.processor';
+import { TemplateModule } from '../template/template.module';
 import { BroadcastLogController } from './broadcast-log.controller';
 import { BroadcastLogQueue } from './broadcast-log.queue';
-import { BroadcastService } from '../broadcast/broadcast.service';
-import { TemplateModule } from '../template/template.module';
+import { BroadcastLogService } from './broadcast-log.service';
 
 @Module({
-  imports: [TemplateModule],
+  imports: [
+    TemplateModule,
+    BullModule.registerQueue({
+      name: QUEUES.SCHEDULED,
+    }),
+  ],
   controllers: [BroadcastLogController],
-  providers: [BroadcastLogService, BroadcastLogQueue, BroadcastService],
+  providers: [
+    BroadcastLogService,
+    BroadcastLogQueue,
+    BroadcastService,
+    ScheduleProcessor,
+    RedisZsetSchedulerService,
+    RedisZsetSchedulerWorker,
+    ScheduledWindowWorker,
+  ],
   exports: [BroadcastLogService, BroadcastLogQueue],
 })
 export class BroadcastLogModule {}
