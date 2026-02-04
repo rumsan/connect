@@ -9,7 +9,13 @@ import { PrismaService } from '@rumsan/prisma';
 import { TransportType, TriggerType } from '@rumsan/connect/types';
 import { BroadcastService } from './broadcast.service';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
+import { BROADCAST_CONSTANTS } from './broadcast.constants';
 
+/**
+ * Worker that monitors the database for scheduled messages that are entering
+ * the scheduling window. Messages scheduled beyond the window are not queued
+ * immediately to avoid memory issues with far-future schedules.
+ */
 @Injectable()
 export class ScheduledWindowWorker {
   private readonly logger = new Logger(ScheduledWindowWorker.name);
@@ -20,14 +26,23 @@ export class ScheduledWindowWorker {
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
   ) {}
 
-  private getWindowMs() {
+  /**
+   * Get the scheduling window in milliseconds from configuration
+   * @private
+   */
+  private getWindowMs(): number {
     const hours = Number(
-      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 48,
+      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 
+      BROADCAST_CONSTANTS.DEFAULT_SCHEDULE_WINDOW_HOURS,
     );
     return hours * 60 * 60 * 1000;
   }
 
-  @Interval(60 * 1000)
+  /**
+   * Check for scheduled messages entering the scheduling window
+   * Runs every 60 seconds to poll database for NEW scheduled sessions
+   */
+  @Interval(BROADCAST_CONSTANTS.WINDOW_WORKER_INTERVAL_MS)
   async tick() {
     const now = Date.now();
     const windowMs = this.getWindowMs();
@@ -82,4 +97,3 @@ export class ScheduledWindowWorker {
     }
   }
 }
-

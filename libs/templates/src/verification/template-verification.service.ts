@@ -92,12 +92,17 @@ export class TemplateVerificationService {
     // 4. Check template status
     if (template.status !== TemplateStatus.APPROVED) {
       errors.push(
-        `Template '${templateExternalId}' is not approved. Current status: ${template.status}`,
+        `Template '${templateExternalId}' status is ${template.status}. ` +
+        `WhatsApp templates must be APPROVED before use. ` +
+        `Please check your Twilio Content API console or use the sync endpoint to update template status.`,
       );
     }
 
     if (!template.isActive) {
-      errors.push(`Template '${templateExternalId}' is not active`);
+      errors.push(
+        `Template '${templateExternalId}' is not active. ` +
+        `Please activate the template before using it in broadcasts.`,
+      );
     }
 
     // 5. Validate parameters if provided
