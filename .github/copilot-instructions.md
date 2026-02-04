@@ -37,6 +37,10 @@ Use the following TypeScript path aliases:
 - `@rsconnect/transports` - Transports library
 - `@rsconnect/workers` - Workers library
 - `@rumsan/connect` - SDK library
+- `@rumsan/prisma` - Prisma service (external package)
+- `@rumsan/extensions` - Extensions library (external package)
+- `@rumsan/app` - App utilities (external package)
+- `@rumsan/sdk` - Rumsan SDK (external package)
 
 ## Code Style and Conventions
 
