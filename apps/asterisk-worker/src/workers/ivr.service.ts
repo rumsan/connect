@@ -301,7 +301,11 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   }
 
   //////////// WORK FLOW CODE ///////////
-  private async playPrompt(channelId: string, media: string) {
+  private async playPrompt(
+    channelId: string,
+    media: string,
+    immediateHangup = false,
+  ) {
     const channelState = this.channelStates.get(channelId);
     if (!channelState || !channelState.isActive) {
       this.logger.warn(
@@ -330,7 +334,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(`Playback started: ${media} on channel: ${channelId}`);
 
       // Handle playback completion
-      playback.once('PlaybackFinished', () => {
+      playback.once('PlaybackFinished', async () => {
         // Only process if this is still the active playback
         if (channelState.activePlaybackId !== playbackId) {
           this.logger.log(
@@ -342,9 +346,25 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`Playback finished on channel: ${channelId}`);
         channelState.activePlayback = null;
         channelState.activePlaybackId = null;
-        // Schedule hangup after 10 seconds if channel is still active
-        if (channelState.isActive) {
-          this.scheduleHangup(channelId, 10000); // 10000 ms = 10s
+        if (immediateHangup) {
+          // Hang up immediately after playback (option has hangup: true)
+          try {
+            await this.client.channels.hangup({ channelId });
+            this.logger.log(
+              `Channel ${channelId} hung up immediately after playback (hangup: true)`,
+            );
+            this.cleanupChannel(channelId);
+          } catch (error) {
+            this.logger.error(
+              `Error hanging up channel ${channelId}: ${error.message}`,
+            );
+            this.cleanupChannel(channelId);
+          }
+        } else {
+          // Schedule hangup after 10 seconds
+          if (channelState.isActive) {
+            this.scheduleHangup(channelId, 10000); // 10000 ms = 10s
+          }
         }
       });
     } catch (error) {
@@ -506,10 +526,13 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
       const options = channelState.ivrDialPlan.main?.options || [];
       const option = options.find((opt) => opt.digit === parseInt(digit));
-
-      // Play the corresponding prompt
+      // Play the corresponding prompt; if option has hangup: true, hang up immediately after playback
       if (option && option.prompt) {
-        await this.playPrompt(channelId, option.prompt.replace('.wav', ''));
+        await this.playPrompt(
+          channel.id,
+          option.prompt.replace('.wav', ''),
+          option.hangup === true,
+        );
       } else {
         await this.playPrompt(channelId, 'sound:option-is-invalid');
       }
