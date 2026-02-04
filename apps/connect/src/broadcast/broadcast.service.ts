@@ -35,6 +35,7 @@ import {
 import { ReportWhereClause } from './dto/report.dto';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
 import { getAddressValidator, getContentValidator } from './validators';
+import { BROADCAST_CONSTANTS } from './broadcast.constants';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
@@ -51,11 +52,30 @@ export class BroadcastService {
     private readonly templateVerificationService: TemplateVerificationService,
   ) {}
 
-  private getScheduleWindowMs() {
-    const hours = Number(process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 48);
+  /**
+   * Get the scheduling window in milliseconds
+   * Messages scheduled beyond this window will be picked up by ScheduledWindowWorker
+   * @private
+   * @returns Scheduling window in milliseconds
+   */
+  private getScheduleWindowMs(): number {
+    const hours = Number(
+      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 
+      BROADCAST_CONSTANTS.DEFAULT_SCHEDULE_WINDOW_HOURS
+    );
     return hours * 60 * 60 * 1000;
   }
 
+  /**
+   * Schedule a broadcast session using Bull's delay mechanism
+   * 
+   * This method adds a job to Bull queue with a delay. Bull will automatically
+   * process the job after the specified delay time.
+   * 
+   * @param sessionCuid - Unique session identifier
+   * @param transportType - Type of transport to use
+   * @param delayMs - Delay in milliseconds before execution
+   */
   async scheduleWithBullDelay(
     sessionCuid: string,
     transportType: TransportType,
@@ -486,6 +506,34 @@ export class BroadcastService {
     });
   }
 
+  /**
+   * Validate WhatsApp-specific template requirements
+   * @private
+   * @param transport - Transport configuration
+   * @param message - Message to validate
+   * @throws BadRequestException if validation fails
+   */
+  private validateWhatsAppTemplate(transport: Transport, message: MessageDto): void {
+    const meta = (transport.config as any)?.meta;
+    const hasTemplateCapability = meta?.capabilities?.includes('TEMPLATE_VERIFICATION');
+    
+    if (hasTemplateCapability && meta?.provider === 'twilio') {
+      if (!message.content) {
+        throw new BadRequestException(
+          'Template ID (ContentSid) is required in message.content for Twilio WhatsApp. ' +
+          'Please provide a valid template external ID from your Twilio Content API.'
+        );
+      }
+      
+      // Check if meta contains components for parameterized templates
+      if (message.meta?.components && !Array.isArray(message.meta.components)) {
+        throw new BadRequestException(
+          'message.meta.components must be an array for parameterized WhatsApp templates'
+        );
+      }
+    }
+  }
+
   async validateBroadcastData(
     transportId: string,
     message: MessageDto,
@@ -497,6 +545,9 @@ export class BroadcastService {
       },
     });
     if (!t) throw new Error('Transport not found.');
+
+    // Validate WhatsApp template requirements early
+    this.validateWhatsAppTemplate(t, message);
 
     // Template verification gate:
     // - If transport requires template verification, enforce verification.

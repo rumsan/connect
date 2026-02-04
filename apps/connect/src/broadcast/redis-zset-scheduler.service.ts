@@ -4,11 +4,24 @@ import { ConfigService } from '@nestjs/config';
 import { QUEUES } from '@rumsan/connect';
 import { TransportType } from '@rumsan/connect/types';
 import type { Queue } from 'bull';
+import { BROADCAST_CONSTANTS, SchedulerType } from './broadcast.constants';
 
 type ScheduledBroadcastPayload = {
   sessionCuid: string;
   transportType: TransportType;
 };
+
+// Type for Redis client from Bull queue
+interface RedisClient {
+  hset: (key: string, field: string, value: string) => Promise<number>;
+  zadd: (key: string, score: number, member: string) => Promise<number>;
+  eval: (script: string, numKeys: number, ...args: any[]) => Promise<any>;
+  hget: (key: string, field: string) => Promise<string | null>;
+  hdel: (key: string, field: string) => Promise<number>;
+  lrem: (key: string, count: number, value: string) => Promise<number>;
+  lrange: (key: string, start: number, stop: number) => Promise<string[]>;
+  del: (key: string) => Promise<number>;
+}
 
 @Injectable()
 export class RedisZsetSchedulerService {
@@ -17,29 +30,52 @@ export class RedisZsetSchedulerService {
     private readonly configService: ConfigService,
   ) {}
 
-  isEnabled() {
+  /**
+   * Check if Redis ZSET scheduler is enabled via configuration
+   * @returns true if BROADCAST_SCHEDULER env var is set to 'redis_zset'
+   */
+  isEnabled(): boolean {
     return (
-      (this.configService.get<string>('BROADCAST_SCHEDULER') ?? 'bull') ===
-      'redis_zset'
+      (this.configService.get<string>('BROADCAST_SCHEDULER') ?? SchedulerType.BULL) ===
+      SchedulerType.REDIS_ZSET
     );
   }
 
-  private keyZset() {
-    return this.configService.get<string>('BROADCAST_SCHEDULER_ZSET_KEY')
-      ? this.configService.get<string>('BROADCAST_SCHEDULER_ZSET_KEY')
-      : 'connect:broadcast:schedule:zset';
+  /**
+   * Get Redis client from Bull queue with type safety
+   * @private
+   * @throws Error if Redis client is not available
+   */
+  private getRedisClient(): RedisClient {
+    const queue = this.scheduleQueue as any;
+    if (!queue.client) {
+      throw new Error(
+        'Redis client not available from Bull queue. ' +
+        'Ensure Bull is configured with Redis connection.',
+      );
+    }
+    return queue.client as RedisClient;
   }
 
-  private keyPayloadHash() {
-    return this.configService.get<string>('BROADCAST_SCHEDULER_PAYLOAD_KEY')
-      ? this.configService.get<string>('BROADCAST_SCHEDULER_PAYLOAD_KEY')
-      : 'connect:broadcast:schedule:payload';
+  private keyZset(): string {
+    return (
+      this.configService.get<string>('BROADCAST_SCHEDULER_ZSET_KEY') ??
+      BROADCAST_CONSTANTS.DEFAULT_SCHEDULER_ZSET_KEY
+    );
   }
 
-  private keyProcessingList() {
-    return this.configService.get<string>('BROADCAST_SCHEDULER_PROCESSING_KEY')
-      ? this.configService.get<string>('BROADCAST_SCHEDULER_PROCESSING_KEY')
-      : 'connect:broadcast:schedule:processing';
+  private keyPayloadHash(): string {
+    return (
+      this.configService.get<string>('BROADCAST_SCHEDULER_PAYLOAD_KEY') ??
+      BROADCAST_CONSTANTS.DEFAULT_SCHEDULER_PAYLOAD_KEY
+    );
+  }
+
+  private keyProcessingList(): string {
+    return (
+      this.configService.get<string>('BROADCAST_SCHEDULER_PROCESSING_KEY') ??
+      BROADCAST_CONSTANTS.DEFAULT_SCHEDULER_PROCESSING_KEY
+    );
   }
 
   /**
@@ -48,18 +84,17 @@ export class RedisZsetSchedulerService {
    *
    * NOTE: We use `sessionCuid` as the job id, so scheduling the same session
    * again overwrites the timestamp/payload (useful for testing).
+   * 
+   * @param sessionCuid - Unique session identifier
+   * @param transportType - Type of transport to use for broadcast
+   * @param runAtMs - Unix timestamp (milliseconds) when to execute
    */
   async schedule(
     sessionCuid: string,
     transportType: TransportType,
     runAtMs: number,
-  ) {
-    const client: any = (this.scheduleQueue as any).client;
-    if (!client) {
-      throw new Error(
-        'Redis client not available from Bull queue (scheduleQueue.client).',
-      );
-    }
+  ): Promise<void> {
+    const client = this.getRedisClient();
 
     const id = sessionCuid;
     const payload: ScheduledBroadcastPayload = { sessionCuid, transportType };
@@ -72,9 +107,13 @@ export class RedisZsetSchedulerService {
   /**
    * Atomically claims due job ids: moves them from the due ZSET into a
    * processing LIST (for crash recovery), then returns claimed ids.
+   * 
+   * @param nowMs - Current timestamp in milliseconds
+   * @param limit - Maximum number of jobs to claim
+   * @returns Array of claimed job IDs
    */
   async claimDueIds(nowMs: number, limit: number): Promise<string[]> {
-    const client: any = (this.scheduleQueue as any).client;
+    const client = this.getRedisClient();
     const lua = `
 local zkey = KEYS[1]
 local pkey = KEYS[2]
@@ -106,8 +145,13 @@ return ids
     return Array.isArray(ids) ? ids : [];
   }
 
+  /**
+   * Retrieve payload for a scheduled job
+   * @param id - Job identifier
+   * @returns Payload or null if not found
+   */
   async getPayload(id: string): Promise<ScheduledBroadcastPayload | null> {
-    const client: any = (this.scheduleQueue as any).client;
+    const client = this.getRedisClient();
     const raw = await client.hget(this.keyPayloadHash(), id);
     if (!raw) return null;
     try {
@@ -117,8 +161,12 @@ return ids
     }
   }
 
-  async markProcessed(id: string) {
-    const client: any = (this.scheduleQueue as any).client;
+  /**
+   * Mark a job as processed and clean up its data
+   * @param id - Job identifier
+   */
+  async markProcessed(id: string): Promise<void> {
+    const client = this.getRedisClient();
     await client.hdel(this.keyPayloadHash(), id);
     // Remove all occurrences (should typically be 1).
     await client.lrem(this.keyProcessingList(), 0, id);
@@ -127,9 +175,12 @@ return ids
   /**
    * If the process crashed after claiming jobs, `processing` list can contain
    * stuck ids. This re-queues them back into the due ZSET at `nowMs`.
+   * 
+   * @param nowMs - Current timestamp to use for re-queued jobs
+   * @returns Number of jobs re-queued
    */
-  async requeueStuckProcessing(nowMs: number) {
-    const client: any = (this.scheduleQueue as any).client;
+  async requeueStuckProcessing(nowMs: number): Promise<number> {
+    const client = this.getRedisClient();
     const ids: string[] = await client.lrange(this.keyProcessingList(), 0, -1);
     if (!ids?.length) return 0;
 

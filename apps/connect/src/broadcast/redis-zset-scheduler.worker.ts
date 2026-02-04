@@ -3,6 +3,7 @@ import { Interval } from '@nestjs/schedule';
 import { TransportType } from '@rumsan/connect/types';
 import { BroadcastService } from './broadcast.service';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
+import { BROADCAST_CONSTANTS } from './broadcast.constants';
 
 @Injectable()
 export class RedisZsetSchedulerWorker implements OnModuleInit {
@@ -21,11 +22,14 @@ export class RedisZsetSchedulerWorker implements OnModuleInit {
     }
   }
 
-  @Interval(1000)
+  @Interval(BROADCAST_CONSTANTS.SCHEDULER_TICK_INTERVAL_MS)
   async tick() {
     if (!this.scheduler.isEnabled()) return;
 
-    const batchSize = Number(process.env.BROADCAST_SCHEDULER_BATCH_SIZE ?? 50);
+    const batchSize = Number(
+      process.env.BROADCAST_SCHEDULER_BATCH_SIZE ?? 
+      BROADCAST_CONSTANTS.DEFAULT_SCHEDULER_BATCH_SIZE
+    );
     const ids = await this.scheduler.claimDueIds(Date.now(), batchSize);
     if (!ids.length) return;
 
@@ -46,4 +50,3 @@ export class RedisZsetSchedulerWorker implements OnModuleInit {
     }
   }
 }
-
