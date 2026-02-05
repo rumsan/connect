@@ -6,9 +6,10 @@ import {
   Param,
   Patch,
   Post,
-  Query
+  Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { AppId } from '@rumsan/app';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { ListTemplateDto } from './dto/list-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
@@ -17,17 +18,15 @@ import { TemplateService } from './template.service';
 @ApiTags('templates')
 @Controller('template')
 export class TemplateController {
-  constructor(
-    private readonly templateService: TemplateService,
-  ) {}
+  constructor(private readonly templateService: TemplateService) {}
 
   @Post()
-  create(@Body() createTemplateDto: CreateTemplateDto) {
-    return this.templateService.create(createTemplateDto);
+  create(@AppId() appId: string, @Body() createTemplateDto: CreateTemplateDto) {
+    return this.templateService.create(appId, createTemplateDto);
   }
 
   @Get()
-  findAll(@Query('appId') appId: string, @Query() dto: ListTemplateDto) {
+  findAll(@AppId() appId: string, @Query() dto: ListTemplateDto) {
     return this.templateService.findAll(appId, dto);
   }
 
@@ -37,7 +36,10 @@ export class TemplateController {
   }
 
   @Patch(':cuid')
-  update(@Param('cuid') cuid: string, @Body() updateTemplateDto: UpdateTemplateDto) {
+  update(
+    @Param('cuid') cuid: string,
+    @Body() updateTemplateDto: UpdateTemplateDto,
+  ) {
     return this.templateService.update(cuid, updateTemplateDto);
   }
 

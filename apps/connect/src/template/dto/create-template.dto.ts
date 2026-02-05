@@ -1,13 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TemplateType } from '@prisma/client';
 import {
-    IsArray,
-    IsEnum,
-    IsNotEmpty,
-    IsOptional,
-    IsString,
-    MaxLength,
-    MinLength,
+  IsArray,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
 } from 'class-validator';
 
 export class CreateTemplateDto {
@@ -32,14 +32,6 @@ export class CreateTemplateDto {
   @IsNotEmpty()
   @MinLength(1)
   body: string;
-
-  @ApiProperty({
-    description: 'Application ID',
-    example: 'app_123456',
-  })
-  @IsString()
-  @IsNotEmpty()
-  app: string;
 
   @ApiProperty({
     description: 'Template type',

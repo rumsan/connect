@@ -16,7 +16,6 @@ export enum TemplateType {
 export type CreateTemplate = {
   name: string;
   body: string;
-  app: string;
   type: TemplateType;
   transport: string;
   language?: string;
@@ -24,7 +23,7 @@ export type CreateTemplate = {
   media?: string[];
 };
 
-export type UpdateTemplate = Partial<Omit<CreateTemplate, 'app' | 'transport'>>;
+export type UpdateTemplate = Partial<Omit<CreateTemplate, 'transport'>>;
 
 export interface ListTemplate extends PaginationTypes {
   transportId?: string;
