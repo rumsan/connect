@@ -18,11 +18,10 @@ export class TemplateService {
     private readonly prisma: PrismaService,
     private readonly templateVerificationService: TemplateVerificationService,
     private readonly templateProviderFactory: TemplateProviderFactory,
-    private readonly templateSyncService: TemplateSyncService
+    private readonly templateSyncService: TemplateSyncService,
   ) {}
 
-  async create(createTemplateDto: CreateTemplateDto) {
-    console.log('createTemplateDto', createTemplateDto);
+  async create(app: string, createTemplateDto: CreateTemplateDto) {
     const transport = await this.prisma.transport.findUnique({
       where: { cuid: createTemplateDto.transport },
     });
@@ -34,7 +33,7 @@ export class TemplateService {
     }
 
     const provider = this.templateProviderFactory.create(transport);
-    const result = await provider.create(createTemplateDto);
+    const result = await provider.create({ app, ...createTemplateDto });
 
     // Save in DB
     const template = await this.prisma.template.create({
@@ -51,7 +50,9 @@ export class TemplateService {
     });
 
     // Request approval if transport requires template verification
-    if (this.templateVerificationService.requiresTemplateVerification(transport)) {
+    if (
+      this.templateVerificationService.requiresTemplateVerification(transport)
+    ) {
       await provider.requestApproval(result.externalId, createTemplateDto.name);
     }
 
@@ -96,7 +97,7 @@ export class TemplateService {
 
     const orderBy: Record<string, 'asc' | 'desc'> = {};
     orderBy[dto.sort || 'createdAt'] = dto.order || 'desc';
-    
+
     return paginate(
       this.prisma.template,
       {
@@ -203,7 +204,7 @@ export class TemplateService {
   }
 
   async sync(transportId: string) {
-      const transport = await this.prisma.transport.findUnique({
+    const transport = await this.prisma.transport.findUnique({
       where: { cuid: transportId },
     });
 

@@ -27,14 +27,9 @@ export class TemplateClient {
   /**
    * List templates with optional filters
    */
-  async list(
-    appId: string,
-    payload?: ListTemplate,
-    config?: AxiosRequestConfig,
-  ) {
+  async list(payload?: ListTemplate, config?: AxiosRequestConfig) {
     const response = await this._client.get(`${this._prefix}`, {
       params: {
-        appId,
         ...payload,
       },
       ...config,
@@ -92,10 +87,7 @@ export class TemplateClient {
    * Get template approval status from provider
    * Note: This might need to be implemented in the backend API
    */
-  async getApprovalStatus(
-    cuid: string,
-    config?: AxiosRequestConfig,
-  ) {
+  async getApprovalStatus(cuid: string, config?: AxiosRequestConfig) {
     const response = await this._client.get<TemplateApprovalStatus>(
       `${this._prefix}/${cuid}/approval-status`,
       config,
