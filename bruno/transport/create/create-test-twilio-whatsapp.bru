@@ -1,7 +1,7 @@
 meta {
-  name: create-api-twilio-whatsapp
+  name: create-test-twilio-whatsapp
   type: http
-  seq: 3
+  seq: 7
 }
 
 post {
@@ -17,12 +17,12 @@ headers {
 body:json {
   {
       "app": "{{app-id}}",
-      "name": "Whatsapp Messaging Service",
+      "name": "Whatsapp Test Messaging",
       "type": "API",
       "config": {
           "url": "{{TWILIO_URL}}",
           "body": {
-              "MessagingServiceSid": "{{TWILIO_WHATSAPP_MESSAGE_SID}}",
+              "From": "{{TWILIO_WHATSAPP_FROM}}",
               "To": "{%address%}",
               "ContentSid": "{%message.content%}"
           },

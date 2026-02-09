@@ -18,13 +18,13 @@ body:json {
   {
     "transport": "{{transport-id-api}}",
     "message": {
-      "content": "TWILIO SID",
+      "content": "{{TWILIO_WHATSAPP_TEST_TEMPALTE_SID}}",//Twilio template ID
       "meta": {
           "url": "test1"
       }
     },
     "addresses": [
-      "{{whatsapp}}"
+      "{{WHATSAPP_DEV_PHONE}}"
     ],
     "maxAttempts": 5,
     "trigger": "IMMEDIATE",
@@ -35,7 +35,6 @@ body:json {
     }
   }
 }
-
 
 tests {
   var data = res.getBody().data;
