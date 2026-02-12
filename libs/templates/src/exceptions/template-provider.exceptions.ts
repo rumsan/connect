@@ -9,14 +9,18 @@ export class TemplateProviderException extends HttpException {
     public readonly provider: string,
     cause?: any,
   ) {
+    const status = HttpStatus.BAD_GATEWAY;
+
     super(
       {
+        statusCode: status,
         message,
         provider,
         error: 'Template Provider Error',
       },
-      HttpStatus.BAD_GATEWAY,
+      status,
     );
+
     // Set cause if provided (NestJS HttpException supports cause in newer versions)
     if (cause) {
       Object.defineProperty(this, 'cause', {
