@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -27,15 +27,14 @@ import {
   dev_SessionCompletionAlert,
 } from '../utils/dev.alert';
 import { TransportStatsRaw } from '../utils/types/report';
+import { BroadcastValidationService } from './broadcast-validation.service';
+import { BROADCAST_CONSTANTS } from './broadcast.constants';
 import {
   BroadcastDto,
-  ListBroadcastDto,
-  MessageDto,
+  ListBroadcastDto
 } from './dto/broadcast.dto';
 import { ReportWhereClause } from './dto/report.dto';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
-import { getAddressValidator, getContentValidator } from './validators';
-import { BROADCAST_CONSTANTS } from './broadcast.constants';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
@@ -50,6 +49,7 @@ export class BroadcastService {
     private readonly broadcastQueue: BroadcastQueue,
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
     private readonly templateVerificationService: TemplateVerificationService,
+    private readonly broadcastValidationService: BroadcastValidationService,
   ) {}
 
   /**
@@ -96,7 +96,11 @@ export class BroadcastService {
 
   async create(appId: string, dto: BroadcastDto) {
     const { transport: transportId, message, addresses } = dto;
-    await this.validateBroadcastData(transportId, message, addresses);
+    await this.broadcastValidationService.validateBroadcastData(
+      transportId,
+      message,
+      addresses,
+    );
 
     let transport: Transport = null;
     const sessionData: Session = {
@@ -151,6 +155,7 @@ export class BroadcastService {
 
       return session;
     });
+    console.log('Created session:', newSession);
 
     if (newSession.cuid && newSession.triggerType !== TriggerType.SCHEDULED) {
       this.checkTransportReadiness(
@@ -506,88 +511,7 @@ export class BroadcastService {
     });
   }
 
-  /**
-   * Validate WhatsApp-specific template requirements
-   * @private
-   * @param transport - Transport configuration
-   * @param message - Message to validate
-   * @throws BadRequestException if validation fails
-   */
-  private validateWhatsAppTemplate(transport: Transport, message: MessageDto): void {
-    const meta = (transport.config as any)?.meta;
-    const hasTemplateCapability = meta?.capabilities?.includes('TEMPLATE_VERIFICATION');
-    
-    if (hasTemplateCapability && meta?.provider === 'twilio') {
-      if (!message.content) {
-        throw new BadRequestException(
-          'Template ID (ContentSid) is required in message.content for Twilio WhatsApp. ' +
-          'Please provide a valid template external ID from your Twilio Content API.'
-        );
-      }
-      
-      // Check if meta contains components for parameterized templates
-      if (message.meta?.components && !Array.isArray(message.meta.components)) {
-        throw new BadRequestException(
-          'message.meta.components must be an array for parameterized WhatsApp templates'
-        );
-      }
-    }
-  }
 
-  async validateBroadcastData(
-    transportId: string,
-    message: MessageDto,
-    addresses: string[],
-  ) {
-    const t = await this.prisma.transport.findUnique({
-      where: {
-        cuid: transportId,
-      },
-    });
-    if (!t) throw new Error('Transport not found.');
-
-    // Validate WhatsApp template requirements early
-    this.validateWhatsAppTemplate(t, message);
-
-    // Template verification gate:
-    // - If transport requires template verification, enforce verification.
-    // - If not required, keep existing validation flow unchanged.
-    const requiresTemplateVerification =
-      this.templateVerificationService.requiresTemplateVerification(t as any);
-
-    const contentValidator = getContentValidator(t.validationContent);
-    const addressValidator = getAddressValidator(t.validationAddress);
-
-    if (!contentValidator(message.content))
-      throw new Error(`Content: ${message.content} validation failed.`);
-    for (const address of addresses) {
-      if (!addressValidator(address))
-        throw new Error(`Address: ${address} validation failed.`);
-    }
-
-    if (requiresTemplateVerification) {
-      const templateExternalId = message?.content;
-      if (!templateExternalId) {
-        throw new BadRequestException(
-          'templateExternalId is required in message.content for this transport',
-        );
-      }
-
-      const parameters = message?.meta?.components?.[0]?.parameters;
-      const verification =
-        await this.templateVerificationService.verifyTemplate(
-          transportId,
-          templateExternalId,
-          parameters,
-        );
-
-      if (!verification.isValid) {
-        throw new BadRequestException(verification.errors.join(', '));
-      }
-    }
-
-    return true;
-  }
 
   async broadcastStatusCount(appId: string) {
     const broadcastCounts = await this.prisma.broadcast.groupBy({
