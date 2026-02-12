@@ -29,6 +29,7 @@ export class ApiWorker extends TransportWorker {
     private readonly transport: ApiTransport,
     private readonly broadcastLogQueue: BroadcastLogQueue,
   ) {
+    console.log('ApiWorker initialized');
     super(dataProvider, channel, transportQueue);
   }
 

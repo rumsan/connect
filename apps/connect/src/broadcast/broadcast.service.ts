@@ -390,7 +390,7 @@ export class BroadcastService {
     transport: Transport,
     broadcasts: Broadcast[],
   ) {
-    this.logger.log('Adding broadcasts to queue:', session);
+    this.logger.log(`Adding broadcasts to queue: sessionId: ${session.cuid}`);
     const queueTransport = this._getQueueName(transport.type as TransportType);
 
     const broadcastQueueData = broadcasts.map((broadcast) => {

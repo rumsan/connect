@@ -1,6 +1,7 @@
 import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { QueueModule } from '@rsconnect/queue';
 import {
   AmqpModule,
   ApiWorkerModule,
@@ -15,8 +16,7 @@ import amqp from 'amqp-connection-manager';
 import { Channel } from 'amqplib';
 import { BroadcastModule } from '../broadcast/broadcast.module';
 import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
-//import { QueueModule } from '../queues/queue.module';
-import { QueueModule } from '@rsconnect/queue';
+import { QueueModule as LocalQueueModule } from '../queues/queue.module';
 import { SessionModule } from '../session/session.module';
 import { TemplateModule } from '../template/template.module';
 import { TransportModule } from '../transport/transport.module';
@@ -71,6 +71,7 @@ import { AppService } from './app.service';
         });
       },
     }),
+    LocalQueueModule,
     DataProviderModule.forRootAsync('prisma'),
     ApiWorkerModule,
     EchoWorkerModule,
