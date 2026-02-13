@@ -130,6 +130,7 @@ export class ApiWorker extends TransportWorker {
       );
       broadcastLog.status = BroadcastStatus.FAIL;
       broadcastLog.details = { error: e.message, data: e?.response?.data };
+      this.logger.debug(`Broadcast job data: ${JSON.stringify(broadcastLog)}`);
     }
 
     //send log to connect server

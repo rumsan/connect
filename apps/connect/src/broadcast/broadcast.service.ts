@@ -155,41 +155,76 @@ export class BroadcastService {
 
       return session;
     });
-    console.log('Created session:', newSession);
+    this.logger.debug('Created session:', newSession.cuid);
 
-    if (newSession.cuid && newSession.triggerType !== TriggerType.SCHEDULED) {
-      this.checkTransportReadiness(
-        newSession.cuid,
-        newSession.Transport.type as TransportType,
-      );
+    // Strategy map for trigger types
+    const triggerHandlers: Record<TriggerType, () => Promise<void> | void> = {
+      [TriggerType.IMMEDIATE]: () => this.handleImmediateBroadcast(newSession as Session),
+      [TriggerType.SCHEDULED]: async () => {
+        await this.handleScheduledBroadcast(newSession as Session, dto.options.scheduledTimestamp);
+      },
+      [TriggerType.MANUAL]: () => this.handleManualBroadcast(newSession as Session),
+    };
+
+    const handler = triggerHandlers[newSession.triggerType];
+    if (handler) {
+      await handler();
     } else {
-      const runAtMs = new Date(dto.options.scheduledTimestamp).getTime();
-      const now = Date.now();
-      const delay = runAtMs - now;
-      const windowMs = this.getScheduleWindowMs();
-
-      console.log('Scheduling session with delay:', delay);
-
-      // Only push to Redis/Bull if the scheduled time is within the configured window.
-      if (runAtMs - now <= windowMs) {
-        if (this.redisZsetScheduler.isEnabled()) {
-          console.log('Scheduling session with Redis Zset Scheduler');
-
-          await this.redisZsetScheduler.schedule(
-            newSession.cuid,
-            newSession.Transport.type as TransportType,
-            runAtMs,
-          );
-        } else {
-          await this.scheduleWithBullDelay(
-            newSession.cuid,
-            newSession.Transport.type as TransportType,
-            delay,
-          );
-        }
-      }
+      this.logger.warn(`No handler defined for triggerType: ${newSession.triggerType}`);
     }
     return newSession;
+  }
+
+
+  private handleManualBroadcast(session: Session) {
+    this.logger.log(`Manual trigger for session: ${session.cuid}`);
+    // Doing nothing on manual trigger
+  }
+
+  /**
+   * Handle immediate broadcast by checking transport readiness
+   * @private
+   * @param session - The broadcast session
+   */
+  private handleImmediateBroadcast(session: Session) {
+    this.checkTransportReadiness(
+      session.cuid,
+      session.Transport.type as TransportType,
+    );
+  }
+
+  /**
+   * Handle scheduled broadcast by scheduling it appropriately
+   * @private
+   * @param session - The broadcast session
+   * @param scheduledTimestamp - The scheduled timestamp string
+   */
+  private async handleScheduledBroadcast(session: Session, scheduledTimestamp: Date) {
+    const runAtMs = scheduledTimestamp.getTime();
+    const now = Date.now();
+    const delay = runAtMs - now;
+    const windowMs = this.getScheduleWindowMs();
+
+    this.logger.log(`Scheduling session with delay: ${delay}ms`);
+
+    // Only push to Redis/Bull if the scheduled time is within the configured window.
+    if (delay <= windowMs) {
+      if (this.redisZsetScheduler.isEnabled()) {
+        this.logger.log('Scheduling session with Redis Zset Scheduler');
+
+        await this.redisZsetScheduler.schedule(
+          session.cuid,
+          session.Transport.type as TransportType,
+          runAtMs,
+        );
+      } else {
+        await this.scheduleWithBullDelay(
+          session.cuid,
+          session.Transport.type as TransportType,
+          delay,
+        );
+      }
+    }
   }
 
   async checkTransportReadiness(
