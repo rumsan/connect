@@ -4,7 +4,6 @@ import {
   CreateTemplate,
   ListTemplate,
   Template,
-  TemplateApprovalStatus,
   UpdateTemplate,
 } from '../types';
 import { ApiClient } from './api.client';
@@ -44,6 +43,17 @@ export class TemplateClient {
     const response = await this._client.post(`${this._prefix}`, data, config);
     return formatResponse<Template>(response);
   }
+  /**
+   * Sync template
+   */
+  async sync(transportId: string, config?: AxiosRequestConfig) {
+    const response = await this._client.post(
+      `${this._prefix}/${transportId}/sync`,
+      null,
+      config,
+    );
+    return formatResponse(response);
+  }
 
   /**
    * Update a template
@@ -81,39 +91,5 @@ export class TemplateClient {
       config,
     );
     return formatResponse<Template>(response);
-  }
-
-  /**
-   * Get template approval status from provider
-   * Note: This might need to be implemented in the backend API
-   */
-  async getApprovalStatus(cuid: string, config?: AxiosRequestConfig) {
-    const response = await this._client.get<TemplateApprovalStatus>(
-      `${this._prefix}/${cuid}/approval-status`,
-      config,
-    );
-    return formatResponse<TemplateApprovalStatus>(response);
-  }
-
-  /**
-   * Verify template for broadcast
-   * Note: This might need to be implemented in the backend API
-   */
-  async verifyForBroadcast(
-    transportId: string,
-    templateName: string,
-    parameters?: any[],
-    config?: AxiosRequestConfig,
-  ) {
-    const response = await this._client.post(
-      `${this._prefix}/verify`,
-      {
-        transportId,
-        templateName,
-        parameters,
-      },
-      config,
-    );
-    return formatResponse<{ isValid: boolean; errors: string[] }>(response);
   }
 }
