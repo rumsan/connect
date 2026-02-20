@@ -120,9 +120,9 @@ export class TemplateService {
     );
   }
 
-  async findOne(cuid: string) {
-    const template = await this.prisma.template.findUnique({
-      where: { cuid },
+  async findOne(identifier: string) {
+    const template = await this.prisma.template.findFirst({
+      where: { OR: [{ cuid: identifier }, { externalId: identifier }] },
       include: {
         Transport: {
           select: {
@@ -136,7 +136,7 @@ export class TemplateService {
     });
 
     if (!template) {
-      throw new NotFoundException(`Template with ID ${cuid} not found`);
+      throw new NotFoundException(`Template with ID ${identifier} not found`);
     }
 
     return template;
@@ -175,11 +175,10 @@ export class TemplateService {
       where: { cuid: template.transportId },
     });
 
-    // If transport exists and template has external ID, delete from provider
+    // If transport exists and template has external ID, delete from provider too
     if (transport && template.externalId) {
       const provider = this.templateProviderFactory.create(transport);
-      // Note: Add delete method to BaseTemplateProvider if needed
-      // await provider.delete(template.externalId);
+      await provider.deleteTemplate(template.externalId);
     }
 
     return this.prisma.template.delete({

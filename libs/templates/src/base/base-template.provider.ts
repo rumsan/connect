@@ -41,6 +41,18 @@ export abstract class BaseTemplateProvider implements ITemplateProvider {
   ): Promise<TemplateApprovalStatus>;
 
   /**
+   * Delete a template from the provider system.
+   * Default implementation throws; providers that support deletion
+   * should override this method.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async deleteTemplate(externalId: string): Promise<void> {
+    throw new Error(
+      `deleteTemplate not implemented for provider: ${this.config.provider}`,
+    );
+  }
+
+  /**
    * Fetch all templates from provider
    * Default implementation throws error - override in provider implementations
    */
