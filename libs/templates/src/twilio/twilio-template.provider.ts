@@ -151,6 +151,30 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
   }
 
   /**
+   * Delete a template from Twilio Content API
+   * DELETE https://content.twilio.com/v1/Content/{ContentSid}
+   */
+  override async deleteTemplate(externalId: string): Promise<void> {
+    try {
+      const url = `/Content/${externalId}`;
+      this.logger.log(`Deleting Twilio template: ${externalId}`);
+      await this.httpClientService.delete(this.httpClient, url);
+      this.logger.log(`Template deleted successfully: ${externalId}`);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to delete template ${externalId}: ${error.message}`,
+        error,
+      );
+      throw new TemplateProviderApiException(
+        'twilio',
+        `Failed to delete template: ${error.message}`,
+        error.response?.status,
+        error,
+      );
+    }
+  }
+
+  /**
    * Fetch all templates from Twilio Content API
    */
   override async fetchAllTemplates(): Promise<ProviderTemplate[]> {
