@@ -7,7 +7,7 @@ import {
 } from '@rsconnect/templates';
 import { PrismaService } from '@rumsan/prisma';
 
-const DEFAULT_POLL_INTERVAL_MS = 60_000;
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
 
 @Injectable()
 export class TemplateApprovalWorker {
@@ -69,30 +69,7 @@ export class TemplateApprovalWorker {
             )}`,
           );
 
-          if (result.status === 'APPROVED') {
-            await this.prisma.template.update({
-              where: { cuid: template.cuid },
-              data: {
-                status: TemplateStatus.APPROVED,
-                lastApprovalCheck: new Date(),
-              },
-            });
-            this.logger.log(`Template '${template.cuid}' approved by provider`);
-          } else if (result.status === 'REJECTED') {
-            await this.prisma.template.update({
-              where: { cuid: template.cuid },
-              data: {
-                status: TemplateStatus.REJECTED,
-                info: result.rejectionReason ?? 'Rejected by provider',
-                lastApprovalCheck: new Date(),
-              },
-            });
-            this.logger.warn(
-              `Template '${template.cuid}' rejected by provider: ${
-                result.rejectionReason ?? 'no reason'
-              }`,
-            );
-          }
+          await this.handleTemplateStatusUpdate(template, result);
         } catch (err) {
           this.logger.error(
             `Failed to check approval for template '${template.cuid}'`,
@@ -101,5 +78,57 @@ export class TemplateApprovalWorker {
         }
       }
     }
+  }
+
+  private async handleTemplateStatusUpdate(
+    template: { cuid: string },
+    result: { status: string; rejectionReason?: string },
+  ) {
+    const statusHandlers: Record<
+      string,
+      () => { data: Record<string, unknown>; log: () => void }
+    > = {
+      APPROVED: () => ({
+        data: {
+          status: TemplateStatus.APPROVED,
+          lastApprovalCheck: new Date(),
+        },
+        log: () =>
+          this.logger.log(`Template '${template.cuid}' approved by provider`),
+      }),
+      REJECTED: () => ({
+        data: {
+          status: TemplateStatus.REJECTED,
+          info: result.rejectionReason ?? 'Rejected by provider',
+          lastApprovalCheck: new Date(),
+        },
+        log: () =>
+          this.logger.warn(
+            `Template '${template.cuid}' rejected by provider: ${
+              result.rejectionReason ?? 'no reason'
+            }`,
+          ),
+      }),
+      PENDING: () => ({
+        data: {
+          lastApprovalCheck: new Date(),
+        },
+        log: () =>
+          this.logger.debug(
+            `Template '${template.cuid}' still pending approval`,
+          ),
+      }),
+    };
+
+    const handler = statusHandlers[result.status];
+    console.log('Status handler result:', handler);
+    if (!handler) return;
+
+    const { data, log } = handler();
+    await this.prisma.template.update({
+      where: { cuid: template.cuid },
+      data,
+    });
+    log();
   }
 }
