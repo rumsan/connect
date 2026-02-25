@@ -62,25 +62,35 @@ export class TemplateApprovalWorker {
         if (!template.externalId) continue;
 
         try {
-          const result = await provider.getApprovalStatus(
-            template.externalId,
+          const result = await provider.getApprovalStatus(template.externalId);
+          this.logger.debug(
+            `Checked approval for template '${template.cuid}': ${JSON.stringify(
+              result,
+            )}`,
           );
 
           if (result.status === 'APPROVED') {
             await this.prisma.template.update({
               where: { cuid: template.cuid },
-              data: { status: TemplateStatus.APPROVED },
+              data: {
+                status: TemplateStatus.APPROVED,
+                lastApprovalCheck: new Date(),
+              },
             });
-            this.logger.log(
-              `Template '${template.cuid}' approved by provider`,
-            );
+            this.logger.log(`Template '${template.cuid}' approved by provider`);
           } else if (result.status === 'REJECTED') {
             await this.prisma.template.update({
               where: { cuid: template.cuid },
-              data: { status: TemplateStatus.REJECTED },
+              data: {
+                status: TemplateStatus.REJECTED,
+                info: result.rejectionReason ?? 'Rejected by provider',
+                lastApprovalCheck: new Date(),
+              },
             });
             this.logger.warn(
-              `Template '${template.cuid}' rejected by provider: ${result.rejectionReason ?? 'no reason'}`,
+              `Template '${template.cuid}' rejected by provider: ${
+                result.rejectionReason ?? 'no reason'
+              }`,
             );
           }
         } catch (err) {

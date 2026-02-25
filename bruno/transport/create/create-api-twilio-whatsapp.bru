@@ -24,7 +24,8 @@ body:json {
           "body": {
               "MessagingServiceSid": "{{TWILIO_WHATSAPP_MESSAGE_SID}}",
               "To": "{%address%}",
-              "ContentSid": "{%message.content%}"
+              "ContentSid": "{%message.content%}",
+              "ContentVariables":"{%message.meta.contentVariables%}"
           },
    "headers": {
           "Content-Type": "application/x-www-form-urlencoded",

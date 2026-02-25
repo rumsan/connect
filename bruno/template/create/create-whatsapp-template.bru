@@ -17,9 +17,12 @@ headers {
 body:json {
   {
   "transport": "{{transport-id-twilio}}",
-  "name":"Dev message test",
-  "body":"Test for Devs",
-  "type":"TEXT"
+  "name":"Test message Rahat",
+  "body":"hello {{name}}, app is being tested by Rahat",
+  "type":"TEXT",
+  "variables": {
+    "name": "John"
+    }
   }
 }
 

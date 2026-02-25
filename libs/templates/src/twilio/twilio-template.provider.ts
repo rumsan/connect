@@ -24,7 +24,7 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
     super(config);
     ProviderConfigUtil.validateTwilioConfig(config);
     const credentials = ProviderConfigUtil.getTwilioCredentials(config);
-    
+
     this.httpClient = this.httpClientService.createClient({
       baseURL: this.baseUrl,
       timeout: 30000,
@@ -50,12 +50,23 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
         };
       }
 
-      const payload = {
+      // Ensure variables have sample values for WhatsApp approval.
+      // If body has placeholders ({{1}}, {{2}}) but no variables provided,
+      // auto-generate sample values so approval doesn't fail.
+      const variables =
+        dto.variables && Object.keys(dto.variables).length > 0
+          ? dto.variables
+          : this.extractDefaultVariables(dto.body);
+
+      const payload: Record<string, any> = {
         friendly_name: dto.name,
         language: dto.language ?? 'en',
-        variables: dto.variables || {},
         types: templateType,
       };
+
+      if (Object.keys(variables).length > 0) {
+        payload['variables'] = variables;
+      }
 
       this.logger.log(`Creating Twilio template: ${dto.name}`);
       const response = await this.httpClientService.post(
@@ -81,6 +92,20 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
     }
   }
 
+  /**
+   * Extract variable placeholders from body and generate default sample values.
+   * e.g. "Hello {{1}}, your code is {{2}}" → { "1": "sample_1", "2": "sample_2" }
+   */
+  private extractDefaultVariables(body: string): Record<string, string> {
+    const variables: Record<string, string> = {};
+    const regex = /\{\{(\d+)\}\}/g;
+    let match;
+    while ((match = regex.exec(body)) !== null) {
+      variables[match[1]] = `sample_${match[1]}`;
+    }
+    return variables;
+  }
+
   async requestApproval(externalId: string, name: string): Promise<void> {
     try {
       const url = `/Content/${externalId}/ApprovalRequests/whatsapp`;
@@ -93,10 +118,7 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
       await this.httpClientService.post(this.httpClient, url, payload);
       this.logger.log(`Approval requested successfully for: ${externalId}`);
     } catch (error: any) {
-      this.logger.error(
-        `Failed to request approval: ${error.message}`,
-        error,
-      );
+      this.logger.error(`Failed to request approval: ${error.message}`, error);
       throw new TemplateProviderApiException(
         'twilio',
         `Failed to request approval: ${error.message}`,
@@ -106,18 +128,13 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
     }
   }
 
-  async getApprovalStatus(
-    externalId: string,
-  ): Promise<TemplateApprovalStatus> {
+  async getApprovalStatus(externalId: string): Promise<TemplateApprovalStatus> {
     try {
       const url = `/Content/${externalId}/ApprovalRequests`;
-      const response = await this.httpClientService.get(
-        this.httpClient,
-        url,
-      );
-
+      const response = await this.httpClientService.get(this.httpClient, url);
+      console.log('Approval status response:', response);
       // Parse Twilio approval status
-      const latestRequest = response?.whatsapp
+      const latestRequest = response?.whatsapp;
 
       if (!latestRequest) {
         return {
@@ -184,7 +201,7 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
         this.httpClient,
         '/Content',
       );
-      
+
       const contents = response.contents || [];
       const templates: ProviderTemplate[] = [];
 
@@ -192,10 +209,12 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
       for (const content of contents) {
         try {
           const template = this.mapProviderTemplate(content);
-          
+
           // Fetch approval status
           try {
-            const approvalStatus = await this.getApprovalStatus(template.externalId);
+            const approvalStatus = await this.getApprovalStatus(
+              template.externalId,
+            );
             template.status = approvalStatus.status;
             template.lastUpdated = approvalStatus.lastUpdated;
           } catch (error: any) {
@@ -215,10 +234,7 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
 
       return templates;
     } catch (error: any) {
-      this.logger.error(
-        `Failed to fetch templates: ${error.message}`,
-        error,
-      );
+      this.logger.error(`Failed to fetch templates: ${error.message}`, error);
       throw new TemplateProviderApiException(
         'twilio',
         `Failed to fetch templates: ${error.message}`,
