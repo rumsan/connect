@@ -18,7 +18,6 @@ import {
 } from '@rumsan/connect/types';
 
 import { InjectQueue } from '@nestjs/bull';
-import { TemplateVerificationService } from '@rsconnect/templates';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
 import {
@@ -45,7 +44,6 @@ export class BroadcastService {
     private readonly transportQueue: TransportQueue,
     private readonly broadcastQueue: BroadcastQueue,
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
-    private readonly templateVerificationService: TemplateVerificationService,
     private readonly broadcastValidationService: BroadcastValidationService,
   ) {}
 
@@ -93,18 +91,19 @@ export class BroadcastService {
 
   async create(appId: string, dto: BroadcastDto) {
     const { transport: transportId, message, addresses } = dto;
-    await this.broadcastValidationService.validateBroadcastData(
-      transportId,
-      message,
-      addresses,
-    );
+    const resolvedMessage =
+      await this.broadcastValidationService.validateBroadcastData(
+        transportId,
+        message,
+        addresses,
+      );
 
     let transport: Transport = null;
     const sessionData: Session = {
       cuid: createId(),
       app: appId,
       transport: dto.transport,
-      message: dto.message as Record<string, any>,
+      message: resolvedMessage as Record<string, any>,
       addresses: dto.addresses,
       triggerType: dto.trigger,
       maxAttempts: dto.maxAttempts,

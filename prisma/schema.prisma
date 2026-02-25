@@ -91,7 +91,7 @@ model Template {
   app         String
   transportId String
   name        String
-  externalId  String  
+  externalId  String?  
   status      TemplateStatus
   type        TemplateType
   isActive    Boolean  @default(true)

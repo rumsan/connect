@@ -1,7 +1,7 @@
 meta {
-  name: send-api-twilio-whatapp
+  name: send-template-sparrow-sms
   type: http
-  seq: 4
+  seq: 2
 }
 
 post {
@@ -16,21 +16,20 @@ headers {
 
 body:json {
   {
-    "transport": "{{transport-id-api}}",
+   "transport": "{{transport-id-sparrow}}",
     "message": {
-      "content": "{{TWILIO_WHATSAPP_TEST_TEMPALTE_SID}}",//Twilio template ID
+      "templateId": "{{template-id-sparrow}}",
       "meta": {
-          "url": "test1"
+          "info": "testing sparrow"
       }
     },
     "addresses": [
-      "{{WHATSAPP_DEV_PHONE}}"
+      "9841602388"
     ],
     "maxAttempts": 5,
-    "trigger": "IMMEDIATE",//SCHEDULED
+    "trigger": "IMMEDIATE",
     "webhook": "",
     "options": {
-      "scheduledTimestamp": "2026-02-09T14:02:00+05:45",
       "attemptIntervalMinutes": "5"
     }
   }

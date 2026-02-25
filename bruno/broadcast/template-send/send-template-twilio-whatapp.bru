@@ -1,7 +1,7 @@
 meta {
-  name: send-api-twilio-whatapp
+  name: send-template-twilio-whatapp
   type: http
-  seq: 4
+  seq: 1
 }
 
 post {
@@ -18,13 +18,15 @@ body:json {
   {
     "transport": "{{transport-id-api}}",
     "message": {
-      "content": "{{TWILIO_WHATSAPP_TEST_TEMPALTE_SID}}",//Twilio template ID
+      "templateId": "{{template-id-whatsapp}}",//Twilio template ID
       "meta": {
           "url": "test1"
       }
     },
     "addresses": [
-      "{{WHATSAPP_DEV_PHONE}}"
+      "{{WHATSAPP_DEV_PHONE}}",
+      "whatsapp:+9779851069368",
+      "whatsapp:+9779808982517"
     ],
     "maxAttempts": 5,
     "trigger": "IMMEDIATE",//SCHEDULED

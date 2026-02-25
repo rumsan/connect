@@ -1,10 +1,13 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Transport } from '@prisma/client';
-import { TemplateVerificationService } from '@rsconnect/templates';
+import { Template, TemplateStatus, Transport } from '@prisma/client';
+import {
+  TemplateProviderFactory,
+  TemplateVerificationService,
+} from '@rsconnect/templates';
 import { PrismaService } from '@rumsan/prisma';
 import {
-    ContentMessageDto,
-    TemplateMessageDto,
+  ContentMessageDto,
+  TemplateMessageDto,
 } from './dto/broadcast.dto';
 import { getAddressValidator, getContentValidator } from './validators';
 
@@ -15,6 +18,7 @@ export class BroadcastValidationService {
   constructor(
     private prisma: PrismaService,
     private templateVerificationService: TemplateVerificationService,
+    private templateProviderFactory: TemplateProviderFactory,
   ) {}
 
   /**
@@ -27,13 +31,14 @@ export class BroadcastValidationService {
   }
 
   /**
-   * Main validation method that routes to appropriate validators
+   * Main validation method that routes to appropriate validators.
+   * Returns a resolved ContentMessageDto ready for session storage.
    */
   async validateBroadcastData(
     transportId: string,
     message: ContentMessageDto | TemplateMessageDto,
     addresses: string[],
-  ) {
+  ): Promise<ContentMessageDto> {
     const t = await this.prisma.transport.findUnique({
       where: {
         cuid: transportId,
@@ -46,12 +51,10 @@ export class BroadcastValidationService {
 
     // Route to appropriate validator based on message type
     if (this.isContentMessage(message)) {
-      await this.validateContentMessage(transportId, message, t);
+      return this.validateContentMessage(transportId, message, t);
     } else {
-      await this.validateTemplateMessage(transportId, message, t);
+      return this.resolveTemplateMessage(transportId, message, t);
     }
-
-    return true;
   }
 
   /**
@@ -61,7 +64,7 @@ export class BroadcastValidationService {
     transportId: string,
     message: ContentMessageDto,
     transport: Transport,
-  ) {
+  ): Promise<ContentMessageDto> {
     const contentValidator = getContentValidator(transport.validationContent);
 
     if (!contentValidator(message.content)) {
@@ -70,47 +73,132 @@ export class BroadcastValidationService {
 
     // WhatsApp template validation for content messages
     this.validateWhatsAppTemplate(transport, message);
+
+    return message;
   }
 
   /**
-   * Validate template-based messages
+   * Resolve template-based messages into ContentMessageDto.
+   * Checks provider approval status and resolves to content.
    */
-  private async validateTemplateMessage(
+  private async resolveTemplateMessage(
     transportId: string,
     message: TemplateMessageDto,
     transport: Transport,
-  ) {
-    const requiresTemplateVerification =
-      this.templateVerificationService.requiresTemplateVerification(
-        transport as any,
-      );
-
-    if (!requiresTemplateVerification) {
-      // If template verification not required, just validate template ID exists
-      if (!message.templateId) {
-        throw new BadRequestException('templateId is required in message');
-      }
-      return;
-    }
-
-    // Template verification is required
+  ): Promise<ContentMessageDto> {
     if (!message.templateId) {
+      throw new BadRequestException('templateId is required in message');
+    }
+
+    const template = await this.prisma.template.findUnique({
+      where: { cuid: message.templateId },
+      include: { Transport: true },
+    });
+
+    if (!template) {
       throw new BadRequestException(
-        'templateId is required in message.templateId for this transport',
+        `Template with ID '${message.templateId}' not found`,
       );
     }
 
-    const parameters = message?.meta?.components?.[0]?.parameters;
-    const verification =
-      await this.templateVerificationService.verifyTemplate(
-        transportId,
-        message.templateId,
-        parameters,
+    if (!template.isActive) {
+      throw new BadRequestException(
+        `Template '${message.templateId}' is not active`,
+      );
+    }
+
+    const requiresVerification =
+      this.templateVerificationService.requiresTemplateVerification(
+        transport,
       );
 
-    if (!verification.isValid) {
-      throw new BadRequestException(verification.errors.join(', '));
+    if (requiresVerification) {
+      return this.resolveVerifiedTemplate(template, message, transport);
+    } else {
+      return this.resolveUnverifiedTemplate(template, message);
     }
+  }
+
+  /**
+   * Resolve template for transports that require TEMPLATE_VERIFICATION.
+   * Uses externalId as content. Checks provider approval if not yet approved in DB.
+   */
+  private async resolveVerifiedTemplate(
+    template: Template,
+    message: TemplateMessageDto,
+    transport: Transport,
+  ): Promise<ContentMessageDto> {
+    if (!template.externalId) {
+      throw new BadRequestException(
+        `Template '${message.templateId}' has no externalId. ` +
+        `Transports with TEMPLATE_VERIFICATION require an externalId.`,
+      );
+    }
+
+    if (template.status !== TemplateStatus.APPROVED) {
+      // Check with the actual provider
+      const provider = this.templateProviderFactory.create(transport);
+      const approvalStatus = await provider.getApprovalStatus(
+        template.externalId,
+      );
+
+      if (approvalStatus.status === 'APPROVED') {
+        // Provider has approved — update our DB
+        await this.prisma.template.update({
+          where: { cuid: template.cuid },
+          data: { status: TemplateStatus.APPROVED },
+        });
+        this.logger.log(
+          `Template '${template.cuid}' approved by provider, updated DB status`,
+        );
+      } else {
+        // Not approved yet — trigger approval request and return error
+        try {
+          await provider.requestApproval(template.externalId, template.name);
+        } catch (e) {
+          this.logger.warn(
+            `Failed to request approval for template '${template.cuid}': ${e.message}`,
+          );
+        }
+        throw new BadRequestException(
+          `Template '${message.templateId}' is being verified (status: ${approvalStatus.status}). ` +
+          `Please try again once it is approved.`,
+        );
+      }
+    }
+
+    return {
+      content: template.externalId,
+      meta: {
+        ...message.meta,
+        templateId: message.templateId,
+        resolvedFrom: 'externalId',
+      },
+    };
+  }
+
+  /**
+   * Resolve template for transports that do NOT require TEMPLATE_VERIFICATION.
+   * Uses template body as content.
+   */
+  private async resolveUnverifiedTemplate(
+    template: Template,
+    message: TemplateMessageDto,
+  ): Promise<ContentMessageDto> {
+    if (!template.body) {
+      throw new BadRequestException(
+        `Template '${message.templateId}' has no body content`,
+      );
+    }
+
+    return {
+      content: template.body,
+      meta: {
+        ...message.meta,
+        templateId: message.templateId,
+        resolvedFrom: 'body',
+      },
+    };
   }
 
   /**
