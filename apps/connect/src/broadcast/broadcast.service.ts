@@ -29,10 +29,7 @@ import {
 import { TransportStatsRaw } from '../utils/types/report';
 import { BroadcastValidationService } from './broadcast-validation.service';
 import { BROADCAST_CONSTANTS } from './broadcast.constants';
-import {
-  BroadcastDto,
-  ListBroadcastDto
-} from './dto/broadcast.dto';
+import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
 import { ReportWhereClause } from './dto/report.dto';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
 
@@ -60,18 +57,18 @@ export class BroadcastService {
    */
   private getScheduleWindowMs(): number {
     const hours = Number(
-      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 
-      BROADCAST_CONSTANTS.DEFAULT_SCHEDULE_WINDOW_HOURS
+      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ??
+        BROADCAST_CONSTANTS.DEFAULT_SCHEDULE_WINDOW_HOURS,
     );
     return hours * 60 * 60 * 1000;
   }
 
   /**
    * Schedule a broadcast session using Bull's delay mechanism
-   * 
+   *
    * This method adds a job to Bull queue with a delay. Bull will automatically
    * process the job after the specified delay time.
-   * 
+   *
    * @param sessionCuid - Unique session identifier
    * @param transportType - Type of transport to use
    * @param delayMs - Delay in milliseconds before execution
@@ -159,22 +156,28 @@ export class BroadcastService {
 
     // Strategy map for trigger types
     const triggerHandlers: Record<TriggerType, () => Promise<void> | void> = {
-      [TriggerType.IMMEDIATE]: () => this.handleImmediateBroadcast(newSession as Session),
+      [TriggerType.IMMEDIATE]: () =>
+        this.handleImmediateBroadcast(newSession as Session),
       [TriggerType.SCHEDULED]: async () => {
-        await this.handleScheduledBroadcast(newSession as Session, dto.options.scheduledTimestamp);
+        await this.handleScheduledBroadcast(
+          newSession as Session,
+          dto.options.scheduledTimestamp,
+        );
       },
-      [TriggerType.MANUAL]: () => this.handleManualBroadcast(newSession as Session),
+      [TriggerType.MANUAL]: () =>
+        this.handleManualBroadcast(newSession as Session),
     };
 
     const handler = triggerHandlers[newSession.triggerType];
     if (handler) {
       await handler();
     } else {
-      this.logger.warn(`No handler defined for triggerType: ${newSession.triggerType}`);
+      this.logger.warn(
+        `No handler defined for triggerType: ${newSession.triggerType}`,
+      );
     }
     return newSession;
   }
-
 
   private handleManualBroadcast(session: Session) {
     this.logger.log(`Manual trigger for session: ${session.cuid}`);
@@ -199,9 +202,13 @@ export class BroadcastService {
    * @param session - The broadcast session
    * @param scheduledTimestamp - The scheduled timestamp string
    */
-  private async handleScheduledBroadcast(session: Session, scheduledTimestamp: Date) {
+  private async handleScheduledBroadcast(
+    session: Session,
+    scheduledTimestamp: Date,
+  ) {
     const runAtMs = scheduledTimestamp.getTime();
     const now = Date.now();
+
     const delay = runAtMs - now;
     const windowMs = this.getScheduleWindowMs();
 
@@ -248,6 +255,7 @@ export class BroadcastService {
           });
         }
       })
+
       .catch((err) => {
         console.log(err);
       });
@@ -545,8 +553,6 @@ export class BroadcastService {
       },
     });
   }
-
-
 
   async broadcastStatusCount(appId: string) {
     const broadcastCounts = await this.prisma.broadcast.groupBy({
