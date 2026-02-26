@@ -145,7 +145,6 @@ export class TemplateService {
             cuid: true,
             name: true,
             type: true,
-            config: true,
           },
         },
       },
