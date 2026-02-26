@@ -1,7 +1,7 @@
 meta {
-  name: create-whatsapp-template
+  name: create-whatsapp-template-variables
   type: http
-  seq: 2
+  seq: 3
 }
 
 post {
@@ -18,8 +18,11 @@ body:json {
   {
   "transport": "{{transport-id-twilio}}",
   "name":"Test message Rahat",
-  "body":"testing from Rahat",
-  "type":"TEXT"
+  "body":"testing from {{location}}, app is being tested by Rahat",
+  "type":"TEXT",
+  "variables": {
+    "location": "nepal"
+    }
   }
 }
 
