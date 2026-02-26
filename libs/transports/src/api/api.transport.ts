@@ -42,6 +42,11 @@ export class ApiTransport implements IService {
         requestData,
       )}`,
     );
+    this.logger.debug(
+      `Making API request to ${requestData.url} with data: ${JSON.stringify(
+        requestData.data,
+      )}`,
+    );
     const res = await this.transport.request(requestData);
     this.logger.debug(
       `Message sent to ${address}: ${JSON.stringify(res.data)}`,
@@ -60,7 +65,11 @@ export class ApiTransport implements IService {
       data: this.config.body,
       headers: this.config.headers,
     };
-
+    this.logger.debug(
+      `Bulk request data before placeholder replacement: ${JSON.stringify(
+        requestData,
+      )}`,
+    );
     const bulkDataTpl = extractBulkDataTemplate(this.config);
 
     const msgContent = addresses.map((address) => {
