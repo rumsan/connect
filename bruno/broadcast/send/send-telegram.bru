@@ -1,5 +1,5 @@
 meta {
-  name: send-sparrow-sms
+  name: send-telegram
   type: http
   seq: 7
 }
@@ -16,15 +16,12 @@ headers {
 
 body:json {
   {
-   "transport": "{{transport-id-sparrow}}",
+   "transport": "{{transport-id-telegram}}",
     "message": {
-      "content": "Hello from sparrow transport",
-      "meta": {
-          "info": "testing sparrow"
-      }
+      "content": "Hello from telegram transport"
     },
     "addresses": [
-      "9841602388"
+      "1003881712980"
     ],
     "maxAttempts": 5,
     "trigger": "IMMEDIATE",

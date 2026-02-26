@@ -16,12 +16,9 @@ headers {
 
 body:json {
   {
-    "transport": "{{transport-id-api}}",
+    "transport": "{{transport-id-twilio}}",
     "message": {
-      "templateId": "{{template-id-whatsapp}}",//Twilio template ID
-      "meta": {
-          "url": "test1"
-      }
+      "templateId": "{{template-id-whatsapp}}"
     },
     "addresses": [
       "{{WHATSAPP_DEV_PHONE}}"
