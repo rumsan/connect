@@ -1,7 +1,7 @@
 meta {
-  name: send-template-twilio-whatapp
+  name: send-cv-temp-twilio
   type: http
-  seq: 1
+  seq: 3
 }
 
 post {
@@ -18,9 +18,11 @@ body:json {
   {
     "transport": "{{transport-id-api}}",
     "message": {
-      "templateId": "{{template-id-whatsapp}}",//Twilio template ID
+      "templateId": "cmm2llqcx0003g511i2rfxhue",//Twilio template ID
       "meta": {
-          "url": "test1"
+          "contentVariables": {
+              "location": "nepal"
+            }
       }
     },
     "addresses": [
