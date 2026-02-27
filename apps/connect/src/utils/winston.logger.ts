@@ -7,13 +7,14 @@ const customFormat = format.printf((info) => {
   }`;
 });
 
+const loggerLevel = process.env.LOGGER_LEVEL || 'silly';
 const options = {
   file: {
     filename: 'logs/error.log',
     level: 'error',
   },
   console: {
-    level: 'silly',
+    level: loggerLevel,
   },
 };
 

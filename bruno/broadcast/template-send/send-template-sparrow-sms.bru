@@ -1,7 +1,7 @@
 meta {
-  name: send-prabhu
+  name: send-template-sparrow-sms
   type: http
-  seq: 5
+  seq: 2
 }
 
 post {
@@ -16,15 +16,15 @@ headers {
 
 body:json {
   {
-    "transport": "{{transport-id-prabhu}}",
+   "transport": "{{transport-id-sparrow}}",
     "message": {
-      "content": "Hello jjjj",
+      "templateId": "{{template-id-sparrow}}",
       "meta": {
-          "info": "test"
+          "info": "testing sparrow"
       }
     },
     "addresses": [
-      "{{dev-phone}}"
+      "9841602388"
     ],
     "maxAttempts": 5,
     "trigger": "IMMEDIATE",

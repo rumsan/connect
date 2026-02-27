@@ -3,7 +3,7 @@ import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QUEUES } from '@rumsan/connect';
 import { TemplateModule } from '../template/template.module';
-import { QueueModule } from '../queues/queue.module';
+import { BroadcastValidationService } from './broadcast-validation.service';
 import { BroadcastController } from './broadcast.controller';
 import { BroadcastService } from './broadcast.service';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
@@ -28,12 +28,19 @@ import { ScheduledWindowWorker } from './scheduled-window.worker';
     BullModule.registerQueue({
       name: QUEUES.SCHEDULED,
     }),
-    QueueModule,
     TemplateModule,
   ],
   controllers: [BroadcastController],
   providers: [
     BroadcastService,
+    BroadcastValidationService,
+    RedisZsetSchedulerService,
+    RedisZsetSchedulerWorker,
+    ScheduledWindowWorker,
+  ],
+  exports: [
+    BroadcastService,
+    BroadcastValidationService,
     RedisZsetSchedulerService,
     RedisZsetSchedulerWorker,
     ScheduledWindowWorker,

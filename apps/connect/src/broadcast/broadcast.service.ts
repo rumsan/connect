@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -18,7 +18,6 @@ import {
 } from '@rumsan/connect/types';
 
 import { InjectQueue } from '@nestjs/bull';
-import { TemplateVerificationService } from '@rsconnect/templates';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
 import {
@@ -27,15 +26,11 @@ import {
   dev_SessionCompletionAlert,
 } from '../utils/dev.alert';
 import { TransportStatsRaw } from '../utils/types/report';
-import {
-  BroadcastDto,
-  ListBroadcastDto,
-  MessageDto,
-} from './dto/broadcast.dto';
+import { BroadcastValidationService } from './broadcast-validation.service';
+import { BROADCAST_CONSTANTS } from './broadcast.constants';
+import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
 import { ReportWhereClause } from './dto/report.dto';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
-import { getAddressValidator, getContentValidator } from './validators';
-import { BROADCAST_CONSTANTS } from './broadcast.constants';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
@@ -49,7 +44,7 @@ export class BroadcastService {
     private readonly transportQueue: TransportQueue,
     private readonly broadcastQueue: BroadcastQueue,
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
-    private readonly templateVerificationService: TemplateVerificationService,
+    private readonly broadcastValidationService: BroadcastValidationService,
   ) {}
 
   /**
@@ -60,18 +55,18 @@ export class BroadcastService {
    */
   private getScheduleWindowMs(): number {
     const hours = Number(
-      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ?? 
-      BROADCAST_CONSTANTS.DEFAULT_SCHEDULE_WINDOW_HOURS
+      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ??
+        BROADCAST_CONSTANTS.DEFAULT_SCHEDULE_WINDOW_HOURS,
     );
     return hours * 60 * 60 * 1000;
   }
 
   /**
    * Schedule a broadcast session using Bull's delay mechanism
-   * 
+   *
    * This method adds a job to Bull queue with a delay. Bull will automatically
    * process the job after the specified delay time.
-   * 
+   *
    * @param sessionCuid - Unique session identifier
    * @param transportType - Type of transport to use
    * @param delayMs - Delay in milliseconds before execution
@@ -96,14 +91,19 @@ export class BroadcastService {
 
   async create(appId: string, dto: BroadcastDto) {
     const { transport: transportId, message, addresses } = dto;
-    await this.validateBroadcastData(transportId, message, addresses);
+    const resolvedMessage =
+      await this.broadcastValidationService.validateBroadcastData(
+        transportId,
+        message,
+        addresses,
+      );
 
     let transport: Transport = null;
     const sessionData: Session = {
       cuid: createId(),
       app: appId,
       transport: dto.transport,
-      message: dto.message as Record<string, any>,
+      message: resolvedMessage as Record<string, any>,
       addresses: dto.addresses,
       triggerType: dto.trigger,
       maxAttempts: dto.maxAttempts,
@@ -151,40 +151,86 @@ export class BroadcastService {
 
       return session;
     });
+    this.logger.debug('Created session:', newSession.cuid);
 
-    if (newSession.cuid && newSession.triggerType !== TriggerType.SCHEDULED) {
-      this.checkTransportReadiness(
-        newSession.cuid,
-        newSession.Transport.type as TransportType,
-      );
+    // Strategy map for trigger types
+    const triggerHandlers: Record<TriggerType, () => Promise<void> | void> = {
+      [TriggerType.IMMEDIATE]: () =>
+        this.handleImmediateBroadcast(newSession as Session),
+      [TriggerType.SCHEDULED]: async () => {
+        await this.handleScheduledBroadcast(
+          newSession as Session,
+          dto.options.scheduledTimestamp,
+        );
+      },
+      [TriggerType.MANUAL]: () =>
+        this.handleManualBroadcast(newSession as Session),
+    };
+
+    const handler = triggerHandlers[newSession.triggerType];
+    if (handler) {
+      await handler();
     } else {
-      const runAtMs = new Date(dto.options.scheduledTimestamp).getTime();
-      const now = Date.now();
-      const delay = runAtMs - now;
-      const windowMs = this.getScheduleWindowMs();
-
-      console.log('Scheduling session with delay:', delay);
-
-      // Only push to Redis/Bull if the scheduled time is within the configured window.
-      if (runAtMs - now <= windowMs) {
-        if (this.redisZsetScheduler.isEnabled()) {
-          console.log('Scheduling session with Redis Zset Scheduler');
-
-          await this.redisZsetScheduler.schedule(
-            newSession.cuid,
-            newSession.Transport.type as TransportType,
-            runAtMs,
-          );
-        } else {
-          await this.scheduleWithBullDelay(
-            newSession.cuid,
-            newSession.Transport.type as TransportType,
-            delay,
-          );
-        }
-      }
+      this.logger.warn(
+        `No handler defined for triggerType: ${newSession.triggerType}`,
+      );
     }
     return newSession;
+  }
+
+  private handleManualBroadcast(session: Session) {
+    this.logger.log(`Manual trigger for session: ${session.cuid}`);
+    // Doing nothing on manual trigger
+  }
+
+  /**
+   * Handle immediate broadcast by checking transport readiness
+   * @private
+   * @param session - The broadcast session
+   */
+  private handleImmediateBroadcast(session: Session) {
+    this.checkTransportReadiness(
+      session.cuid,
+      session.Transport.type as TransportType,
+    );
+  }
+
+  /**
+   * Handle scheduled broadcast by scheduling it appropriately
+   * @private
+   * @param session - The broadcast session
+   * @param scheduledTimestamp - The scheduled timestamp string
+   */
+  private async handleScheduledBroadcast(
+    session: Session,
+    scheduledTimestamp: Date,
+  ) {
+    const runAtMs = scheduledTimestamp.getTime();
+    const now = Date.now();
+
+    const delay = runAtMs - now;
+    const windowMs = this.getScheduleWindowMs();
+
+    this.logger.log(`Scheduling session with delay: ${delay}ms`);
+
+    // Only push to Redis/Bull if the scheduled time is within the configured window.
+    if (delay <= windowMs) {
+      if (this.redisZsetScheduler.isEnabled()) {
+        this.logger.log('Scheduling session with Redis Zset Scheduler');
+
+        await this.redisZsetScheduler.schedule(
+          session.cuid,
+          session.Transport.type as TransportType,
+          runAtMs,
+        );
+      } else {
+        await this.scheduleWithBullDelay(
+          session.cuid,
+          session.Transport.type as TransportType,
+          delay,
+        );
+      }
+    }
   }
 
   async checkTransportReadiness(
@@ -208,6 +254,7 @@ export class BroadcastService {
           });
         }
       })
+
       .catch((err) => {
         console.log(err);
       });
@@ -385,7 +432,7 @@ export class BroadcastService {
     transport: Transport,
     broadcasts: Broadcast[],
   ) {
-    this.logger.log('Adding broadcasts to queue:', session);
+    this.logger.log(`Adding broadcasts to queue: sessionId: ${session.cuid}`);
     const queueTransport = this._getQueueName(transport.type as TransportType);
 
     const broadcastQueueData = broadcasts.map((broadcast) => {
@@ -504,89 +551,6 @@ export class BroadcastService {
         Logs: true,
       },
     });
-  }
-
-  /**
-   * Validate WhatsApp-specific template requirements
-   * @private
-   * @param transport - Transport configuration
-   * @param message - Message to validate
-   * @throws BadRequestException if validation fails
-   */
-  private validateWhatsAppTemplate(transport: Transport, message: MessageDto): void {
-    const meta = (transport.config as any)?.meta;
-    const hasTemplateCapability = meta?.capabilities?.includes('TEMPLATE_VERIFICATION');
-    
-    if (hasTemplateCapability && meta?.provider === 'twilio') {
-      if (!message.content) {
-        throw new BadRequestException(
-          'Template ID (ContentSid) is required in message.content for Twilio WhatsApp. ' +
-          'Please provide a valid template external ID from your Twilio Content API.'
-        );
-      }
-      
-      // Check if meta contains components for parameterized templates
-      if (message.meta?.components && !Array.isArray(message.meta.components)) {
-        throw new BadRequestException(
-          'message.meta.components must be an array for parameterized WhatsApp templates'
-        );
-      }
-    }
-  }
-
-  async validateBroadcastData(
-    transportId: string,
-    message: MessageDto,
-    addresses: string[],
-  ) {
-    const t = await this.prisma.transport.findUnique({
-      where: {
-        cuid: transportId,
-      },
-    });
-    if (!t) throw new Error('Transport not found.');
-
-    // Validate WhatsApp template requirements early
-    this.validateWhatsAppTemplate(t, message);
-
-    // Template verification gate:
-    // - If transport requires template verification, enforce verification.
-    // - If not required, keep existing validation flow unchanged.
-    const requiresTemplateVerification =
-      this.templateVerificationService.requiresTemplateVerification(t as any);
-
-    const contentValidator = getContentValidator(t.validationContent);
-    const addressValidator = getAddressValidator(t.validationAddress);
-
-    if (!contentValidator(message.content))
-      throw new Error(`Content: ${message.content} validation failed.`);
-    for (const address of addresses) {
-      if (!addressValidator(address))
-        throw new Error(`Address: ${address} validation failed.`);
-    }
-
-    if (requiresTemplateVerification) {
-      const templateExternalId = message?.content;
-      if (!templateExternalId) {
-        throw new BadRequestException(
-          'templateExternalId is required in message.content for this transport',
-        );
-      }
-
-      const parameters = message?.meta?.components?.[0]?.parameters;
-      const verification =
-        await this.templateVerificationService.verifyTemplate(
-          transportId,
-          templateExternalId,
-          parameters,
-        );
-
-      if (!verification.isValid) {
-        throw new BadRequestException(verification.errors.join(', '));
-      }
-    }
-
-    return true;
   }
 
   async broadcastStatusCount(appId: string) {

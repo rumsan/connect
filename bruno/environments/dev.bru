@@ -1,5 +1,5 @@
 vars {
-  url: http://localhost:3333/api/v1
+  url: https://connect-dev.rumsan.net/api/v1
   dev-email: {{process.env.DEV_EMAIL}}
   dev-phone: {{process.env.DEV_PHONE}}
   slack-url: {{process.env.SLACK_URL}}
@@ -9,6 +9,8 @@ vars {
   smtp-username: {{process.env.SMTP_USERNAME}}
   smtp-password: {{process.env.SMTP_PASSWORD}}
   prabhu-sms-token: {{process.env.PRABHU_TOKEN}}
+  transport-id-voice: {{process.env.TRANSPORT_ID_VOICE}}
+  app-id: {{process.env.APP_ID}}
   TWILIO_API_SECRET: {{process.env.TWILIO_API_SECRET}}
   TWILIO_ACCOUNT_SID: {{process.env.TWILIO_ACCOUNT_SID}}
   TWILIO_WHATSAPP_FROM: {{process.env.TWILIO_WHATSAPP_FROM}}
@@ -17,7 +19,4 @@ vars {
   TWILIO_WHATSAPP_MESSAGE_SID: {{process.env.TWILIO_WHATSAPP_MESSAGE_SID}}
   WHATSAPP_DEV_PHONE: {{process.env.WHATSAPP_DEV_PHONE}}
   TWILIO_WHATSAPP_TEST_TEMPALTE_SID: {{process.env.TWILIO_WHATSAPP_TEST_TEMPALTE_SID}}
-  SPARROW_URL: {{process.env.SPARROW_URL}}
-  SPARROW_TOKEN: {{process.env.SPARROW_TOKEN}}
-  TELEGRAM_BOT_TOKEN: {{process.env.TELEGRAM_BOT_TOKEN}}
 }

@@ -1,0 +1,19 @@
+meta {
+  name: send-message
+  type: http
+  seq: 3
+}
+
+post {
+  url: https://api.telegram.org/bot{{TELEGRAM_BOT_TOKEN}}/sendMessage
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+      "text": "test message",
+      "chat_id": "1097235460",
+      "parse_mode": "HTML"
+    }
+}

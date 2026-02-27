@@ -1,11 +1,11 @@
 meta {
-  name: list
+  name: get-by-id
   type: http
-  seq: 1
+  seq: 3
 }
 
 get {
-  url: {{url}}/template?appId={{app-id}}&transportId={{transport-id-twilio}}
+  url: {{url}}/template/{{transport-id-api}}?appId={{app-id}}&transportId={{transport-id-twilio}}
   body: json
   auth: none
 }

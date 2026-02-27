@@ -91,13 +91,15 @@ model Template {
   app         String
   transportId String
   name        String
-  externalId  String  
+  externalId  String?  
   status      TemplateStatus
   type        TemplateType
   isActive    Boolean  @default(true)
   language    String   @default("en")
   body        String?
   xref        String?
+  info        String?  //update info or rejection reason from provider
+  lastApprovalCheck DateTime? //timestamp of last approval check with provider
 
   Transport   Transport @relation(fields: [transportId], references: [cuid])
 
