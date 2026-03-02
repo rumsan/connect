@@ -1,7 +1,7 @@
 meta {
-  name: send-telegram
+  name: send-tg-wrangler
   type: http
-  seq: 7
+  seq: 9
 }
 
 post {
@@ -16,12 +16,12 @@ headers {
 
 body:json {
   {
-   "transport": "{{transport-id-telegram}}",
+   "transport": "{{transport-id-tg-wrangler}}",
     "message": {
-      "content": "Hello from telegram transport test"
+      "content": "Hello from telegram transport test@username"
     },
     "addresses": [
-      "6672084715" //channelId
+      "man_sth"
     ],
     "maxAttempts": 5,
     "trigger": "IMMEDIATE",

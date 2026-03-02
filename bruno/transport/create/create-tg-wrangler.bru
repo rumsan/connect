@@ -1,0 +1,47 @@
+meta {
+  name: create-tg-wrangler
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{url}}/transports
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+      "app": "{{app-id}}",
+      "name": "Telegram Bot",
+      "type": "API",
+      "validationAddress": "ANY",
+      "validationContent": "TEXT",
+      "config": {
+          "url": "https://rahat-alert-tg-bot.santosh4244.workers.dev/admin/send",
+          "body": {
+            "username": "{%address%}",
+            "message": "{%message.content%}"
+          },
+          "headers":{
+            "Authorization": "Bearer 7c2e9a4d1f6b8e3c"
+          }
+         
+      }
+  }
+  
+  
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("transport-id-tg-wrangler", data.cuid);
+    bru.setVar("transport-id", data.cuid);
+  }
+}
