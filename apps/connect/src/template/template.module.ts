@@ -5,6 +5,7 @@ import {
   TemplateSyncService,
   TemplateVerificationService,
 } from '@rsconnect/templates';
+import { TemplateApprovalWorker } from './template-approval.worker';
 import { TemplateWebhookController } from './template-webhook.controller';
 import { TemplateController } from './template.controller';
 import { TemplateService } from './template.service';
@@ -17,6 +18,7 @@ import { TemplateService } from './template.service';
     TemplateProviderFactory,
     TemplateHttpClientService,
     TemplateSyncService,
+    TemplateApprovalWorker,
   ],
   exports: [
     TemplateService,

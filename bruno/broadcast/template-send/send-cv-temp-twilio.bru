@@ -1,7 +1,7 @@
 meta {
-  name: send-prabhu
+  name: send-cv-temp-twilio
   type: http
-  seq: 5
+  seq: 3
 }
 
 post {
@@ -16,23 +16,27 @@ headers {
 
 body:json {
   {
-    "transport": "{{transport-id-prabhu}}",
+    "transport": "{{transport-id-twilio}}",
     "message": {
-      "content": "Hello jjjj",
+      "templateId": "cmm2llqcx0003g511i2rfxhue",//Twilio template ID
       "meta": {
-          "info": "test"
+          "contentVariables": {
+              "location": "nepal"
+            }
       }
     },
     "addresses": [
-      "{{dev-phone}}"
+      "{{WHATSAPP_DEV_PHONE}}"
     ],
     "maxAttempts": 5,
-    "trigger": "IMMEDIATE",
+    "trigger": "IMMEDIATE",//SCHEDULED
     "webhook": "",
     "options": {
+      "scheduledTimestamp": "2026-02-09T14:02:00+05:45",
       "attemptIntervalMinutes": "5"
     }
   }
+  
 }
 
 tests {

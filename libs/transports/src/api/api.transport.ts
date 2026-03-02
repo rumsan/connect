@@ -15,9 +15,10 @@ export class ApiTransport implements IService {
   private transport: AxiosInstance;
   private config: TransportApiConfig;
 
-
   init(config: TransportApiConfig): void {
-    this.logger.debug('Initializing API Transport with config: ' + JSON.stringify(config));
+    this.logger.debug(
+      'Initializing API Transport with config: ' + JSON.stringify(config),
+    );
     this.config = config;
     this.transport = axios.create({
       method: config.method || 'POST',
@@ -26,7 +27,9 @@ export class ApiTransport implements IService {
   }
 
   async send(address: string, message: Message) {
-    this.logger.debug(`Sending message to ${address}: ${JSON.stringify(message)}`);
+    this.logger.debug(
+      `Sending message to ${address}: ${JSON.stringify(message)}`,
+    );
     let requestData = {
       url: this.config.url,
       data: this.config.body,
@@ -34,19 +37,39 @@ export class ApiTransport implements IService {
     };
 
     requestData = replacePlaceholders(requestData, { address, message });
+    this.logger.debug(
+      `Request data after placeholder replacement: ${JSON.stringify(
+        requestData,
+      )}`,
+    );
+    this.logger.debug(
+      `Making API request to ${requestData.url} with data: ${JSON.stringify(
+        requestData.data,
+      )}`,
+    );
     const res = await this.transport.request(requestData);
-    this.logger.debug(`Message sent to ${address}: ${JSON.stringify(res.data)}`);
+    this.logger.debug(
+      `Message sent to ${address}: ${JSON.stringify(res.data)}`,
+    );
     return res.data;
   }
 
   async sendBulk(addresses: string[], message: Message) {
-    this.logger.debug(`Sending bulk message to ${addresses.length} addresses: ${JSON.stringify(message)}`);
+    this.logger.debug(
+      `Sending bulk message to ${addresses.length} addresses: ${JSON.stringify(
+        message,
+      )}`,
+    );
     const requestData = {
       url: this.config.url,
       data: this.config.body,
       headers: this.config.headers,
     };
-
+    this.logger.debug(
+      `Bulk request data before placeholder replacement: ${JSON.stringify(
+        requestData,
+      )}`,
+    );
     const bulkDataTpl = extractBulkDataTemplate(this.config);
 
     const msgContent = addresses.map((address) => {
@@ -59,7 +82,11 @@ export class ApiTransport implements IService {
     requestData.data = replaceBulkData(requestData.data, msgContent);
 
     const res = await this.transport.request(requestData);
-    this.logger.debug(`Bulk message sent to ${addresses.length} addresses: ${JSON.stringify(res.data)}`);
+    this.logger.debug(
+      `Bulk message sent to ${addresses.length} addresses: ${JSON.stringify(
+        res.data,
+      )}`,
+    );
     return res.data;
   }
 }

@@ -24,7 +24,8 @@ body:json {
           "body": {
               "MessagingServiceSid": "{{TWILIO_WHATSAPP_MESSAGE_SID}}",
               "To": "{%address%}",
-              "ContentSid": "{%message.content%}"
+              "ContentSid": "{%message.content%}",
+              "ContentVariables":"{%message.meta.contentVariables%}"
           },
    "headers": {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -46,7 +47,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("transport-id-api", data.cuid);
+    bru.setVar("transport-id-twilio", data.cuid);
     bru.setVar("transport-id", data.cuid);
   }
 }

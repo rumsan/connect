@@ -1,7 +1,7 @@
 meta {
-  name: send-prabhu
+  name: send-template-twilio-whatapp
   type: http
-  seq: 5
+  seq: 1
 }
 
 post {
@@ -16,20 +16,18 @@ headers {
 
 body:json {
   {
-    "transport": "{{transport-id-prabhu}}",
+    "transport": "{{transport-id-twilio}}",
     "message": {
-      "content": "Hello jjjj",
-      "meta": {
-          "info": "test"
-      }
+      "templateId": "{{template-id-whatsapp}}"
     },
     "addresses": [
-      "{{dev-phone}}"
+      "{{WHATSAPP_DEV_PHONE}}"
     ],
     "maxAttempts": 5,
-    "trigger": "IMMEDIATE",
+    "trigger": "IMMEDIATE",//SCHEDULED
     "webhook": "",
     "options": {
+      "scheduledTimestamp": "2026-02-09T14:02:00+05:45",
       "attemptIntervalMinutes": "5"
     }
   }

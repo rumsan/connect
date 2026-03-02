@@ -1,0 +1,32 @@
+meta {
+  name: create-whatsapp-template
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{url}}/template
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+  "transport": "{{transport-id-twilio}}",
+  "name":"Test message Rahat",
+  "body":"testing from Rahat",
+  "type":"TEXT"
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("template-id-whatsapp", data.cuid);
+  }
+}

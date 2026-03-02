@@ -1,7 +1,7 @@
 meta {
-  name: send-prabhu
+  name: send-telegram
   type: http
-  seq: 5
+  seq: 7
 }
 
 post {
@@ -16,15 +16,12 @@ headers {
 
 body:json {
   {
-    "transport": "{{transport-id-prabhu}}",
+   "transport": "{{transport-id-telegram}}",
     "message": {
-      "content": "Hello jjjj",
-      "meta": {
-          "info": "test"
-      }
+      "content": "Hello from telegram transport"
     },
     "addresses": [
-      "{{dev-phone}}"
+      "-1003881712980"
     ],
     "maxAttempts": 5,
     "trigger": "IMMEDIATE",

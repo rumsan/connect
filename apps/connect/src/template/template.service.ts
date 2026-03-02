@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, TemplateStatus } from '@prisma/client';
 import {
   TemplateProviderFactory,
@@ -14,6 +14,7 @@ const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
 @Injectable()
 export class TemplateService {
+  private readonly logger = new Logger(TemplateService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly templateVerificationService: TemplateVerificationService,
@@ -22,6 +23,11 @@ export class TemplateService {
   ) {}
 
   async create(app: string, createTemplateDto: CreateTemplateDto) {
+    this.logger.log(
+      `Creating template for app ${app} with data: ${JSON.stringify(
+        createTemplateDto,
+      )}`,
+    );
     const transport = await this.prisma.transport.findUnique({
       where: { cuid: createTemplateDto.transport },
     });
@@ -32,28 +38,38 @@ export class TemplateService {
       );
     }
 
-    const provider = this.templateProviderFactory.create(transport);
-    const result = await provider.create({ app, ...createTemplateDto });
+    const requiresVerification =
+      this.templateVerificationService.requiresTemplateVerification(transport);
 
-    // Save in DB
+    let externalId: string | undefined;
+
+    if (requiresVerification) {
+      // Transport requires provider verification — create via provider
+      const provider = this.templateProviderFactory.create(transport);
+      const result = await provider.create({ app, ...createTemplateDto });
+      externalId = result.externalId;
+    }
+
+    // Save in DB — auto-approve if no verification required
     const template = await this.prisma.template.create({
       data: {
         app: transport.app,
         transportId: transport.cuid,
         name: createTemplateDto.name,
-        externalId: result.externalId,
-        status: TemplateStatus.PENDING,
+        externalId,
+        status: requiresVerification
+          ? TemplateStatus.PENDING
+          : TemplateStatus.APPROVED,
         type: createTemplateDto.type,
         language: createTemplateDto.language || 'en',
         body: createTemplateDto.body,
       } as Prisma.TemplateUncheckedCreateInput,
     });
 
-    // Request approval if transport requires template verification
-    if (
-      this.templateVerificationService.requiresTemplateVerification(transport)
-    ) {
-      await provider.requestApproval(result.externalId, createTemplateDto.name);
+    // Request approval from provider if transport requires verification
+    if (requiresVerification && externalId) {
+      const provider = this.templateProviderFactory.create(transport);
+      await provider.requestApproval(externalId, createTemplateDto.name);
     }
 
     return template;
@@ -120,23 +136,22 @@ export class TemplateService {
     );
   }
 
-  async findOne(cuid: string) {
-    const template = await this.prisma.template.findUnique({
-      where: { cuid },
+  async findOne(identifier: string) {
+    const template = await this.prisma.template.findFirst({
+      where: { OR: [{ cuid: identifier }, { externalId: identifier }] },
       include: {
         Transport: {
           select: {
             cuid: true,
             name: true,
             type: true,
-            config: true,
           },
         },
       },
     });
 
     if (!template) {
-      throw new NotFoundException(`Template with ID ${cuid} not found`);
+      throw new NotFoundException(`Template with ID ${identifier} not found`);
     }
 
     return template;
@@ -175,11 +190,14 @@ export class TemplateService {
       where: { cuid: template.transportId },
     });
 
-    // If transport exists and template has external ID, delete from provider
-    if (transport && template.externalId) {
+    // If transport requires verification and template has external ID, delete from provider too
+    if (
+      transport &&
+      template.externalId &&
+      this.templateVerificationService.requiresTemplateVerification(transport)
+    ) {
       const provider = this.templateProviderFactory.create(transport);
-      // Note: Add delete method to BaseTemplateProvider if needed
-      // await provider.delete(template.externalId);
+      await provider.deleteTemplate(template.externalId);
     }
 
     return this.prisma.template.delete({
