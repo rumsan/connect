@@ -51,28 +51,45 @@ export class TemplateService {
     }
 
     // Save in DB — auto-approve if no verification required
-    const template = await this.prisma.template.create({
-      data: {
-        app: transport.app,
-        transportId: transport.cuid,
-        name: createTemplateDto.name,
-        externalId,
-        status: requiresVerification
-          ? TemplateStatus.PENDING
-          : TemplateStatus.APPROVED,
-        type: createTemplateDto.type,
-        language: createTemplateDto.language || 'en',
-        body: createTemplateDto.body,
-      } as Prisma.TemplateUncheckedCreateInput,
-    });
+    const data: Prisma.TemplateUncheckedCreateInput = {
+      app: transport.app,
+      transportId: transport.cuid,
+      name: createTemplateDto.name,
+      externalId,
+      status: requiresVerification
+        ? TemplateStatus.PENDING
+        : TemplateStatus.APPROVED,
+      type: createTemplateDto.type,
+      language: createTemplateDto.language || 'en',
+      body: createTemplateDto.body,
+    };
 
-    // Request approval from provider if transport requires verification
-    if (requiresVerification && externalId) {
-      const provider = this.templateProviderFactory.create(transport);
-      await provider.requestApproval(externalId, createTemplateDto.name);
+    // save media only if template type is MEDIA
+    if (createTemplateDto.type === 'MEDIA') {
+      data.media = createTemplateDto.media;
     }
 
-    return template;
+    try {
+      const template = await this.prisma.template.create({
+        data,
+      });
+
+      // Request approval from provider if transport requires verification
+      if (requiresVerification && externalId) {
+        const provider = this.templateProviderFactory.create(transport);
+        await provider.requestApproval(externalId, createTemplateDto.name);
+      }
+
+      return template;
+    } catch (error) {
+      this.logger.error(
+        `Failed to create template for app ${app} with data: ${JSON.stringify(
+          createTemplateDto,
+        )}`,
+        error.stack,
+      );
+      throw error;
+    }
   }
 
   async findAll(

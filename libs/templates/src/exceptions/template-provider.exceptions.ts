@@ -1,22 +1,42 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 
+function normalizeHttpStatus(statusCode?: number): number {
+  if (
+    typeof statusCode === 'number' &&
+    Number.isInteger(statusCode) &&
+    statusCode >= 100 &&
+    statusCode <= 599
+  ) {
+    return statusCode;
+  }
+
+  return HttpStatus.BAD_GATEWAY;
+}
+
 /**
  * Base exception for template provider errors
  */
 export class TemplateProviderException extends HttpException {
+  public readonly statusCode: number;
+
   constructor(
     message: string,
     public readonly provider: string,
+    statusCode: number = HttpStatus.BAD_GATEWAY,
     cause?: any,
   ) {
+    const safeStatusCode = normalizeHttpStatus(statusCode);
     super(
       {
         message,
         provider,
+        statusCode: safeStatusCode,
         error: 'Template Provider Error',
       },
-      HttpStatus.BAD_GATEWAY,
+      safeStatusCode,
     );
+    this.statusCode = safeStatusCode;
+
     // Set cause if provided (NestJS HttpException supports cause in newer versions)
     if (cause) {
       Object.defineProperty(this, 'cause', {
@@ -35,6 +55,7 @@ export class TemplateProviderConfigException extends TemplateProviderException {
     super(
       `Invalid configuration for provider ${provider}: missing ${missingField}`,
       provider,
+      HttpStatus.BAD_REQUEST,
     );
   }
 }
@@ -46,12 +67,14 @@ export class TemplateProviderApiException extends TemplateProviderException {
   constructor(
     provider: string,
     message: string,
-    public readonly statusCode?: number,
+    statusCode?: number,
     cause?: any,
   ) {
+    const safeStatusCode = normalizeHttpStatus(statusCode);
     super(
       `API error for provider ${provider}: ${message}`,
       provider,
+      safeStatusCode,
       cause,
     );
   }

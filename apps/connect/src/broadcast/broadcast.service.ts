@@ -310,11 +310,12 @@ export class BroadcastService {
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();
-      //TODO: Enable for automatic retries
-      // await this.retryBroadcasts(
-      //   sessionCuid,
-      //   session.Transport.type as TransportType,
-      // );
+
+      await this.retryBroadcasts(
+        sessionCuid,
+        session.Transport.type as TransportType,
+        true,
+      );
     }
   }
 
@@ -323,12 +324,17 @@ export class BroadcastService {
     transportType: TransportType,
     retryFailed?: boolean,
   ) {
-    const isSessionComplete = await this._checkIfSessionComplete(
-      sessionCuid,
-      // this.prisma,
-    );
+    const isSessionComplete = await this._checkIfSessionComplete(sessionCuid);
+
     if (isSessionComplete) {
-      throw new Error('Session is completed');
+      this.logger.log(
+        `retryBroadcasts called for completed session: ${sessionCuid}, skipping retries.`,
+      );
+      return {
+        message: 'Session is already completed; no retries scheduled',
+        isComplete: true,
+        count: 0,
+      };
     }
 
     const retryStatuses = retryFailed
@@ -403,7 +409,7 @@ export class BroadcastService {
       case TransportType.ECHO:
         return dtoMaxAttempts;
       case TransportType.API:
-        return 1;
+        return dtoMaxAttempts;
       case TransportType.SMTP:
         return 1;
       case TransportType.VOICE:
