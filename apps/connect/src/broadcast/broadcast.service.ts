@@ -20,6 +20,7 @@ import {
 import { InjectQueue } from '@nestjs/bull';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
+import { TwilioBatchingService } from '@rsconnect/transports';
 import {
   dev_NewBatchAlert,
   dev_SessionAttemptComplete,
@@ -45,6 +46,7 @@ export class BroadcastService {
     private readonly broadcastQueue: BroadcastQueue,
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
     private readonly broadcastValidationService: BroadcastValidationService,
+    private readonly twilioBatchingService: TwilioBatchingService,
   ) {}
 
   /**
@@ -123,6 +125,12 @@ export class BroadcastService {
       sessionData.maxAttempts = this._enforceMaxAttempts(
         transport.type,
         dto.maxAttempts,
+      );
+
+      sessionData.options = this.twilioBatchingService.enrichSessionOptions(
+        (sessionData.options as Record<string, any>) ?? {},
+        transport,
+        dto.addresses.length,
       );
 
       const session = await tx.session.create({
@@ -272,6 +280,14 @@ export class BroadcastService {
     });
     if (!session) return;
 
+    const batchGuard = await this.twilioBatchingService.applySendGuard(
+      sessionCuid,
+      (session.options as Record<string, any>) ?? {},
+      batchSize,
+    );
+    if (batchGuard.halt) return;
+    batchSize = batchGuard.batchSize;
+
     let broadcasts: Broadcast[] = [];
 
     if (batchSize > 0) {
@@ -307,6 +323,13 @@ export class BroadcastService {
 
     if (broadcasts.length > 0) {
       await this._addToQueue(session as Session, session.Transport, broadcasts);
+
+      await this.twilioBatchingService.recordQueuedBatch(
+        sessionCuid,
+        (session.options as Record<string, any>) ?? {},
+        broadcasts.length,
+      );
+
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();

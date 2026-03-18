@@ -1,0 +1,194 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { BroadcastStatus, SessionStatus, TransportType } from '@rumsan/connect/types';
+import { PrismaService } from '@rumsan/prisma';
+import { Transport } from '@prisma/client';
+
+type TwilioBatchingState = {
+  enabled: boolean;
+  dailyLimit: number;
+  intervalHours: number;
+  roundSentCount: number;
+  nextRoundAt: string | null;
+  lastRoundStartedAt?: string;
+  lastBatchAt?: string;
+  totalAddresses?: number;
+};
+
+@Injectable()
+export class TwilioBatchingService {
+  private readonly logger = new Logger(TwilioBatchingService.name);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  isTwilioTransport(transport: Transport): boolean {
+    const meta = (transport.config as Record<string, any>)?.meta;
+    return meta?.provider === 'twilio';
+  }
+
+  private getTwilioDailyLimit(transport: Transport): number {
+    const meta = (transport.config as Record<string, any>)?.meta;
+    const fromConfig = Number(meta?.dailyLimit);
+    if (Number.isFinite(fromConfig) && fromConfig > 0) return Math.floor(fromConfig);
+    const fromEnv = Number(process.env.TWILIO_DAILY_LIMIT);
+    if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
+    return 500;
+  }
+
+  private getTwilioBatchIntervalHours(transport: Transport): number {
+    const meta = (transport.config as Record<string, any>)?.meta;
+    const fromConfig = Number(meta?.batchIntervalHours);
+    if (Number.isFinite(fromConfig) && fromConfig > 0) return fromConfig;
+    const fromEnv = Number(process.env.TWILIO_BATCH_INTERVAL_HOURS);
+    if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+    return 24;
+  }
+
+  enrichSessionOptions(
+    baseOptions: Record<string, any> | undefined,
+    transport: Transport,
+    totalAddresses: number,
+  ): Record<string, any> {
+    if (!this.isTwilioTransport(transport)) return baseOptions ?? {};
+
+    const dailyLimit = this.getTwilioDailyLimit(transport);
+    const intervalHours = this.getTwilioBatchIntervalHours(transport);
+
+    return {
+      ...(baseOptions ?? {}),
+      twilioBatching: {
+        enabled: true,
+        dailyLimit,
+        intervalHours,
+        roundSentCount: 0,
+        nextRoundAt: null,
+        lastRoundStartedAt: new Date().toISOString(),
+        totalAddresses,
+      },
+    };
+  }
+
+  async applySendGuard(
+    sessionCuid: string,
+    options: Record<string, any> | undefined,
+    requestedBatchSize: number,
+  ): Promise<{ halt: boolean; batchSize: number }> {
+    const twilioBatching = options?.twilioBatching as TwilioBatchingState | undefined;
+
+    if (!twilioBatching?.enabled) {
+      return { halt: false, batchSize: requestedBatchSize };
+    }
+
+    const { dailyLimit, roundSentCount = 0, intervalHours = 24 } = twilioBatching;
+
+    if (roundSentCount >= dailyLimit) {
+      if (!twilioBatching.nextRoundAt) {
+        const nextRoundAt = new Date(Date.now() + intervalHours * 3_600_000).toISOString();
+        await this.prisma.session.update({
+          where: { cuid: sessionCuid },
+          data: {
+            options: {
+              ...(options ?? {}),
+              twilioBatching: { ...twilioBatching, nextRoundAt },
+            },
+          },
+        });
+        this.logger.log(
+          `Twilio daily limit (${dailyLimit}) reached for session ${sessionCuid}. Next round at ${nextRoundAt}`,
+        );
+      }
+      return { halt: true, batchSize: requestedBatchSize };
+    }
+
+    const remaining = dailyLimit - roundSentCount;
+    if (requestedBatchSize === 0 || requestedBatchSize > remaining) {
+      return { halt: false, batchSize: remaining };
+    }
+
+    return { halt: false, batchSize: requestedBatchSize };
+  }
+
+  async recordQueuedBatch(
+    sessionCuid: string,
+    options: Record<string, any> | undefined,
+    queuedCount: number,
+  ): Promise<void> {
+    const twilioBatching = options?.twilioBatching as TwilioBatchingState | undefined;
+    if (!twilioBatching?.enabled) return;
+
+    const newRoundSentCount = (twilioBatching.roundSentCount ?? 0) + queuedCount;
+    const limitReached = newRoundSentCount >= twilioBatching.dailyLimit;
+    const nextRoundAt = limitReached
+      ? new Date(Date.now() + (twilioBatching.intervalHours ?? 24) * 3_600_000).toISOString()
+      : twilioBatching.nextRoundAt;
+
+    await this.prisma.session.update({
+      where: { cuid: sessionCuid },
+      data: {
+        options: {
+          ...(options ?? {}),
+          twilioBatching: {
+            ...twilioBatching,
+            roundSentCount: newRoundSentCount,
+            nextRoundAt,
+            lastBatchAt: new Date().toISOString(),
+          },
+        },
+      },
+    });
+  }
+
+  async findDueSessionsAndReset(now = new Date()): Promise<Array<{ sessionCuid: string; transportType: TransportType; scheduledCount: number }>> {
+    const rows = await this.prisma.session.findMany({
+      where: {
+        options: { path: ['twilioBatching', 'enabled'], equals: true },
+        status: { not: SessionStatus.COMPLETED },
+      },
+      include: { Transport: true },
+    });
+
+    const due: Array<{ sessionCuid: string; transportType: TransportType; scheduledCount: number }> = [];
+
+    for (const session of rows) {
+      const tb = (session.options as Record<string, any>)?.twilioBatching as
+        | TwilioBatchingState
+        | undefined;
+
+      if (!tb?.nextRoundAt) continue;
+
+      const dueAt = new Date(tb.nextRoundAt).getTime();
+      if (Number.isNaN(dueAt) || dueAt > now.getTime()) continue;
+
+      const scheduledCount = await this.prisma.broadcast.count({
+        where: {
+          session: session.cuid,
+          status: BroadcastStatus.SCHEDULED,
+          isComplete: false,
+        },
+      });
+      if (scheduledCount === 0) continue;
+
+      await this.prisma.session.update({
+        where: { cuid: session.cuid },
+        data: {
+          options: {
+            ...((session.options as Record<string, any>) ?? {}),
+            twilioBatching: {
+              ...tb,
+              roundSentCount: 0,
+              nextRoundAt: null,
+              lastRoundStartedAt: now.toISOString(),
+            },
+          },
+        },
+      });
+
+      due.push({
+        sessionCuid: session.cuid,
+        transportType: session.Transport.type as TransportType,
+        scheduledCount,
+      });
+    }
+
+    return due;
+  }
+}
