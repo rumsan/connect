@@ -377,6 +377,10 @@ export class BroadcastService {
     };
   }
 
+  async syncSessionCompletion(sessionCuid: string) {
+    return this._checkIfSessionComplete(sessionCuid);
+  }
+
   private async _checkIfSessionComplete(
     sessionCuid: string,
     //tx: PrismaService,
@@ -576,10 +580,23 @@ export class BroadcastService {
     });
     const counts = broadcastCounts.reduce(
       (acc, item) => {
-        acc[item.status.toLowerCase()] = item._count.status;
+        if (['SCHEDULED', 'PENDING'].includes(item.status)) {
+          acc.pending += item._count.status;
+          return acc;
+        }
+
+        if (item.status === BroadcastStatus.SUCCESS) {
+          acc.success += item._count.status;
+          return acc;
+        }
+
+        if (item.status === BroadcastStatus.FAIL) {
+          acc.fail += item._count.status;
+        }
+
         return acc;
       },
-      { fail: 0, success: 0 },
+      { fail: 0, pending: 0, success: 0 },
     );
     return {
       data: {
@@ -627,7 +644,7 @@ export class BroadcastService {
           COUNT(DISTINCT b.id) as total_broadcasts,
           SUM(CASE WHEN b.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
           SUM(CASE WHEN b.status = 'FAIL' THEN 1 ELSE 0 END) as failed_count,
-          SUM(CASE WHEN b.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+          SUM(CASE WHEN b.status IN ('PENDING', 'SCHEDULED') THEN 1 ELSE 0 END) as pending_count,
           ROUND(AVG(CAST(b.attempts as float))::numeric, 2) as average_attempts,
           MAX(b.attempts) as max_attempts,
           COALESCE(tr.total_recipients, 0) as total_recipients
@@ -685,9 +702,9 @@ export class BroadcastService {
     const failedCount =
       broadcastStats.find((stat) => stat.status === BroadcastStatus.FAIL)
         ?._count._all ?? 0;
-    const pendingCount =
-      broadcastStats.find((stat) => stat.status === BroadcastStatus.PENDING)
-        ?._count._all ?? 0;
+    const pendingCount = broadcastStats
+      .filter((stat) => ['SCHEDULED', 'PENDING'].includes(stat.status))
+      .reduce((sum, stat) => sum + stat._count._all, 0);
     const successRate = totalMessages
       ? Number(((successCount / totalMessages) * 100).toFixed(2))
       : 0;

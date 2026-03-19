@@ -22,6 +22,7 @@ import { TemplateModule } from '../template/template.module';
 import { TransportModule } from '../transport/transport.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { WebhookModule } from '../webhook/webhook.module';
 
 @Module({
   imports: [
@@ -34,7 +35,7 @@ import { AppService } from './app.service';
     BroadcastLogModule,
     TemplateModule,
     QueueModule,
-
+    WebhookModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
