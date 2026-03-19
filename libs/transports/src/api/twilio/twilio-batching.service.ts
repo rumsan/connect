@@ -21,26 +21,51 @@ export class TwilioBatchingService {
   constructor(private readonly prisma: PrismaService) {}
 
   isTwilioTransport(transport: Transport): boolean {
-    const meta = (transport.config as Record<string, any>)?.meta;
+    const meta = (transport.config as Record<string, any>)?.['meta'];
     return meta?.provider === 'twilio';
   }
 
   private getTwilioDailyLimit(transport: Transport): number {
-    const meta = (transport.config as Record<string, any>)?.meta;
+    const meta = (transport.config as Record<string, any>)?.['meta'];
     const fromConfig = Number(meta?.dailyLimit);
     if (Number.isFinite(fromConfig) && fromConfig > 0) return Math.floor(fromConfig);
-    const fromEnv = Number(process.env.TWILIO_DAILY_LIMIT);
+    const fromEnv = Number(process.env['TWILIO_DAILY_LIMIT']);
     if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
     return 500;
   }
 
   private getTwilioBatchIntervalHours(transport: Transport): number {
-    const meta = (transport.config as Record<string, any>)?.meta;
-    const fromConfig = Number(meta?.batchIntervalHours);
+    const meta = (transport.config as Record<string, any>)?.['meta'];
+    const fromConfig = Number(
+      meta?.batchIntervalHours ?? meta?.intervalHours ?? meta?.interval,
+    );
     if (Number.isFinite(fromConfig) && fromConfig > 0) return fromConfig;
-    const fromEnv = Number(process.env.TWILIO_BATCH_INTERVAL_HOURS);
+    const fromEnv = Number(process.env['TWILIO_BATCH_INTERVAL_HOURS']);
     if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
     return 24;
+  }
+
+  private async getRollingSentCountForTransport(
+    transportCuid: string,
+    intervalHours: number,
+  ): Promise<number> {
+    const since = new Date(Date.now() - intervalHours * 3_600_000);
+
+    return this.prisma.broadcastLog.count({
+      where: {
+        createdAt: { gte: since },
+        status: {
+          in: [
+            BroadcastStatus.PENDING,
+            BroadcastStatus.SUCCESS,
+            BroadcastStatus.FAIL,
+          ],
+        },
+        Broadcast: {
+          transport: transportCuid,
+        },
+      },
+    });
   }
 
   enrichSessionOptions(
@@ -71,16 +96,22 @@ export class TwilioBatchingService {
     sessionCuid: string,
     options: Record<string, any> | undefined,
     requestedBatchSize: number,
+    transportCuid?: string,
   ): Promise<{ halt: boolean; batchSize: number }> {
-    const twilioBatching = options?.twilioBatching as TwilioBatchingState | undefined;
+    const twilioBatching = options?.['twilioBatching'] as
+      | TwilioBatchingState
+      | undefined;
 
     if (!twilioBatching?.enabled) {
       return { halt: false, batchSize: requestedBatchSize };
     }
 
     const { dailyLimit, roundSentCount = 0, intervalHours = 24 } = twilioBatching;
+    const effectiveSentCount = transportCuid
+      ? await this.getRollingSentCountForTransport(transportCuid, intervalHours)
+      : roundSentCount;
 
-    if (roundSentCount >= dailyLimit) {
+    if (effectiveSentCount >= dailyLimit) {
       if (!twilioBatching.nextRoundAt) {
         const nextRoundAt = new Date(Date.now() + intervalHours * 3_600_000).toISOString();
         await this.prisma.session.update({
@@ -88,18 +119,22 @@ export class TwilioBatchingService {
           data: {
             options: {
               ...(options ?? {}),
-              twilioBatching: { ...twilioBatching, nextRoundAt },
+              twilioBatching: {
+                ...twilioBatching,
+                roundSentCount: effectiveSentCount,
+                nextRoundAt,
+              },
             },
           },
         });
         this.logger.log(
-          `Twilio daily limit (${dailyLimit}) reached for session ${sessionCuid}. Next round at ${nextRoundAt}`,
+          `Twilio daily limit (${dailyLimit}) reached for session ${sessionCuid}. Sent in rolling window: ${effectiveSentCount}. Next round at ${nextRoundAt}`,
         );
       }
       return { halt: true, batchSize: requestedBatchSize };
     }
 
-    const remaining = dailyLimit - roundSentCount;
+    const remaining = dailyLimit - effectiveSentCount;
     if (requestedBatchSize === 0 || requestedBatchSize > remaining) {
       return { halt: false, batchSize: remaining };
     }
@@ -112,7 +147,9 @@ export class TwilioBatchingService {
     options: Record<string, any> | undefined,
     queuedCount: number,
   ): Promise<void> {
-    const twilioBatching = options?.twilioBatching as TwilioBatchingState | undefined;
+    const twilioBatching = options?.['twilioBatching'] as
+      | TwilioBatchingState
+      | undefined;
     if (!twilioBatching?.enabled) return;
 
     const newRoundSentCount = (twilioBatching.roundSentCount ?? 0) + queuedCount;
@@ -149,7 +186,7 @@ export class TwilioBatchingService {
     const due: Array<{ sessionCuid: string; transportType: TransportType; scheduledCount: number }> = [];
 
     for (const session of rows) {
-      const tb = (session.options as Record<string, any>)?.twilioBatching as
+      const tb = (session.options as Record<string, any>)?.['twilioBatching'] as
         | TwilioBatchingState
         | undefined;
 

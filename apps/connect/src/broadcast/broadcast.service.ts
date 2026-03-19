@@ -284,6 +284,7 @@ export class BroadcastService {
       sessionCuid,
       (session.options as Record<string, any>) ?? {},
       batchSize,
+      session.Transport.cuid,
     );
     if (batchGuard.halt) return;
     batchSize = batchGuard.batchSize;
