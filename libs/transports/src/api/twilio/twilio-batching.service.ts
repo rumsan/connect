@@ -209,6 +209,12 @@ export class TwilioBatchingService {
       scheduledCount: number;
     }> = [];
 
+    // Track how much quota has already been reserved for each transport within
+    // this single cron tick.  We query the DB once per transport and then
+    // accumulate reservations in-memory so concurrent sessions sharing the
+    // same Twilio account cannot all race past the limit.
+    const reservedThisTick = new Map<string, number>();
+
     for (const session of rows) {
       const tb = (session.options as Record<string, any>)?.[
         'twilioBatching'
@@ -228,6 +234,46 @@ export class TwilioBatchingService {
       });
       if (scheduledCount === 0) continue;
 
+      const transportCuid = session.Transport.cuid;
+      const dailyLimit = tb.dailyLimit;
+      const intervalHours = tb.intervalHours ?? 24;
+
+      // Fetch rolling sent count from DB once per transport per tick.
+      if (!reservedThisTick.has(transportCuid)) {
+        const dbCount = await this.getRollingSentCountForTransport(
+          transportCuid,
+          intervalHours,
+        );
+        reservedThisTick.set(transportCuid, dbCount);
+      }
+
+      const alreadyUsed = reservedThisTick.get(transportCuid)!;
+      const remaining = dailyLimit - alreadyUsed;
+
+      if (remaining <= 0) {
+        // Quota already exhausted — defer this session to the next interval.
+        const newNextRoundAt = new Date(
+          now.getTime() + intervalHours * 3_600_000,
+        ).toISOString();
+        await this.prisma.session.update({
+          where: { cuid: session.cuid },
+          data: {
+            options: {
+              ...((session.options as Record<string, any>) ?? {}),
+              twilioBatching: { ...tb, nextRoundAt: newNextRoundAt },
+            },
+          },
+        });
+        this.logger.log(
+          `Twilio quota exhausted for transport ${transportCuid}, deferring session ${session.cuid} to ${newNextRoundAt}`,
+        );
+        continue;
+      }
+
+      // Reserve the slots this session will consume (capped at remaining quota).
+      const reservedCount = Math.min(scheduledCount, remaining);
+      reservedThisTick.set(transportCuid, alreadyUsed + reservedCount);
+
       await this.prisma.session.update({
         where: { cuid: session.cuid },
         data: {
@@ -246,7 +292,7 @@ export class TwilioBatchingService {
       due.push({
         sessionCuid: session.cuid,
         transportType: session.Transport.type as TransportType,
-        scheduledCount,
+        scheduledCount: reservedCount,
       });
     }
 
