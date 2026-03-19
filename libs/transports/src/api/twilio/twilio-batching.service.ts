@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BroadcastStatus, SessionStatus, TransportType } from '@rumsan/connect/types';
+import {
+  BroadcastStatus,
+  SessionStatus,
+  TransportType,
+} from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
 import { Transport } from '@prisma/client';
 
@@ -28,7 +32,8 @@ export class TwilioBatchingService {
   private getTwilioDailyLimit(transport: Transport): number {
     const meta = (transport.config as Record<string, any>)?.['meta'];
     const fromConfig = Number(meta?.dailyLimit);
-    if (Number.isFinite(fromConfig) && fromConfig > 0) return Math.floor(fromConfig);
+    if (Number.isFinite(fromConfig) && fromConfig > 0)
+      return Math.floor(fromConfig);
     const fromEnv = Number(process.env['TWILIO_DAILY_LIMIT']);
     if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
     return 500;
@@ -106,14 +111,20 @@ export class TwilioBatchingService {
       return { halt: false, batchSize: requestedBatchSize };
     }
 
-    const { dailyLimit, roundSentCount = 0, intervalHours = 24 } = twilioBatching;
+    const {
+      dailyLimit,
+      roundSentCount = 0,
+      intervalHours = 24,
+    } = twilioBatching;
     const effectiveSentCount = transportCuid
       ? await this.getRollingSentCountForTransport(transportCuid, intervalHours)
       : roundSentCount;
 
     if (effectiveSentCount >= dailyLimit) {
       if (!twilioBatching.nextRoundAt) {
-        const nextRoundAt = new Date(Date.now() + intervalHours * 3_600_000).toISOString();
+        const nextRoundAt = new Date(
+          Date.now() + intervalHours * 3_600_000,
+        ).toISOString();
         await this.prisma.session.update({
           where: { cuid: sessionCuid },
           data: {
@@ -152,10 +163,13 @@ export class TwilioBatchingService {
       | undefined;
     if (!twilioBatching?.enabled) return;
 
-    const newRoundSentCount = (twilioBatching.roundSentCount ?? 0) + queuedCount;
+    const newRoundSentCount =
+      (twilioBatching.roundSentCount ?? 0) + queuedCount;
     const limitReached = newRoundSentCount >= twilioBatching.dailyLimit;
     const nextRoundAt = limitReached
-      ? new Date(Date.now() + (twilioBatching.intervalHours ?? 24) * 3_600_000).toISOString()
+      ? new Date(
+          Date.now() + (twilioBatching.intervalHours ?? 24) * 3_600_000,
+        ).toISOString()
       : twilioBatching.nextRoundAt;
 
     await this.prisma.session.update({
@@ -174,7 +188,13 @@ export class TwilioBatchingService {
     });
   }
 
-  async findDueSessionsAndReset(now = new Date()): Promise<Array<{ sessionCuid: string; transportType: TransportType; scheduledCount: number }>> {
+  async findDueSessionsAndReset(now = new Date()): Promise<
+    Array<{
+      sessionCuid: string;
+      transportType: TransportType;
+      scheduledCount: number;
+    }>
+  > {
     const rows = await this.prisma.session.findMany({
       where: {
         options: { path: ['twilioBatching', 'enabled'], equals: true },
@@ -183,12 +203,16 @@ export class TwilioBatchingService {
       include: { Transport: true },
     });
 
-    const due: Array<{ sessionCuid: string; transportType: TransportType; scheduledCount: number }> = [];
+    const due: Array<{
+      sessionCuid: string;
+      transportType: TransportType;
+      scheduledCount: number;
+    }> = [];
 
     for (const session of rows) {
-      const tb = (session.options as Record<string, any>)?.['twilioBatching'] as
-        | TwilioBatchingState
-        | undefined;
+      const tb = (session.options as Record<string, any>)?.[
+        'twilioBatching'
+      ] as TwilioBatchingState | undefined;
 
       if (!tb?.nextRoundAt) continue;
 
