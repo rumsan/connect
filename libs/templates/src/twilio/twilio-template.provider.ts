@@ -16,6 +16,22 @@ import { ProviderConfigUtil } from '../utils/provider-config.util';
 export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
   private readonly baseUrl = 'https://content.twilio.com/v1';
   private readonly httpClient: any;
+  private readonly supportedMediaExtensions = [
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.gif',
+    '.webp',
+    '.mp4',
+    '.3gp',
+    '.pdf',
+    '.doc',
+    '.docx',
+    '.xls',
+    '.xlsx',
+    '.ppt',
+    '.pptx',
+  ];
 
   constructor(
     config: TemplateProviderConfig,
@@ -42,6 +58,9 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
         if (!dto.media || dto.media.length === 0) {
           throw new Error('Media templates require media URLs');
         }
+
+        this.validateMediaUrlsForApproval(dto.media);
+
         templateType = {
           'twilio/media': {
             body: dto.body,
@@ -82,14 +101,63 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
         providerResponse: response,
       };
     } catch (error: any) {
-      this.logger.error(`Failed to create template: ${error.message}`, error);
+      const providerError = this.extractProviderErrorMessage(error);
+      this.logger.error(`Failed to create template: ${providerError}`, error);
       throw new TemplateProviderApiException(
         'twilio',
-        `Failed to create template: ${error.message}`,
+        `Failed to create template: ${providerError}`,
         error.response?.status,
         error,
       );
     }
+  }
+
+  private validateMediaUrlsForApproval(mediaUrls: string[]): void {
+    const invalidUrls: string[] = [];
+
+    for (const mediaUrl of mediaUrls) {
+      let pathname = '';
+      try {
+        const parsed = new URL(mediaUrl);
+        pathname = parsed.pathname.toLowerCase();
+      } catch {
+        invalidUrls.push(mediaUrl);
+        continue;
+      }
+
+      const hasSupportedExtension = this.supportedMediaExtensions.some((ext) =>
+        pathname.endsWith(ext),
+      );
+
+      if (!hasSupportedExtension) {
+        invalidUrls.push(mediaUrl);
+      }
+    }
+
+    if (invalidUrls.length > 0) {
+      throw new Error(
+        `Media URL sample must be a public URL with a valid file extension for WhatsApp approval. Invalid URLs: ${invalidUrls.join(', ')}`,
+      );
+    }
+  }
+
+  private extractProviderErrorMessage(error: any): string {
+    const data = error?.response?.data;
+
+    if (!data) {
+      return error?.message ?? 'Unknown provider error';
+    }
+
+    if (typeof data === 'string') {
+      return `${error?.message ?? 'Provider error'} | ${data}`;
+    }
+
+    if (typeof data === 'object') {
+      const details = data.message ?? data.detail ?? JSON.stringify(data);
+      return `${error?.message ?? 'Provider error'} | ${details}`;
+    }
+
+    return error?.message ?? 'Unknown provider error';
   }
 
   /**
@@ -118,10 +186,11 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
       await this.httpClientService.post(this.httpClient, url, payload);
       this.logger.log(`Approval requested successfully for: ${externalId}`);
     } catch (error: any) {
-      this.logger.error(`Failed to request approval: ${error.message}`, error);
+      const providerError = this.extractProviderErrorMessage(error);
+      this.logger.error(`Failed to request approval: ${providerError}`, error);
       throw new TemplateProviderApiException(
         'twilio',
-        `Failed to request approval: ${error.message}`,
+        `Failed to request approval: ${providerError}`,
         error.response?.status,
         error,
       );
@@ -154,13 +223,14 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
         providerData: response,
       };
     } catch (error: any) {
+      const providerError = this.extractProviderErrorMessage(error);
       this.logger.error(
-        `Failed to get approval status: ${error.message}`,
+        `Failed to get approval status: ${providerError}`,
         error,
       );
       throw new TemplateProviderApiException(
         'twilio',
-        `Failed to get approval status: ${error.message}`,
+        `Failed to get approval status: ${providerError}`,
         error.response?.status,
         error,
       );
@@ -178,13 +248,14 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
       await this.httpClientService.delete(this.httpClient, url);
       this.logger.log(`Template deleted successfully: ${externalId}`);
     } catch (error: any) {
+      const providerError = this.extractProviderErrorMessage(error);
       this.logger.error(
-        `Failed to delete template ${externalId}: ${error.message}`,
+        `Failed to delete template ${externalId}: ${providerError}`,
         error,
       );
       throw new TemplateProviderApiException(
         'twilio',
-        `Failed to delete template: ${error.message}`,
+        `Failed to delete template: ${providerError}`,
         error.response?.status,
         error,
       );
@@ -234,10 +305,11 @@ export class TwilioWhatsAppTemplateProvider extends BaseTemplateProvider {
 
       return templates;
     } catch (error: any) {
-      this.logger.error(`Failed to fetch templates: ${error.message}`, error);
+      const providerError = this.extractProviderErrorMessage(error);
+      this.logger.error(`Failed to fetch templates: ${providerError}`, error);
       throw new TemplateProviderApiException(
         'twilio',
-        `Failed to fetch templates: ${error.message}`,
+        `Failed to fetch templates: ${providerError}`,
         error.response?.status,
         error,
       );

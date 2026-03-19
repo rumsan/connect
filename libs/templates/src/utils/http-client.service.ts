@@ -47,9 +47,14 @@ export class TemplateHttpClientService {
     client.interceptors.response.use(
       (response) => response,
       (error: AxiosError) => {
+        const responseData =
+          typeof error.response?.data === 'string'
+            ? error.response.data
+            : JSON.stringify(error.response?.data ?? {});
         this.logger.error(
-          `API Error: ${error.response?.status} ${error.response?.statusText}`,
-          error.response?.data,
+          `API Error: ${error.response?.status ?? 'unknown'} ${
+            error.response?.statusText ?? ''
+          } | ${responseData}`,
         );
         return Promise.reject(error);
       },
