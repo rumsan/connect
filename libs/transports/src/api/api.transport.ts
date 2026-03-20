@@ -1,13 +1,25 @@
 import { Injectable } from '@nestjs/common';
 
 import { Logger } from '@nestjs/common';
-import { IService, Message, TransportApiConfig } from '@rumsan/connect/types';
+import {
+  BroadcastStatus,
+  IService,
+  mapTwilioMessageStatusToBroadcastStatus,
+  Message,
+  normalizeTwilioMessageStatus,
+  TransportApiConfig,
+} from '@rumsan/connect/types';
 import axios, { AxiosInstance } from 'axios';
 import {
   extractBulkDataTemplate,
   replaceBulkData,
   replacePlaceholders,
 } from '../utils';
+
+type ApiSendOutcome = {
+  status: BroadcastStatus;
+  details: Record<string, any>;
+};
 
 @Injectable()
 export class ApiTransport implements IService {
@@ -88,5 +100,37 @@ export class ApiTransport implements IService {
       )}`,
     );
     return res.data;
+  }
+
+  normalizeSendOutcome(details: Record<string, any>): ApiSendOutcome {
+    if (!this.isTwilioProvider()) {
+      return {
+        status: BroadcastStatus.SUCCESS,
+        details,
+      };
+    }
+
+    const providerStatus = normalizeTwilioMessageStatus(details?.['status']);
+
+    return {
+      status: providerStatus
+        ? mapTwilioMessageStatusToBroadcastStatus(providerStatus)
+        : BroadcastStatus.PENDING,
+      details: {
+        ...details,
+        provider: 'twilio',
+        providerStatus:
+          providerStatus ?? details?.['providerStatus'] ?? details?.['status'],
+        providerMessageSid:
+          details?.['sid'] ??
+          details?.['messageSid'] ??
+          details?.['MessageSid'] ??
+          details?.['SmsSid'],
+      },
+    };
+  }
+
+  private isTwilioProvider(): boolean {
+    return this.config?.['meta']?.provider === 'twilio';
   }
 }

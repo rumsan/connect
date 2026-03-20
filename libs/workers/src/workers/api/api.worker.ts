@@ -82,6 +82,9 @@ export class ApiWorker extends TransportWorker {
         addresses,
         session.message as Message,
       );
+      const outcome = this.transport.normalizeSendOutcome(result);
+      status = outcome.status;
+      result = outcome.details;
     } catch (e: any) {
       this.logger.error(
         `Failed to send bulk broadcast for session: ${jobData.sessionId}`,
@@ -120,9 +123,9 @@ export class ApiWorker extends TransportWorker {
         broadcastJob.address,
         session.message as Message,
       );
-
-      broadcastLog.status = BroadcastStatus.SUCCESS;
-      broadcastLog.details = res;
+      const outcome = this.transport.normalizeSendOutcome(res);
+      broadcastLog.status = outcome.status;
+      broadcastLog.details = outcome.details;
     } catch (e: any) {
       this.logger.error(
         `Failed to send broadcast for session: ${session.cuid}, address: ${broadcastJob.address}`,
