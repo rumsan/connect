@@ -322,8 +322,10 @@ export class BroadcastService {
       });
     }
 
+    const transportCapabilities =
+      (session.Transport.config as any)?.meta?.capabilities ?? [];
     // Validate phone numbers for API transport and mark invalids as failed
-    if (session.Transport.type === TransportType.API) {
+    if (transportCapabilities.includes('PHONE_NUMBER_VALIDATION')) {
       const validBroadcasts: Broadcast[] = [];
       const invalidBroadcastIds: string[] = [];
       const invalidBroadcasts: Broadcast[] = [];
