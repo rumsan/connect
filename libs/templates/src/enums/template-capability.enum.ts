@@ -3,6 +3,7 @@ export enum TemplateCapability {
   MEDIA_SUPPORT = 'MEDIA_SUPPORT',
   MULTI_LANGUAGE = 'MULTI_LANGUAGE',
   PARAMETER_VALIDATION = 'PARAMETER_VALIDATION',
+  PHONE_NUMBER_VALIDATION = 'PHONE_NUMBER_VALIDATION',
 }
 
 export interface TransportCapabilities {
