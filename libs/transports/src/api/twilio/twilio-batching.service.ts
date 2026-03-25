@@ -67,6 +67,7 @@ export class TwilioBatchingService {
           ],
         },
         transport: transportCuid,
+        attempts: { gt: 0 },
       },
     });
   }
