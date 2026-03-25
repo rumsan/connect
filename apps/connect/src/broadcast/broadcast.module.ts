@@ -14,6 +14,7 @@ import { BroadcastService } from './broadcast.service';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
 import { RedisZsetSchedulerWorker } from './redis-zset-scheduler.worker';
 import { ScheduledWindowWorker } from './scheduled-window.worker';
+import { BroadcastPriceWorker } from './broadcast-price.worker';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { ScheduledWindowWorker } from './scheduled-window.worker';
     ScheduledWindowWorker,
     TwilioBatchingService,
     TwilioBatchingWorker,
+    BroadcastPriceWorker,
   ],
   exports: [
     BroadcastService,

@@ -335,11 +335,25 @@ export class BroadcastService {
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();
 
-      await this.retryBroadcasts(
-        sessionCuid,
-        session.Transport.type as TransportType,
-        true,
-      );
+      broadcasts = await this.prisma.broadcast.findMany({
+        where: {
+          session: sessionCuid,
+          status: {
+            in: [BroadcastStatus.FAIL],
+          },
+        },
+      });
+      // If there are failed broadcasts, attempt retries
+      if (broadcasts.length > 0) {
+        this.logger.log(
+          `Session ${sessionCuid} has failed broadcasts, scheduling retries.`,
+        );
+        await this.retryBroadcasts(
+          sessionCuid,
+          session.Transport.type as TransportType,
+          true,
+        );
+      }
     }
   }
 

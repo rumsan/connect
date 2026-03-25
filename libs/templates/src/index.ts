@@ -5,6 +5,7 @@ export * from './interfaces/template-provider.interface';
 // Providers
 export * from './twilio/twilio-template.provider';
 export * from './twilio/twilio.module';
+export * from './twilio/twilio.service';
 
 // Factory
 export * from './factory/template-provider.factory';
@@ -24,4 +25,3 @@ export * from './sync/template-sync.service';
 
 // Enums
 export * from './enums/template-capability.enum';
-
