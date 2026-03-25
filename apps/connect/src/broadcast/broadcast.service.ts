@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { isValidPhoneNumber } from 'libphonenumber-js';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -290,7 +291,6 @@ export class BroadcastService {
     batchSize = batchGuard.batchSize;
 
     let broadcasts: Broadcast[] = [];
-
     if (batchSize > 0) {
       broadcasts = await this.prisma.broadcast.findMany({
         where: {
@@ -302,10 +302,10 @@ export class BroadcastService {
         },
         orderBy: [
           {
-            status: 'asc', // Optional: Order by status
+            status: 'asc',
           },
           {
-            createdAt: 'asc', // Optional: Order by creation date within each status
+            createdAt: 'asc',
           },
         ],
         take: batchSize,
@@ -322,15 +322,62 @@ export class BroadcastService {
       });
     }
 
+    const transportCapabilities =
+      (session.Transport.config as any)?.meta?.capabilities ?? [];
+    // Validate phone numbers for API transport and mark invalids as failed
+    if (transportCapabilities.includes('PHONE_NUMBER_VALIDATION')) {
+      const validBroadcasts: Broadcast[] = [];
+      const invalidBroadcastIds: string[] = [];
+      const invalidBroadcasts: Broadcast[] = [];
+      for (const b of broadcasts) {
+        // Remove whatsapp: prefix if present
+        let phone = b.address.startsWith('whatsapp:')
+          ? b.address.replace('whatsapp:', '')
+          : b.address;
+        if (isValidPhoneNumber(phone)) {
+          validBroadcasts.push(b);
+        } else {
+          invalidBroadcastIds.push(b.cuid);
+          invalidBroadcasts.push(b);
+        }
+      }
+      if (invalidBroadcastIds.length > 0) {
+        await this.prisma.broadcast.updateMany({
+          where: { cuid: { in: invalidBroadcastIds } },
+          data: {
+            status: BroadcastStatus.FAIL,
+            isComplete: true,
+            disposition: {
+              error: 'Invalid phone number.',
+              code: 'INVALID_PHONE',
+            },
+          },
+        });
+        await this.prisma.broadcastLog.createMany({
+          data: invalidBroadcasts.map((b) => ({
+            cuid: createId(),
+            broadcast: b.cuid,
+            session: session.cuid,
+            app: session.Transport.app,
+            status: BroadcastStatus.FAIL,
+            attempt: b.attempts + 1,
+            details: {
+              error: 'Invalid phone number.',
+              code: 'INVALID_PHONE',
+            },
+          })),
+        });
+      }
+      broadcasts = validBroadcasts;
+    }
+
     if (broadcasts.length > 0) {
       await this._addToQueue(session as Session, session.Transport, broadcasts);
-
       await this.twilioBatchingService.recordQueuedBatch(
         sessionCuid,
         (session.options as Record<string, any>) ?? {},
         broadcasts.length,
       );
-
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();
