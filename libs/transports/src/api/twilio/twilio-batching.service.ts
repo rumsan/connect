@@ -56,7 +56,7 @@ export class TwilioBatchingService {
   ): Promise<number> {
     const since = new Date(Date.now() - intervalHours * 3_600_000);
 
-    return this.prisma.broadcastLog.count({
+    return this.prisma.broadcast.count({
       where: {
         createdAt: { gte: since },
         status: {
@@ -66,9 +66,7 @@ export class TwilioBatchingService {
             BroadcastStatus.FAIL,
           ],
         },
-        Broadcast: {
-          transport: transportCuid,
-        },
+        transport: transportCuid,
       },
     });
   }
