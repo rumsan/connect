@@ -41,6 +41,8 @@ export const BROADCAST_CONSTANTS = {
    * Default Redis key for scheduler processing list
    */
   DEFAULT_SCHEDULER_PROCESSING_KEY: 'connect:broadcast:schedule:processing',
+
+  DEFAULT_BROADCAST_PRICE_UPDATE_WINDOW_MILLISECONDS: 3600000, // 1 hour
 } as const;
 
 /**
