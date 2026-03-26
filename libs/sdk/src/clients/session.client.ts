@@ -1,8 +1,13 @@
 import { formatResponse } from '@rumsan/sdk/utils';
 import { AxiosInstance, AxiosRequestConfig } from 'axios';
-import { Broadcast, BroadcastCount, BroadcastLog, ListBroadcast, Session } from '../types';
+import {
+  Broadcast,
+  BroadcastCount,
+  BroadcastLog,
+  ListBroadcast,
+  Session,
+} from '../types';
 import { ApiClient } from './api.client';
-
 
 export class SessionClient {
   private _client: AxiosInstance;
@@ -20,41 +25,61 @@ export class SessionClient {
     return formatResponse<Session[]>(response);
   }
 
-  async listBroadcasts(cuid: string, params: ListBroadcast, config?: AxiosRequestConfig) {
+  async listBroadcasts(
+    cuid: string,
+    params: ListBroadcast,
+    config?: AxiosRequestConfig,
+  ) {
     const response = await this._client.get(
       `${this._prefix}/${cuid}/broadcasts`,
       {
         ...config,
-        params
-      }
+        params,
+      },
     );
     return formatResponse<Broadcast[]>(response);
+  }
+
+  async getLogsForSessions(
+    data: { sessions: string[] },
+    config?: AxiosRequestConfig,
+  ) {
+    const response = await this._client.post(
+      `${this._prefix}/logs-bulk`,
+      data,
+      config,
+    );
+    return formatResponse<BroadcastLog[]>(response);
   }
 
   async listLogs(cuid: string, config?: AxiosRequestConfig) {
     const response = await this._client.get(
       `${this._prefix}/${cuid}/logs`,
-      config
+      config,
     );
     return formatResponse<BroadcastLog[]>(response);
   }
 
   async broadcastCount(
     data: { sessions: string[] },
-    config?: AxiosRequestConfig
+    config?: AxiosRequestConfig,
   ) {
     const response = await this._client.post(
       `${this._prefix}/broadcast-counts`,
       data,
-      config
+      config,
     );
     return formatResponse<BroadcastCount>(response);
   }
 
-  async retryIncomplete(cuid: string, includeFailed?: boolean, config?: AxiosRequestConfig) {
+  async retryIncomplete(
+    cuid: string,
+    includeFailed?: boolean,
+    config?: AxiosRequestConfig,
+  ) {
     const response = await this._client.get(
       `${this._prefix}/${cuid}/trigger?include_failed=${includeFailed}`,
-      config
+      config,
     );
     return formatResponse<{
       isComplete: boolean;
