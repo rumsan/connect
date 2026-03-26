@@ -9,7 +9,7 @@ import { SessionService } from './session.service';
 @Controller('sessions')
 @ApiTags('Sessions')
 export class SessionController {
-  constructor(private readonly sessionService: SessionService) { }
+  constructor(private readonly sessionService: SessionService) {}
 
   @Get()
   @ApiOperation({
@@ -17,6 +17,17 @@ export class SessionController {
   })
   findAll(@AppId() appId: string, @Query() dto: ListSessionDto) {
     return this.sessionService.findAll(appId, dto);
+  }
+
+  @Post('logs-bulk')
+  @ApiOperation({
+    summary: 'Get all broadcast logs for multiple sessions',
+  })
+  async getLogsForSessions(@AppId() appId: string, @Body() sessions: string[]) {
+    if (!Array.isArray(sessions)) {
+      throw new Error('sessions must be an array of strings');
+    }
+    return this.sessionService.getLogsForSessions(appId, sessions);
   }
 
   @Get(':cuid')
@@ -59,7 +70,8 @@ export class SessionController {
 
   @Post('broadcast-counts')
   @ApiOperation({
-    summary: 'Get the count of broadcasts grouped by status for multiple sessions',
+    summary:
+      'Get the count of broadcasts grouped by status for multiple sessions',
   })
   async getBroadcastCountByStatuses(@Body('sessions') sessions: string[]) {
     if (!Array.isArray(sessions)) {

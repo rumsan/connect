@@ -16,7 +16,7 @@ export class SessionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly broadcastService: BroadcastService,
-  ) { }
+  ) {}
 
   async triggerBroadcast(sessionCuid: string, retryFailed?: boolean) {
     this.logger.log(`Triggering broadcast for session: ${sessionCuid}`);
@@ -50,7 +50,7 @@ export class SessionService {
       {
         where: {
           app: appId,
-          xref: dto.xref
+          xref: dto.xref,
         },
         orderBy,
       },
@@ -88,19 +88,19 @@ export class SessionService {
           xref: dto.xref,
           ...(dto.address
             ? {
-              address: {
-                contains: dto.address,
-                mode: 'insensitive',
-              },
-            }
+                address: {
+                  contains: dto.address,
+                  mode: 'insensitive',
+                },
+              }
             : {}),
           ...(dto.startDate && dto.endDate
             ? {
-              createdAt: {
-                gte: new Date(dto.startDate),
-                lte: new Date(dto.endDate),
-              },
-            }
+                createdAt: {
+                  gte: new Date(dto.startDate),
+                  lte: new Date(dto.endDate),
+                },
+              }
             : {}),
         },
         orderBy,
@@ -110,6 +110,25 @@ export class SessionService {
         perPage: dto.perPage,
       },
     );
+  }
+
+  /**
+   * Get all broadcast logs for a list of session IDs
+   */
+  async getLogsForSessions(
+    appId: string,
+    sessionCuids: string[],
+  ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
+    this.logger.log(
+      `Getting broadcast logs for sessions: ${sessionCuids.join(', ')}`,
+    );
+    return paginate(this.prisma.broadcast, {
+      where: {
+        app: appId,
+        session: { in: sessionCuids },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   listLogs(
@@ -133,8 +152,12 @@ export class SessionService {
     );
   }
 
-  async getBroadcastCountByStatuses(sessionCuids: string[]): Promise<Record<BroadcastStatus | 'TOTAL', number>> {
-    this.logger.log(`Getting broadcast counts for sessions: ${sessionCuids.join(', ')}`);
+  async getBroadcastCountByStatuses(
+    sessionCuids: string[],
+  ): Promise<Record<BroadcastStatus | 'TOTAL', number>> {
+    this.logger.log(
+      `Getting broadcast counts for sessions: ${sessionCuids.join(', ')}`,
+    );
     const counts = await this.prisma.broadcast.groupBy({
       by: ['status'],
       where: {
