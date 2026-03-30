@@ -51,7 +51,7 @@ export class TemplateService {
     }
 
     // Save in DB — auto-approve if no verification required
-    const data: Prisma.TemplateUncheckedCreateInput = {
+    const data: Prisma.TemplateUncheckedCreateInput & { media?: string[] } = {
       app: transport.app,
       transportId: transport.cuid,
       name: createTemplateDto.name,
