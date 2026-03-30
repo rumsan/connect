@@ -381,26 +381,27 @@ export class BroadcastService {
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();
+      // TODO:DON'T RETRY COMPLETE SESSION, RETRY ONLY FAILED BROADCASTS
 
-      broadcasts = await this.prisma.broadcast.findMany({
-        where: {
-          session: sessionCuid,
-          status: {
-            in: [BroadcastStatus.FAIL],
-          },
-        },
-      });
-      // If there are failed broadcasts, attempt retries
-      if (broadcasts.length > 0) {
-        this.logger.log(
-          `Session ${sessionCuid} has failed broadcasts, scheduling retries.`,
-        );
-        await this.retryBroadcasts(
-          sessionCuid,
-          session.Transport.type as TransportType,
-          true,
-        );
-      }
+      // broadcasts = await this.prisma.broadcast.findMany({
+      //   where: {
+      //     session: sessionCuid,
+      //     status: {
+      //       in: [BroadcastStatus.FAIL],
+      //     },
+      //   },
+      // });
+      // // If there are failed broadcasts, attempt retries
+      // if (broadcasts.length > 0) {
+      //   this.logger.log(
+      //     `Session ${sessionCuid} has failed broadcasts, scheduling retries.`,
+      //   );
+      //   await this.retryBroadcasts(
+      //     sessionCuid,
+      //     session.Transport.type as TransportType,
+      //     true,
+      //   );
+      // }
     }
   }
 
