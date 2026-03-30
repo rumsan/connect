@@ -120,15 +120,19 @@ export class SessionService {
     sessionCuids: string[],
   ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
     this.logger.log(
-      `Getting broadcast logs for sessions: ${sessionCuids.join(', ')}`,
+      `Getting broadcast logs for ${sessionCuids.length} session(s)`,
     );
-    return paginate(this.prisma.broadcast, {
-      where: {
-        app: appId,
-        session: { in: sessionCuids },
+    return paginate(
+      this.prisma.broadcast,
+      {
+        where: {
+          app: appId,
+          session: { in: sessionCuids },
+        },
+        orderBy: { createdAt: 'desc' },
       },
-      orderBy: { createdAt: 'desc' },
-    });
+      { page: 1, perPage: 100 },
+    );
   }
 
   listLogs(
