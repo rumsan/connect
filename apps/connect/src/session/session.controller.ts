@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AppId } from '@rumsan/app';
 import { ListBroadcastDto } from '../broadcast/dto/broadcast.dto';
@@ -23,9 +31,13 @@ export class SessionController {
   @ApiOperation({
     summary: 'Get all broadcast logs for multiple sessions',
   })
-  async getLogsForSessions(@AppId() appId: string, @Body() sessions: string[]) {
+  async getLogsForSessions(
+    @AppId() appId: string,
+    @Body() body: string[] | { sessions?: string[] },
+  ) {
+    const sessions = Array.isArray(body) ? body : body?.sessions;
     if (!Array.isArray(sessions)) {
-      throw new Error('sessions must be an array of strings');
+      throw new BadRequestException('sessions must be an array of strings');
     }
     return this.sessionService.getLogsForSessions(appId, sessions);
   }
