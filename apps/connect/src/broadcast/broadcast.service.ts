@@ -377,6 +377,7 @@ export class BroadcastService {
         sessionCuid,
         (session.options as Record<string, any>) ?? {},
         broadcasts.length,
+        session.Transport.cuid,
       );
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
