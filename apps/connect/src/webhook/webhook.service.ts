@@ -34,9 +34,17 @@ export class WebhookService {
 
     const rawProviderStatus = body.MessageStatus ?? body.SmsStatus;
     const providerStatus = normalizeTwilioMessageStatus(rawProviderStatus);
-    const groupedStatus = providerStatus
-      ? mapTwilioMessageStatusToBroadcastStatus(providerStatus)
-      : BroadcastStatus.PENDING;
+
+    // If Twilio sends an ErrorCode, the message failed regardless of what
+    // MessageStatus says (e.g. it can arrive as "queued" alongside an error).
+    const hasErrorCode = !!body.ErrorCode;
+    const groupedStatus =
+      hasErrorCode &&
+      (!providerStatus || !['delivered', 'read'].includes(providerStatus))
+        ? BroadcastStatus.FAIL
+        : providerStatus
+        ? mapTwilioMessageStatusToBroadcastStatus(providerStatus)
+        : BroadcastStatus.PENDING;
 
     const broadcast = await this.findBroadcastByProviderMessageSid(
       providerMessageSid,
@@ -50,12 +58,19 @@ export class WebhookService {
         processed: false,
       };
     }
-
     const attempt = Math.max(
       broadcast.attempts,
       broadcast.Logs[0]?.attempt ?? 0,
       1,
     );
+
+    const errorCode = body.ErrorCode ? String(body.ErrorCode) : null;
+    const TWILIO_ERROR_MESSAGES: Record<string, string> = {
+      '63049': 'Meta chose not to deliver this WhatsApp marketing message',
+    };
+    const errorMessage = errorCode
+      ? TWILIO_ERROR_MESSAGES[errorCode] ?? `Twilio error code: ${errorCode}`
+      : null;
 
     const disposition = {
       ...((broadcast.disposition as Record<string, any>) ?? {}),
@@ -67,6 +82,7 @@ export class WebhookService {
       messagingServiceSid: body.MessagingServiceSid ?? null,
       lastWebhookAt: new Date().toISOString(),
       lastWebhookPayload: body,
+      ...(errorCode ? { errorCode, error: errorMessage } : {}),
     };
 
     await this.prisma.$transaction(async (tx) => {
@@ -79,7 +95,9 @@ export class WebhookService {
           status: groupedStatus,
           attempt,
           details: disposition,
-          notes: providerStatus
+          notes: errorMessage
+            ? `Twilio error ${errorCode}: ${errorMessage}`
+            : providerStatus
             ? `Twilio status callback: ${providerStatus}`
             : 'Twilio status callback',
         },
