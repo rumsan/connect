@@ -58,6 +58,8 @@ export type ConfigMeta = {
   apiSecret?: string;
   accountSid?: string;
   capabilities?: string[];
+  addressPrefix?: string;
+  stripNonNumeric?: boolean;
 };
 
 export type TransportEchoConfig = {
