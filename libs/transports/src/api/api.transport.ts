@@ -38,7 +38,18 @@ export class ApiTransport implements IService {
     });
   }
 
+  private formatAddress(address: string): string {
+    let formatted = this.config?.meta?.stripNonNumeric
+      ? address.replace(/\D/g, '')
+      : address.replace(/\s+/g, '');
+    if (this.config?.meta?.addressPrefix) {
+      formatted = `${this.config.meta.addressPrefix}${formatted}`;
+    }
+    return formatted;
+  }
+
   async send(address: string, message: Message) {
+    address = this.formatAddress(address);
     this.logger.debug(
       `Sending message to ${address}: ${JSON.stringify(message)}`,
     );
@@ -84,7 +95,8 @@ export class ApiTransport implements IService {
     );
     const bulkDataTpl = extractBulkDataTemplate(this.config);
 
-    const msgContent = addresses.map((address) => {
+    const msgContent = addresses.map((rawAddress) => {
+      const address = this.formatAddress(rawAddress);
       message = replacePlaceholders(message, { address });
       return replacePlaceholders(bulkDataTpl, {
         message: message,
