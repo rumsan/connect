@@ -1,4 +1,4 @@
-name: Main CI/CD
+name: EL CI/CD
 on:
   workflow_dispatch:
 
