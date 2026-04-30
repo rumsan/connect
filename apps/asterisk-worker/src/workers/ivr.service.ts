@@ -123,27 +123,43 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       this.client = await ari.connect(server, user, password);
       await this.client.start(appName);
 
+      // Confirm Asterisk actually registered our Stasis app on this WebSocket.
+      // If the WS opened but Asterisk hasn't bound the app, fail fast so the
+      // reconnect loop retries instead of leaving originate calls broken.
+      try {
+        await this.client.applications.get({ applicationName: appName });
+      } catch (err) {
+        throw new Error(
+          `Stasis app '${appName}' did not register with Asterisk: ${(err as Error).message}`,
+        );
+      }
+
       this.isConnected = true;
 
-      // ari-client has built-in WebSocket retry (up to 10 attempts).
-      // Track connectivity so we can guard outbound calls during transient drops.
-      this.client.on('WebSocketReconnecting', () => {
+      // First sign of disconnect — don't wait for built-in retry to "succeed"
+      // with a stale Stasis registration on a restarted Asterisk. Tear down
+      // and do a full reconnect (new client + new start(appName)) which
+      // re-registers the app via a fresh WebSocket session.
+      this.client.once('WebSocketReconnecting', (err: Error) => {
+        if (this.isShuttingDown) return;
         this.isConnected = false;
-        this.logger.warn('ARI WebSocket reconnecting...');
+        this.logger.warn(
+          `ARI WebSocket dropped (${err?.message ?? 'unknown'}) — forcing full reconnect`,
+        );
+        this.scheduleReconnect(1);
+      });
+
+      // Fallback: if built-in retry exhausts before our scheduled reconnect runs.
+      this.client.once('WebSocketMaxRetries', () => {
+        if (this.isShuttingDown) return;
+        this.isConnected = false;
+        this.logger.error('ARI WebSocket max retries exceeded');
+        this.scheduleReconnect(1);
       });
 
       this.client.on('WebSocketConnected', () => {
         this.isConnected = true;
-        this.logger.log('ARI WebSocket reconnected');
-      });
-
-      // When ari-client exhausts all built-in retries, start our own reconnect loop.
-      this.client.once('WebSocketMaxRetries', () => {
-        this.isConnected = false;
-        this.logger.error(
-          'ARI WebSocket max retries exceeded — scheduling full reconnect',
-        );
-        this.scheduleReconnect(1);
+        this.logger.log('ARI WebSocket connected');
       });
 
       // Share the ARI client with dependent services
@@ -241,6 +257,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
   private scheduleReconnect(attempt: number) {
     if (this.isShuttingDown) return;
+    if (this.reconnectTimer) return;
     const delay = Math.min(5000 * attempt, 60_000);
     this.logger.warn(
       `ARI disconnected — reconnecting in ${delay / 1000}s (attempt ${attempt})`,
@@ -252,6 +269,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async attemptReconnect(attempt: number) {
+    this.reconnectTimer = null;
     if (this.isShuttingDown) return;
     this.logger.log(`Attempting ARI full reconnect (attempt ${attempt})`);
     try {
