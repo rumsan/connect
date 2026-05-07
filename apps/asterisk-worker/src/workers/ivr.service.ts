@@ -23,6 +23,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   private isConnected = false;
   private isShuttingDown = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private broadcastAddressPrefix: string | null;
 
   constructor(
     private readonly batchManager: BatchManager,
@@ -40,13 +41,28 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       audioPath: process.env.ASTERISK_AUDIO_PATH,
       callerId: process.env.ASTERISK_CALLER_ID,
     };
+    this.broadcastAddressPrefix = process.env.BROADCAST_ADDRESS_PREFIX || null;
     this.logger.log('IVRService initialized', this.config);
   }
 
   callEndpoint = (broadcastAddress: string) => {
+    // Strip +977 prefix if present
     if (broadcastAddress.startsWith('+977')) {
+      this.logger.log(`Stripping '+977' prefix from broadcast address: ${broadcastAddress}`);
       broadcastAddress = broadcastAddress.slice(4);
     }
+    if (broadcastAddress.startsWith('977')) {
+      this.logger.log(`Stripping '977' prefix from broadcast address: ${broadcastAddress}`);
+      broadcastAddress = broadcastAddress.slice(3);
+    }
+
+    // Apply broadcast address prefix if configured
+    if (this.broadcastAddressPrefix) {
+      this.logger.log(`Applying broadcast address prefix: ${this.broadcastAddressPrefix} to ${broadcastAddress}`);
+      broadcastAddress = `${this.broadcastAddressPrefix}${broadcastAddress}`;
+    }
+
+    this.logger.log(`Constructed call endpoint for broadcast address: ${broadcastAddress}`);
     return `${this.config.trunk}/${broadcastAddress}`;
   };
 
