@@ -1,8 +1,14 @@
-import { Body, Controller, Get, Header, Param, Post, Query, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Res } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AppId } from '@rumsan/app';
 import { BroadcastService } from './broadcast.service';
 import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
+
+type CsvReply = {
+  type: (contentType: string) => CsvReply;
+  header: (name: string, value: string) => CsvReply;
+  send: (payload: string) => void;
+};
 
 @Controller('broadcasts')
 @ApiTags('Broadcasts')
@@ -35,14 +41,17 @@ export class BroadcastController {
     summary: 'Download broadcasts as a CSV file filtered by appId and optionally sessionId',
   })
   @ApiQuery({ name: 'sessionId', required: false, description: 'Filter by session cuid' })
-  @Header('Content-Type', 'text/csv')
-  @Header('Content-Disposition', 'attachment; filename="broadcasts.csv"')
   async downloadCsv(
     @AppId() appId: string,
     @Query('sessionId') sessionId: string,
-  ): Promise<StreamableFile> {
+    @Res() reply: CsvReply,
+  ): Promise<null> {
     const csv = await this.broadcastService.generateBroadcastCsv(appId, sessionId);
-    return new StreamableFile(new Uint8Array(Buffer.from(csv)));
+    reply
+      .type('text/csv; charset=utf-8')
+      .header('Content-Disposition', 'attachment; filename="broadcasts.csv"')
+      .send(csv);
+    return null;
   }
 
   @Post('list-selected')
