@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Header, Param, Post, Query, StreamableFile } from '@nestjs/common';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AppId } from '@rumsan/app';
 import { BroadcastService } from './broadcast.service';
 import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
@@ -28,6 +28,21 @@ export class BroadcastController {
   @Get('status-count')
   getStatusCount(@AppId() appId: string) {
     return this.broadcastService.broadcastStatusCount(appId);
+  }
+
+  @Get('download')
+  @ApiOperation({
+    summary: 'Download broadcasts as a CSV file filtered by appId and optionally sessionId',
+  })
+  @ApiQuery({ name: 'sessionId', required: false, description: 'Filter by session cuid' })
+  @Header('Content-Type', 'text/csv')
+  @Header('Content-Disposition', 'attachment; filename="broadcasts.csv"')
+  async downloadCsv(
+    @AppId() appId: string,
+    @Query('sessionId') sessionId: string,
+  ): Promise<StreamableFile> {
+    const csv = await this.broadcastService.generateBroadcastCsv(appId, sessionId);
+    return new StreamableFile(new Uint8Array(Buffer.from(csv)));
   }
 
   @Post('list-selected')

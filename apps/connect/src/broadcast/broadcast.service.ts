@@ -15,6 +15,7 @@ import {
   SessionStatus,
   TransportType,
 } from '@rumsan/connect/types';
+import { createObjectCsvStringifier } from 'csv-writer';
 
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import {
@@ -549,6 +550,76 @@ export class BroadcastService {
         maxAttempts: Number(t.max_attempts || 0),
       },
     }));
+  }
+
+  async generateBroadcastCsv(appId: string, sessionId?: string): Promise<string> {
+    const broadcasts = await this.prisma.broadcast.findMany({
+      where: {
+        app: appId,
+        ...(sessionId ? { session: sessionId } : {}),
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const csvStringifier = createObjectCsvStringifier({
+      header: [
+        { id: 'id', title: 'id' },
+        { id: 'cuid', title: 'cuid' },
+        { id: 'app', title: 'app' },
+        { id: 'session', title: 'session' },
+        { id: 'transport', title: 'transport' },
+        { id: 'address', title: 'address' },
+        { id: 'status', title: 'status' },
+        { id: 'maxAttempts', title: 'maxAttempts' },
+        { id: 'attempts', title: 'attempts' },
+        { id: 'isComplete', title: 'isComplete' },
+        { id: 'lastAttempt', title: 'lastAttempt' },
+        { id: 'createdAt', title: 'createdAt' },
+        { id: 'updatedAt', title: 'updatedAt' },
+        { id: 'xref', title: 'xref' },
+        { id: 'disposition', title: 'disposition' },
+        { id: 'duration', title: 'duration' },
+        { id: 'ivrSequence', title: 'ivrSequence' },
+        { id: 'trunk', title: 'trunk' },
+        { id: 'answerTime', title: 'answerTime' },
+        { id: 'endTime', title: 'endTime' },
+        { id: 'fullDisposition', title: 'fullDisposition' },
+      ],
+    });
+
+    const records = broadcasts.map((b) => {
+      const disp = (b.disposition as Record<string, unknown>) ?? {};
+      return {
+        id: b.id,
+        cuid: b.cuid,
+        app: b.app,
+        session: b.session,
+        transport: b.transport,
+        address: b.address,
+        status: b.status,
+        maxAttempts: b.maxAttempts,
+        attempts: b.attempts,
+        isComplete: b.isComplete,
+        lastAttempt: b.lastAttempt ?? '',
+        createdAt: b.createdAt,
+        updatedAt: b.updatedAt ?? '',
+        xref: b.xref ?? '',
+        disposition: disp.disposition ?? '',
+        duration: disp.duration ?? '',
+        ivrSequence: disp.ivrSequence
+          ? JSON.stringify(disp.ivrSequence)
+          : '[]',
+        trunk: disp.trunk ?? '',
+        answerTime: disp.answerTime ?? '',
+        endTime: disp.endTime ?? '',
+        fullDisposition: b.disposition ? JSON.stringify(b.disposition) : '',
+      };
+    });
+
+    return (
+      csvStringifier.getHeaderString() +
+      csvStringifier.stringifyRecords(records)
+    );
   }
 
   async getReports(appId: string, xref?: string) {
