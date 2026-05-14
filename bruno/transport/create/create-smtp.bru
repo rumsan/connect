@@ -17,8 +17,10 @@ headers {
 body:json {
   {
       "app": "{{app-id}}",
-      "name": "Email Broadcast",
+      "name": "EMAIL",
       "type": "SMTP",
+      "validationContent":"TEXT",
+      "validationAddress":"EMAIL",
       "config": {
           "host": "{{smtp-host}}",
           "port": {{smtp-port}},
