@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { isValidPhoneNumber } from 'libphonenumber-js';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -17,11 +16,12 @@ import {
   TransportType,
   TriggerType,
 } from '@rumsan/connect/types';
+import { isValidPhoneNumber } from 'libphonenumber-js';
 
 import { InjectQueue } from '@nestjs/bull';
+import { TwilioBatchingService } from '@rsconnect/transports';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
-import { TwilioBatchingService } from '@rsconnect/transports';
 import {
   dev_NewBatchAlert,
   dev_SessionAttemptComplete,
@@ -246,27 +246,23 @@ export class BroadcastService {
     sessionCuid: string,
     transportType: TransportType,
   ) {
-    this.transportQueue
-      .checkReadiness({
+    try {
+      const ok = await this.transportQueue.checkReadiness({
         transportToCheck: this._getQueueName(transportType),
         sessionCuid: sessionCuid,
-      })
-      .then(async (res) => {
-        if (res) {
-          await this.prisma.session.update({
-            where: {
-              cuid: sessionCuid,
-            },
-            data: {
-              status: SessionStatus.PENDING,
-            },
-          });
-        }
-      })
-
-      .catch((err) => {
-        console.log(err);
       });
+      if (ok) {
+        await this.prisma.session.update({
+          where: { cuid: sessionCuid },
+          data: { status: SessionStatus.PENDING },
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `checkTransportReadiness failed for session ${sessionCuid}`,
+        err,
+      );
+    }
   }
 
   async sendBroadcasts(sessionCuid: string, batchSize = 0) {
