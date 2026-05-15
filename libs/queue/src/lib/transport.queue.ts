@@ -21,7 +21,7 @@ export class TransportQueue {
         data,
       };
 
-      return this._channel.sendToQueue(
+      return await this._channel.sendToQueue(
         data.transportToCheck,
         Buffer.from(JSON.stringify(queueJob)),
         {
@@ -30,7 +30,10 @@ export class TransportQueue {
         },
       );
     } catch (error) {
-      this.logger.error(error);
+      this.logger.error(
+        `checkReadiness publish failed for session ${data.sessionCuid}`,
+        error,
+      );
     }
     return false;
   }
@@ -45,7 +48,7 @@ export class TransportQueue {
         data,
       };
       console.log('Confirming readiness for session:', data.sessionCuid);
-      return this._channel.sendToQueue(
+      return await this._channel.sendToQueue(
         QUEUES.TO_CONNECT,
         Buffer.from(JSON.stringify(queueJob)),
         {
@@ -54,7 +57,10 @@ export class TransportQueue {
         },
       );
     } catch (error) {
-      this.logger.error(error);
+      this.logger.error(
+        `confirmReadiness publish failed for session ${data.sessionCuid}`,
+        error,
+      );
     }
     return false;
   }
