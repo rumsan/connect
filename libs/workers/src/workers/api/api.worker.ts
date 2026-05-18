@@ -15,11 +15,46 @@ import { ChannelWrapper } from 'amqp-connection-manager';
 import { IDataProvider } from '../../data-providers/data-provider.interface';
 import { TransportWorker } from '../transport.worker';
 
+// Small in-process rate limiter: caps both concurrent calls AND minimum
+// interval between call starts.
+class RateLimiter {
+  private active = 0;
+  private waiting: Array<() => void> = [];
+  private lastStartAt = 0;
+  constructor(
+    private readonly maxConcurrent: number,
+    private readonly minIntervalMs: number,
+  ) {}
+  async acquire(): Promise<() => void> {
+    if (this.active >= this.maxConcurrent) {
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    const elapsed = Date.now() - this.lastStartAt;
+    if (elapsed < this.minIntervalMs) {
+      await new Promise((r) => setTimeout(r, this.minIntervalMs - elapsed));
+    }
+    this.active++;
+    this.lastStartAt = Date.now();
+    return () => {
+      this.active--;
+      const next = this.waiting.shift();
+      if (next) next();
+    };
+  }
+}
+
 @Injectable()
 export class ApiWorker extends TransportWorker {
   queueTransport: QUEUES = QUEUES.TRANSPORT_API;
 
   private readonly logger = new Logger(ApiWorker.name);
+
+  // Defaults: max 3 in-flight + 200ms between starts (~5/sec).
+  private readonly sendLimiter = new RateLimiter(
+    Number(process.env['API_WORKER_MAX_CONCURRENT'] ?? 3),
+    Number(process.env['API_WORKER_MIN_INTERVAL_MS'] ?? 200),
+  );
+
   constructor(
     @Inject('IDataProvider')
     override readonly dataProvider: IDataProvider,
@@ -77,6 +112,7 @@ export class ApiWorker extends TransportWorker {
     const addresses = jobData.broadcasts.map((b) => b.address);
     let result;
     let status = BroadcastStatus.SUCCESS;
+    const release = await this.sendLimiter.acquire();
     try {
       result = await this.transport.sendBulk(
         addresses,
@@ -92,6 +128,8 @@ export class ApiWorker extends TransportWorker {
       );
       result = { error: e.message, data: e?.response?.data };
       status = BroadcastStatus.FAIL;
+    } finally {
+      release();
     }
 
     for (const job of jobData.broadcasts) {
@@ -118,6 +156,7 @@ export class ApiWorker extends TransportWorker {
     );
     const { session, broadcastLog, broadcastJob } = data;
 
+    const release = await this.sendLimiter.acquire();
     try {
       const res = await this.transport.send(
         broadcastJob.address,
@@ -134,6 +173,8 @@ export class ApiWorker extends TransportWorker {
       broadcastLog.status = BroadcastStatus.FAIL;
       broadcastLog.details = { error: e.message, data: e?.response?.data };
       this.logger.debug(`Broadcast job data: ${JSON.stringify(broadcastLog)}`);
+    } finally {
+      release();
     }
 
     //send log to connect server
