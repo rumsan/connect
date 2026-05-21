@@ -10,7 +10,7 @@ import {
 } from '@rsconnect/queue';
 import { Broadcast, QueueBroadcastLog } from '@rumsan/connect/types';
 import ari, { Channel, Client } from 'ari-client';
-import { randomUUID } from 'crypto';
+import { randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
 import { ChannelStateManager } from './channel-state.manager';
 import { PlaybackService } from './playback.service';
@@ -23,6 +23,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   private isConnected = false;
   private isShuttingDown = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
   private broadcastAddressPrefix: string | null;
 
   constructor(
@@ -78,8 +79,10 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     const ivrDialPlan = ivrJSON ? JSON.parse(ivrJSON) : null;
 
     // BUG FIX: Pre-generate channelId and register state BEFORE originate
-    // to prevent race condition where StasisStart fires before state is set
-    const channelId = randomUUID();
+    // to prevent race condition where StasisStart fires before state is set.
+    // Use 24-char hex (96 bits) — UUID v4's 36 chars overflow Asterisk's
+    // default uniqueid VARCHAR(32) and triggers CDR/CEL truncation warnings.
+    const channelId = randomBytes(12).toString('hex');
 
     this.channelStateManager.registerChannel({
       channelId,
@@ -159,6 +162,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       this.client.once('WebSocketReconnecting', (err: Error) => {
         if (this.isShuttingDown) return;
         this.isConnected = false;
+        this.stopHeartbeat();
         this.logger.warn(
           `ARI WebSocket dropped (${err?.message ?? 'unknown'}) — forcing full reconnect`,
         );
@@ -169,6 +173,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       this.client.once('WebSocketMaxRetries', () => {
         if (this.isShuttingDown) return;
         this.isConnected = false;
+        this.stopHeartbeat();
         this.logger.error('ARI WebSocket max retries exceeded');
         this.scheduleReconnect(1);
       });
@@ -181,6 +186,8 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       // Share the ARI client with dependent services
       this.channelStateManager.setClient(this.client);
       this.playbackService.setClient(this.client);
+
+      this.startHeartbeat();
 
       this.logger.log('ARI connected');
     } catch (error) {
@@ -271,10 +278,39 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  private startHeartbeat() {
+    // Detect half-open ARI WebSockets (idle close by Asterisk, NAT timeout,
+    // etc.) that the ari-client library does not surface. Failing pings
+    // force a full reconnect so Stasis app stays bound.
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(async () => {
+      if (this.isShuttingDown || !this.client) return;
+      try {
+        await this.client.applications.get({
+          applicationName: this.config.appName,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `ARI heartbeat failed (${(err as Error).message}) — forcing reconnect`,
+        );
+        this.isConnected = false;
+        this.stopHeartbeat();
+        this.scheduleReconnect(1);
+      }
+    }, 30_000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
   private scheduleReconnect(attempt: number) {
     if (this.isShuttingDown) return;
     if (this.reconnectTimer) return;
-    const delay = Math.min(5000 * attempt, 60_000);
+    const delay = attempt === 1 ? 1_000 : Math.min(5_000 * attempt, 60_000);
     this.logger.warn(
       `ARI disconnected — reconnecting in ${delay / 1000}s (attempt ${attempt})`,
     );
@@ -287,6 +323,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   private async attemptReconnect(attempt: number) {
     this.reconnectTimer = null;
     if (this.isShuttingDown) return;
+    this.stopHeartbeat();
     this.logger.log(`Attempting ARI full reconnect (attempt ${attempt})`);
     try {
       // Clean up the dead client before creating a new one
@@ -316,6 +353,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     this.isShuttingDown = true;
+    this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
