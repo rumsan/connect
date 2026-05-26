@@ -18,6 +18,23 @@ type TwilioBatchingState = {
   totalAddresses?: number;
 };
 
+type TwilioBatchDisposition = {
+  code: string;
+  reason: string;
+  message: string;
+  nextRoundAt: string | null;
+  intervalHours: number;
+  dailyLimit: number;
+  effectiveSentCount?: number;
+  deferredCount?: number;
+};
+
+type TwilioRollingWindowUsage = {
+  sentCount: number;
+  oldestSentAt: Date | null;
+  nextAvailableAt: string | null;
+};
+
 @Injectable()
 export class TwilioBatchingService {
   private readonly logger = new Logger(TwilioBatchingService.name);
@@ -50,24 +67,61 @@ export class TwilioBatchingService {
     return 24;
   }
 
-  private async getRollingSentCountForTransport(
+  private async getRollingWindowUsageForTransport(
     transportCuid: string,
     intervalHours: number,
-  ): Promise<number> {
+  ): Promise<TwilioRollingWindowUsage> {
     const since = new Date(Date.now() - intervalHours * 3_600_000);
 
-    return this.prisma.broadcast.count({
+    const where = {
+      createdAt: { gte: since },
+      status: {
+        in: [
+          BroadcastStatus.PENDING,
+          BroadcastStatus.SUCCESS,
+          BroadcastStatus.FAIL,
+        ],
+      },
+      transport: transportCuid,
+      attempts: { gt: 0 },
+    };
+
+    const [sentCount, oldest] = await Promise.all([
+      this.prisma.broadcast.count({ where }),
+      this.prisma.broadcast.findFirst({
+        where,
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      }),
+    ]);
+
+    const oldestSentAt = oldest?.createdAt ?? null;
+    const nextAvailableAt = oldestSentAt
+      ? new Date(oldestSentAt.getTime() + intervalHours * 3_600_000).toISOString()
+      : null;
+
+    return {
+      sentCount,
+      oldestSentAt,
+      nextAvailableAt,
+    };
+  }
+
+  private async updateScheduledDisposition(
+    sessionCuid: string,
+    payload: TwilioBatchDisposition,
+  ): Promise<void> {
+    await this.prisma.broadcast.updateMany({
       where: {
-        createdAt: { gte: since },
-        status: {
-          in: [
-            BroadcastStatus.PENDING,
-            BroadcastStatus.SUCCESS,
-            BroadcastStatus.FAIL,
-          ],
+        session: sessionCuid,
+        status: BroadcastStatus.SCHEDULED,
+        isComplete: false,
+      },
+      data: {
+        disposition: {
+          ...payload,
+          updatedAt: new Date().toISOString(),
         },
-        transport: transportCuid,
-        attempts: { gt: 0 },
       },
     });
   }
@@ -115,15 +169,19 @@ export class TwilioBatchingService {
       roundSentCount = 0,
       intervalHours = 24,
     } = twilioBatching;
-    const effectiveSentCount = transportCuid
-      ? await this.getRollingSentCountForTransport(transportCuid, intervalHours)
-      : roundSentCount;
+    const rollingUsage = transportCuid
+      ? await this.getRollingWindowUsageForTransport(transportCuid, intervalHours)
+      : null;
+
+    const effectiveSentCount = rollingUsage?.sentCount ?? roundSentCount;
+    const computedNextRoundAt =
+      rollingUsage?.nextAvailableAt ??
+      new Date(Date.now() + intervalHours * 3_600_000).toISOString();
 
     if (effectiveSentCount >= dailyLimit) {
-      if (!twilioBatching.nextRoundAt) {
-        const nextRoundAt = new Date(
-          Date.now() + intervalHours * 3_600_000,
-        ).toISOString();
+      let nextRoundAt = twilioBatching.nextRoundAt;
+      if (!nextRoundAt || nextRoundAt !== computedNextRoundAt) {
+        nextRoundAt = computedNextRoundAt;
         await this.prisma.session.update({
           where: { cuid: sessionCuid },
           data: {
@@ -138,14 +196,61 @@ export class TwilioBatchingService {
           },
         });
         this.logger.log(
-          `Twilio daily limit (${dailyLimit}) reached for session ${sessionCuid}. Sent in rolling window: ${effectiveSentCount}. Next round at ${nextRoundAt}`,
+          `Twilio daily limit (${dailyLimit}) reached for session ${sessionCuid}. Sent in rolling window: ${effectiveSentCount}. Oldest sent at: ${rollingUsage?.oldestSentAt?.toISOString() ?? 'n/a'}. Next round at ${nextRoundAt}`,
         );
       }
+
+      const deferredCount = await this.prisma.broadcast.count({
+        where: {
+          session: sessionCuid,
+          status: BroadcastStatus.SCHEDULED,
+          isComplete: false,
+        },
+      });
+
+      await this.updateScheduledDisposition(sessionCuid, {
+        code: 'TWILIO_BATCH_DEFERRED',
+        reason: 'Delivery deferred by transport batching limits',
+        message:
+          'Broadcast delivery is deferred by transport limits. Remaining messages will continue in the next delivery window.',
+        nextRoundAt,
+        intervalHours,
+        dailyLimit,
+        effectiveSentCount,
+        deferredCount,
+      });
+
       return { halt: true, batchSize: requestedBatchSize };
     }
 
     const remaining = dailyLimit - effectiveSentCount;
     if (requestedBatchSize === 0 || requestedBatchSize > remaining) {
+      const scheduledCount = await this.prisma.broadcast.count({
+        where: {
+          session: sessionCuid,
+          status: BroadcastStatus.SCHEDULED,
+          isComplete: false,
+        },
+      });
+      const willQueue = Math.max(0, remaining);
+      const deferredCount = Math.max(0, scheduledCount - willQueue);
+
+      if (deferredCount > 0) {
+        const nextRoundAt = computedNextRoundAt;
+
+        await this.updateScheduledDisposition(sessionCuid, {
+          code: 'TWILIO_BATCH_DEFERRED',
+          reason: 'Delivery deferred by transport batching limits',
+          message:
+            'Broadcast delivery is deferred by transport limits. Remaining messages will continue in the next delivery window.',
+          nextRoundAt,
+          intervalHours,
+          dailyLimit,
+          effectiveSentCount,
+          deferredCount,
+        });
+      }
+
       return { halt: false, batchSize: remaining };
     }
 
@@ -156,19 +261,26 @@ export class TwilioBatchingService {
     sessionCuid: string,
     options: Record<string, any> | undefined,
     queuedCount: number,
+    transportCuid?: string,
   ): Promise<void> {
     const twilioBatching = options?.['twilioBatching'] as
       | TwilioBatchingState
       | undefined;
     if (!twilioBatching?.enabled) return;
 
-    const newRoundSentCount =
+    const intervalHours = twilioBatching.intervalHours ?? 24;
+    const fallbackRoundSentCount =
       (twilioBatching.roundSentCount ?? 0) + queuedCount;
-    const limitReached = newRoundSentCount >= twilioBatching.dailyLimit;
+
+    const rollingUsage = transportCuid
+      ? await this.getRollingWindowUsageForTransport(transportCuid, intervalHours)
+      : null;
+
+    const effectiveSentCount = rollingUsage?.sentCount ?? fallbackRoundSentCount;
+    const limitReached = effectiveSentCount >= twilioBatching.dailyLimit;
     const nextRoundAt = limitReached
-      ? new Date(
-          Date.now() + (twilioBatching.intervalHours ?? 24) * 3_600_000,
-        ).toISOString()
+      ? rollingUsage?.nextAvailableAt ??
+        new Date(Date.now() + intervalHours * 3_600_000).toISOString()
       : twilioBatching.nextRoundAt;
 
     await this.prisma.session.update({
@@ -178,13 +290,37 @@ export class TwilioBatchingService {
           ...(options ?? {}),
           twilioBatching: {
             ...twilioBatching,
-            roundSentCount: newRoundSentCount,
+            roundSentCount: effectiveSentCount,
             nextRoundAt,
             lastBatchAt: new Date().toISOString(),
           },
         },
       },
     });
+
+    if (limitReached) {
+      const deferredCount = await this.prisma.broadcast.count({
+        where: {
+          session: sessionCuid,
+          status: BroadcastStatus.SCHEDULED,
+          isComplete: false,
+        },
+      });
+
+      if (deferredCount > 0) {
+        await this.updateScheduledDisposition(sessionCuid, {
+          code: 'TWILIO_BATCH_DEFERRED',
+          reason: 'Delivery deferred by transport batching limits',
+          message:
+            'Broadcast delivery is deferred by transport limits. Remaining messages will continue in the next delivery window.',
+          nextRoundAt,
+          intervalHours,
+          dailyLimit: twilioBatching.dailyLimit,
+          effectiveSentCount,
+          deferredCount,
+        });
+      }
+    }
   }
 
   async findDueSessionsAndReset(now = new Date()): Promise<
@@ -212,6 +348,7 @@ export class TwilioBatchingService {
     // this single cron tick.  We query the DB once per transport and then
     // accumulate reservations in-memory so concurrent sessions sharing the
     // same Twilio account cannot all race past the limit.
+    const baseUsageByTransport = new Map<string, TwilioRollingWindowUsage>();
     const reservedThisTick = new Map<string, number>();
 
     for (const session of rows) {
@@ -220,9 +357,6 @@ export class TwilioBatchingService {
       ] as TwilioBatchingState | undefined;
 
       if (!tb?.nextRoundAt) continue;
-
-      const dueAt = new Date(tb.nextRoundAt).getTime();
-      if (Number.isNaN(dueAt) || dueAt > now.getTime()) continue;
 
       const scheduledCount = await this.prisma.broadcast.count({
         where: {
@@ -237,23 +371,38 @@ export class TwilioBatchingService {
       const dailyLimit = tb.dailyLimit;
       const intervalHours = tb.intervalHours ?? 24;
 
-      // Fetch rolling sent count from DB once per transport per tick.
-      if (!reservedThisTick.has(transportCuid)) {
-        const dbCount = await this.getRollingSentCountForTransport(
+      // Fetch rolling window usage from DB once per transport per tick.
+      if (!baseUsageByTransport.has(transportCuid)) {
+        const usage = await this.getRollingWindowUsageForTransport(
           transportCuid,
           intervalHours,
         );
-        reservedThisTick.set(transportCuid, dbCount);
+        baseUsageByTransport.set(transportCuid, usage);
       }
 
-      const alreadyUsed = reservedThisTick.get(transportCuid)!;
+      const baseUsage = baseUsageByTransport.get(transportCuid)!;
+      const reserved = reservedThisTick.get(transportCuid) ?? 0;
+      const alreadyUsed = baseUsage.sentCount + reserved;
       const remaining = dailyLimit - alreadyUsed;
 
       if (remaining <= 0) {
-        // Quota already exhausted — defer this session to the next interval.
-        const newNextRoundAt = new Date(
-          now.getTime() + intervalHours * 3_600_000,
-        ).toISOString();
+        // Quota exhausted in current rolling window.
+        const newNextRoundAt =
+          baseUsage.nextAvailableAt ??
+          new Date(now.getTime() + intervalHours * 3_600_000).toISOString();
+
+        await this.updateScheduledDisposition(session.cuid, {
+          code: 'TWILIO_BATCH_DEFERRED',
+          reason: 'Delivery deferred by transport batching limits',
+          message:
+            'Broadcast delivery is deferred by transport limits. Remaining messages will continue in the next delivery window.',
+          nextRoundAt: newNextRoundAt,
+          intervalHours,
+          dailyLimit,
+          effectiveSentCount: alreadyUsed,
+          deferredCount: scheduledCount,
+        });
+
         await this.prisma.session.update({
           where: { cuid: session.cuid },
           data: {
@@ -271,7 +420,7 @@ export class TwilioBatchingService {
 
       // Reserve the slots this session will consume (capped at remaining quota).
       const reservedCount = Math.min(scheduledCount, remaining);
-      reservedThisTick.set(transportCuid, alreadyUsed + reservedCount);
+      reservedThisTick.set(transportCuid, reserved + reservedCount);
 
       await this.prisma.session.update({
         where: { cuid: session.cuid },

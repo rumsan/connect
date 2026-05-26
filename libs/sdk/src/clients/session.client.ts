@@ -7,6 +7,7 @@ import {
   ListBroadcast,
   Session,
 } from '../types';
+import { PaginationTypes } from '../types/pagination.type';
 import { ApiClient } from './api.client';
 
 export class SessionClient {
@@ -42,12 +43,16 @@ export class SessionClient {
 
   async getLogsForSessions(
     data: { sessions: string[] },
+    params?: PaginationTypes,
     config?: AxiosRequestConfig,
   ) {
     const response = await this._client.post(
       `${this._prefix}/logs-bulk`,
       data,
-      config,
+      {
+        ...config,
+        params,
+      },
     );
     return formatResponse<BroadcastLog[]>(response);
   }

@@ -31,7 +31,9 @@ export class BroadcastPriceWorker {
       include: {
         Transport: true,
       },
-      take: 50, // limit to avoid overloading
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
     if (!broadcasts.length) return;
     for (const broadcast of broadcasts) {
