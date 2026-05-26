@@ -34,12 +34,13 @@ export class SessionController {
   async getLogsForSessions(
     @AppId() appId: string,
     @Body() body: string[] | { sessions?: string[] },
+    @Query() dto: ListBroadcastLogDto,
   ) {
     const sessions = Array.isArray(body) ? body : body?.sessions;
     if (!Array.isArray(sessions)) {
       throw new BadRequestException('sessions must be an array of strings');
     }
-    return this.sessionService.getLogsForSessions(appId, sessions);
+    return this.sessionService.getLogsForSessions(appId, sessions, dto);
   }
 
   @Get(':cuid')

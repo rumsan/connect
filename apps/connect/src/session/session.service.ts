@@ -118,10 +118,13 @@ export class SessionService {
   async getLogsForSessions(
     appId: string,
     sessionCuids: string[],
+    dto: ListBroadcastLogDto,
   ): Promise<PaginatorTypes.PaginatedResult<BroadcastLog>> {
     this.logger.log(
       `Getting broadcast logs for ${sessionCuids.length} session(s)`,
     );
+    const orderBy: Record<string, 'asc' | 'desc'> = {};
+    orderBy[dto.sort] = dto.order;
     return paginate(
       this.prisma.broadcast,
       {
@@ -129,9 +132,12 @@ export class SessionService {
           app: appId,
           session: { in: sessionCuids },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy,
       },
-      { page: 1, perPage: 100 },
+      {
+        page: dto.page,
+        perPage: dto.perPage,
+      },
     );
   }
 
