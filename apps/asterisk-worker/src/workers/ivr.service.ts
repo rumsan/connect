@@ -72,8 +72,25 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     broadcastLog: QueueBroadcastLog,
     ivrJSON?: string,
   ) {
+    // Lazy connection: connect if not connected
     if (!this.isConnected) {
-      throw new Error('ARI not connected — call will be retried');
+      this.logger.log(
+        'ARI not connected, attempting connection before call...',
+      );
+      try {
+        await this.connect();
+        this.setupEventHandlers();
+      } catch (err) {
+        throw new Error(
+          `Failed to connect to ARI: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // Explicit Stasis verification before every call
+    const ready = await this.ensureConnected();
+    if (!ready) {
+      throw new Error('ARI not ready — Stasis app not registered');
     }
 
     const ivrDialPlan = ivrJSON ? JSON.parse(ivrJSON) : null;
@@ -134,6 +151,31 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Ensures ARI is connected AND Stasis app is registered.
+   * Returns true if ready, false otherwise.
+   */
+  private async ensureConnected(): Promise<boolean> {
+    if (!this.isConnected || !this.client) {
+      return false;
+    }
+
+    // Double-check Stasis registration before returning true
+    try {
+      await this.client.applications.get({
+        applicationName: this.config.appName,
+      });
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `Stasis verification failed: ${(err as Error).message}`,
+      );
+      this.isConnected = false;
+      this.scheduleReconnect(1);
+      return false;
+    }
+  }
+
   private async connect() {
     try {
       const { appName, server, user, password } = this.config;
@@ -179,7 +221,8 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       });
 
       this.client.on('WebSocketConnected', () => {
-        this.isConnected = true;
+        // DO NOT set isConnected = true here — it will be set by attemptReconnect()
+        // after full connect() + Stasis verification
         this.logger.log('ARI WebSocket connected');
       });
 
@@ -289,6 +332,13 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
         await this.client.applications.get({
           applicationName: this.config.appName,
         });
+        // Explicitly set true on success to recover from false-negative states
+        if (!this.isConnected) {
+          this.logger.log(
+            'Heartbeat verified Stasis registration, marking connected',
+          );
+          this.isConnected = true;
+        }
       } catch (err) {
         this.logger.warn(
           `ARI heartbeat failed (${(err as Error).message}) — forcing reconnect`,
@@ -297,7 +347,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
         this.stopHeartbeat();
         this.scheduleReconnect(1);
       }
-    }, 30_000);
+    }, 10_000); // 10s heartbeat to keep WebSocket alive
   }
 
   private stopHeartbeat() {
@@ -347,8 +397,18 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     this.logger.log('Module Init');
-    await this.connect();
-    this.setupEventHandlers();
+    try {
+      await this.connect();
+      this.setupEventHandlers();
+      this.logger.log('ARI connection established successfully on startup');
+    } catch (error) {
+      this.logger.warn(
+        'Initial ARI connection failed, will retry on first call:',
+        error,
+      );
+      this.isConnected = false;
+      // Don't throw - allow worker to start even if Asterisk is down
+    }
   }
 
   async onModuleDestroy() {
