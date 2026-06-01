@@ -7,7 +7,9 @@ import { SessionModel } from '../entities/session.entity';
 import { AMIService } from './ami.service';
 import { AsteriskWorker } from './asterisk.worker';
 import { AudioService } from './audio.service';
+import { ChannelStateManager } from './channel-state.manager';
 import { IVRService } from './ivr.service';
+import { PlaybackService } from './playback.service';
 
 @Module({
   imports: [
@@ -20,7 +22,9 @@ import { IVRService } from './ivr.service';
     AudioService,
     AMIService,
     BatchManger,
-    IVRService
+    ChannelStateManager,
+    PlaybackService,
+    IVRService,
   ],
   exports: [AsteriskWorker, AMIService],
 })
