@@ -1,0 +1,48 @@
+meta {
+  name: send-cv-temp-twilio
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-twilio}}",
+    "message": {
+      "templateId": "cmm2llqcx0003g511i2rfxhue",//Twilio template ID
+      "meta": {
+          "contentVariables": {
+              "location": "nepal"
+            }
+      }
+    },
+    "addresses": [
+      "{{WHATSAPP_DEV_PHONE}}"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",//SCHEDULED
+    "webhook": "",
+    "options": {
+      "scheduledTimestamp": "2026-02-09T14:02:00+05:45",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+  
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
+}

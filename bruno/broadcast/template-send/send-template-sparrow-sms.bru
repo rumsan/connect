@@ -1,0 +1,44 @@
+meta {
+  name: send-template-sparrow-sms
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+   "transport": "{{transport-id-sparrow}}",
+    "message": {
+      "templateId": "{{template-id-sparrow}}",
+      "meta": {
+          "info": "testing sparrow"
+      }
+    },
+    "addresses": [
+      "9841602388"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
+}

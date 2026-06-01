@@ -1,0 +1,19 @@
+meta {
+  name: brodcast message
+  type: http
+  seq: 2
+}
+
+post {
+  url: https://api.telegram.org/bot61515524:AAH8n9sXo2l7m1a3e5b9c8d2e4f6g7h8i9j0/sendMessage
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+      "text": "test message",
+      "chat_id": "1097235460",
+      "parse_mode": "HTML"
+    }
+}

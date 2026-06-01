@@ -1,7 +1,8 @@
 {
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
   "editor.codeActionsOnSave": {
-    "source.organizeImports": "explicit",
-    "editor.formatOnSave": "explicit"
+    "source.fixAll.eslint": "explicit",
+    "source.organizeImports": "explicit"
   },
   "typescript.tsdk": "node_modules\\typescript\\lib",
   "prettier.embeddedLanguageFormatting": "off",

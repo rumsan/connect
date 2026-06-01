@@ -73,6 +73,7 @@ export type Broadcast = {
 export type BroadcastCountsResponse = {
   data: {
     fail: number;
+    pending: number;
     success: number;
     total: number;
   };

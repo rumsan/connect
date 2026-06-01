@@ -1,7 +1,7 @@
 meta {
   name: create-sparrow-sms
   type: http
-  seq: 7
+  seq: 8
 }
 
 post {
@@ -11,18 +11,18 @@ post {
 }
 
 headers {
-  app-id: cmou19a2n001rhqsj79g388z0
+  app-id: {{app-id}}
 }
 
 body:json {
   {
-      "app": "cmou19a2n001rhqsj79g388z0",
+      "app": "{{app-id}}",
       "name": "SMS",
       "type": "API",
       "config": {
-          "url": "https://api.sparrowsms.com/v2/sms",
+          "url": "{{SPARROW_URL}}",
           "body" : {
-                "token":"{{sparrow-token}}",
+                "token":"{{SPARROW_TOKEN}}",
                 "from":"TheAlert",
                 "to":"{%address%}",
                 "text":"{%message.content%}"
@@ -35,7 +35,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("transport-id-prabhu", data.cuid);
+    bru.setVar("transport-id-sparrow", data.cuid);
     bru.setVar("transport-id", data.cuid);
   }
 }

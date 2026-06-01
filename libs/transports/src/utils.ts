@@ -1,7 +1,24 @@
 export function replacePlaceholders(templateJson: any, data: any): any {
+  const UNRESOLVED = Symbol('unresolved');
+
   // Helper function to recursively replace placeholders
   function recursiveReplace(obj: any, data: any): any {
     if (typeof obj === 'string') {
+      // If the entire string is a single placeholder, resolve and return as-is
+      // (including undefined/null) so the parent object can decide to omit the key.
+      const singleMatch = /^\{%(.*?)%\}$/.exec(obj);
+      if (singleMatch) {
+        const keys = singleMatch[1].split('.');
+        let value = data;
+        keys.forEach((k: any) => {
+          value = value ? value[k] : undefined;
+        });
+        return value === undefined || value === null || value === ''
+          ? UNRESOLVED
+          : value;
+      }
+
+      // Mixed string with placeholders — replace inline, missing values become ''
       return obj.replace(/{%(.*?)%}/g, (_, key) => {
         const keys = key.split('.');
         let value = data;
@@ -15,7 +32,11 @@ export function replacePlaceholders(templateJson: any, data: any): any {
     } else if (typeof obj === 'object') {
       const newObj: { [key: string]: any } = {};
       for (const key in obj) {
-        newObj[key] = recursiveReplace(obj[key], data);
+        const result = recursiveReplace(obj[key], data);
+        // Omit keys whose placeholder resolved to nothing
+        if (result !== UNRESOLVED) {
+          newObj[key] = result;
+        }
       }
       return newObj;
     }

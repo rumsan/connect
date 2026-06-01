@@ -14,23 +14,26 @@ import {
   Session,
   SessionStatus,
   TransportType,
+  TriggerType,
 } from '@rumsan/connect/types';
 import { createObjectCsvStringifier } from 'csv-writer';
+import { isValidPhoneNumber } from 'libphonenumber-js';
 
+import { InjectQueue } from '@nestjs/bull';
+import { TwilioBatchingService } from '@rsconnect/transports';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
+import { Queue } from 'bull';
 import {
   dev_NewBatchAlert,
   dev_SessionAttemptComplete,
   dev_SessionCompletionAlert,
 } from '../utils/dev.alert';
 import { TransportStatsRaw } from '../utils/types/report';
-import {
-  BroadcastDto,
-  ListBroadcastDto,
-  MessageDto,
-} from './dto/broadcast.dto';
+import { BroadcastValidationService } from './broadcast-validation.service';
+import { BROADCAST_CONSTANTS } from './broadcast.constants';
+import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
 import { ReportWhereClause } from './dto/report.dto';
-import { getAddressValidator, getContentValidator } from './validators';
+import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 
@@ -39,21 +42,72 @@ export class BroadcastService {
   private readonly logger = new Logger(BroadcastService.name);
 
   constructor(
+    @InjectQueue(QUEUES.SCHEDULED) public scheduleQueue: Queue,
     private readonly prisma: PrismaService,
     private readonly transportQueue: TransportQueue,
     private readonly broadcastQueue: BroadcastQueue,
-  ) { }
-  async create(appId: string, dto: BroadcastDto) {
+    private readonly redisZsetScheduler: RedisZsetSchedulerService,
+    private readonly broadcastValidationService: BroadcastValidationService,
+    private readonly twilioBatchingService: TwilioBatchingService,
+  ) {}
 
+  /**
+   * Get the scheduling window in milliseconds
+   * Messages scheduled beyond this window will be picked up by ScheduledWindowWorker
+   * @private
+   * @returns Scheduling window in milliseconds
+   */
+  private getScheduleWindowMs(): number {
+    const hours = Number(
+      process.env.BROADCAST_SCHEDULE_WINDOW_HOURS ??
+        BROADCAST_CONSTANTS.DEFAULT_SCHEDULE_WINDOW_HOURS,
+    );
+    return hours * 60 * 60 * 1000;
+  }
+
+  /**
+   * Schedule a broadcast session using Bull's delay mechanism
+   *
+   * This method adds a job to Bull queue with a delay. Bull will automatically
+   * process the job after the specified delay time.
+   *
+   * @param sessionCuid - Unique session identifier
+   * @param transportType - Type of transport to use
+   * @param delayMs - Delay in milliseconds before execution
+   */
+  async scheduleWithBullDelay(
+    sessionCuid: string,
+    transportType: TransportType,
+    delayMs: number,
+  ) {
+    await this.scheduleQueue.add(
+      'schedule',
+      {
+        sessionCuid,
+        transportType,
+      },
+      {
+        delay: Math.max(0, delayMs),
+        jobId: sessionCuid,
+      },
+    );
+  }
+
+  async create(appId: string, dto: BroadcastDto) {
     const { transport: transportId, message, addresses } = dto;
-    await this.validateBroadcastData(transportId, message, addresses);
+    const resolvedMessage =
+      await this.broadcastValidationService.validateBroadcastData(
+        transportId,
+        message,
+        addresses,
+      );
 
     let transport: Transport = null;
     const sessionData: Session = {
       cuid: createId(),
       app: appId,
       transport: dto.transport,
-      message: dto.message as Record<string, any>,
+      message: resolvedMessage as Record<string, any>,
       addresses: dto.addresses,
       triggerType: dto.trigger,
       maxAttempts: dto.maxAttempts,
@@ -73,6 +127,12 @@ export class BroadcastService {
       sessionData.maxAttempts = this._enforceMaxAttempts(
         transport.type,
         dto.maxAttempts,
+      );
+
+      sessionData.options = this.twilioBatchingService.enrichSessionOptions(
+        (sessionData.options as Record<string, any>) ?? {},
+        transport,
+        dto.addresses.length,
       );
 
       const session = await tx.session.create({
@@ -101,40 +161,109 @@ export class BroadcastService {
 
       return session;
     });
+    this.logger.debug('Created session:', newSession.cuid);
 
-    if (newSession.cuid) {
-      this.checkTransportReadiness(
-        newSession.cuid,
-        newSession.Transport.type as TransportType,
+    // Strategy map for trigger types
+    const triggerHandlers: Record<TriggerType, () => Promise<void> | void> = {
+      [TriggerType.IMMEDIATE]: () =>
+        this.handleImmediateBroadcast(newSession as Session),
+      [TriggerType.SCHEDULED]: async () => {
+        await this.handleScheduledBroadcast(
+          newSession as Session,
+          dto.options.scheduledTimestamp,
+        );
+      },
+      [TriggerType.MANUAL]: () =>
+        this.handleManualBroadcast(newSession as Session),
+    };
+
+    const handler = triggerHandlers[newSession.triggerType];
+    if (handler) {
+      await handler();
+    } else {
+      this.logger.warn(
+        `No handler defined for triggerType: ${newSession.triggerType}`,
       );
     }
     return newSession;
+  }
+
+  private handleManualBroadcast(session: Session) {
+    this.logger.log(`Manual trigger for session: ${session.cuid}`);
+    // Doing nothing on manual trigger
+  }
+
+  /**
+   * Handle immediate broadcast by checking transport readiness
+   * @private
+   * @param session - The broadcast session
+   */
+  private handleImmediateBroadcast(session: Session) {
+    this.checkTransportReadiness(
+      session.cuid,
+      session.Transport.type as TransportType,
+    );
+  }
+
+  /**
+   * Handle scheduled broadcast by scheduling it appropriately
+   * @private
+   * @param session - The broadcast session
+   * @param scheduledTimestamp - The scheduled timestamp string
+   */
+  private async handleScheduledBroadcast(
+    session: Session,
+    scheduledTimestamp: Date,
+  ) {
+    const runAtMs = scheduledTimestamp.getTime();
+    const now = Date.now();
+
+    const delay = runAtMs - now;
+    const windowMs = this.getScheduleWindowMs();
+
+    this.logger.log(`Scheduling session with delay: ${delay}ms`);
+
+    // Only push to Redis/Bull if the scheduled time is within the configured window.
+    if (delay <= windowMs) {
+      if (this.redisZsetScheduler.isEnabled()) {
+        this.logger.log('Scheduling session with Redis Zset Scheduler');
+
+        await this.redisZsetScheduler.schedule(
+          session.cuid,
+          session.Transport.type as TransportType,
+          runAtMs,
+        );
+      } else {
+        await this.scheduleWithBullDelay(
+          session.cuid,
+          session.Transport.type as TransportType,
+          delay,
+        );
+      }
+    }
   }
 
   async checkTransportReadiness(
     sessionCuid: string,
     transportType: TransportType,
   ) {
-    this.transportQueue
-      .checkReadiness({
+    try {
+      const ok = await this.transportQueue.checkReadiness({
         transportToCheck: this._getQueueName(transportType),
         sessionCuid: sessionCuid,
-      })
-      .then(async (res) => {
-        if (res) {
-          await this.prisma.session.update({
-            where: {
-              cuid: sessionCuid,
-            },
-            data: {
-              status: SessionStatus.PENDING,
-            },
-          });
-        }
-      })
-      .catch((err) => {
-        console.log(err);
       });
+      if (ok) {
+        await this.prisma.session.update({
+          where: { cuid: sessionCuid },
+          data: { status: SessionStatus.PENDING },
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `checkTransportReadiness failed for session ${sessionCuid}`,
+        err,
+      );
+    }
   }
 
   async sendBroadcasts(sessionCuid: string, batchSize = 0) {
@@ -149,8 +278,16 @@ export class BroadcastService {
     });
     if (!session) return;
 
-    let broadcasts: Broadcast[] = [];
+    const batchGuard = await this.twilioBatchingService.applySendGuard(
+      sessionCuid,
+      (session.options as Record<string, any>) ?? {},
+      batchSize,
+      session.Transport.cuid,
+    );
+    if (batchGuard.halt) return;
+    batchSize = batchGuard.batchSize;
 
+    let broadcasts: Broadcast[] = [];
     if (batchSize > 0) {
       broadcasts = await this.prisma.broadcast.findMany({
         where: {
@@ -162,10 +299,10 @@ export class BroadcastService {
         },
         orderBy: [
           {
-            status: 'asc', // Optional: Order by status
+            status: 'asc',
           },
           {
-            createdAt: 'asc', // Optional: Order by creation date within each status
+            createdAt: 'asc',
           },
         ],
         take: batchSize,
@@ -182,16 +319,87 @@ export class BroadcastService {
       });
     }
 
+    const transportCapabilities =
+      (session.Transport.config as any)?.meta?.capabilities ?? [];
+    // Validate phone numbers for API transport and mark invalids as failed
+    if (transportCapabilities.includes('PHONE_NUMBER_VALIDATION')) {
+      const validBroadcasts: Broadcast[] = [];
+      const invalidBroadcastIds: string[] = [];
+      const invalidBroadcasts: Broadcast[] = [];
+      for (const b of broadcasts) {
+        // Remove whatsapp: prefix if present
+        const phone = b.address.startsWith('whatsapp:')
+          ? b.address.replace('whatsapp:', '')
+          : b.address;
+        if (isValidPhoneNumber(phone)) {
+          validBroadcasts.push(b);
+        } else {
+          invalidBroadcastIds.push(b.cuid);
+          invalidBroadcasts.push(b);
+        }
+      }
+      if (invalidBroadcastIds.length > 0) {
+        await this.prisma.broadcast.updateMany({
+          where: { cuid: { in: invalidBroadcastIds } },
+          data: {
+            status: BroadcastStatus.FAIL,
+            isComplete: true,
+            disposition: {
+              error: 'Invalid phone number.',
+              code: 'INVALID_PHONE',
+            },
+          },
+        });
+        await this.prisma.broadcastLog.createMany({
+          data: invalidBroadcasts.map((b) => ({
+            cuid: createId(),
+            broadcast: b.cuid,
+            session: session.cuid,
+            app: session.Transport.app,
+            status: BroadcastStatus.FAIL,
+            attempt: b.attempts + 1,
+            details: {
+              error: 'Invalid phone number.',
+              code: 'INVALID_PHONE',
+            },
+          })),
+        });
+      }
+      broadcasts = validBroadcasts;
+    }
+
     if (broadcasts.length > 0) {
       await this._addToQueue(session as Session, session.Transport, broadcasts);
+      await this.twilioBatchingService.recordQueuedBatch(
+        sessionCuid,
+        (session.options as Record<string, any>) ?? {},
+        broadcasts.length,
+        session.Transport.cuid,
+      );
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();
-      //TODO: Enable for automatic retries
-      // await this.retryBroadcasts(
-      //   sessionCuid,
-      //   session.Transport.type as TransportType,
-      // );
+      // TODO:DON'T RETRY COMPLETE SESSION, RETRY ONLY FAILED BROADCASTS
+
+      // broadcasts = await this.prisma.broadcast.findMany({
+      //   where: {
+      //     session: sessionCuid,
+      //     status: {
+      //       in: [BroadcastStatus.FAIL],
+      //     },
+      //   },
+      // });
+      // // If there are failed broadcasts, attempt retries
+      // if (broadcasts.length > 0) {
+      //   this.logger.log(
+      //     `Session ${sessionCuid} has failed broadcasts, scheduling retries.`,
+      //   );
+      //   await this.retryBroadcasts(
+      //     sessionCuid,
+      //     session.Transport.type as TransportType,
+      //     true,
+      //   );
+      // }
     }
   }
 
@@ -200,20 +408,25 @@ export class BroadcastService {
     transportType: TransportType,
     retryFailed?: boolean,
   ) {
-    const isSessionComplete = await this._checkIfSessionComplete(
-      sessionCuid,
-      // this.prisma,
-    );
+    const isSessionComplete = await this._checkIfSessionComplete(sessionCuid);
+
     if (isSessionComplete) {
-      throw new Error('Session is completed');
+      this.logger.log(
+        `retryBroadcasts called for completed session: ${sessionCuid}, skipping retries.`,
+      );
+      return {
+        message: 'Session is already completed; no retries scheduled',
+        isComplete: true,
+        count: 0,
+      };
     }
 
     const retryStatuses = retryFailed
       ? [
-        BroadcastStatus.FAIL,
-        BroadcastStatus.SCHEDULED,
-        BroadcastStatus.PENDING,
-      ]
+          BroadcastStatus.FAIL,
+          BroadcastStatus.SCHEDULED,
+          BroadcastStatus.PENDING,
+        ]
       : [BroadcastStatus.SCHEDULED, BroadcastStatus.PENDING];
 
     const broadcasts = await this.prisma.broadcast.updateMany({
@@ -248,6 +461,10 @@ export class BroadcastService {
     };
   }
 
+  async syncSessionCompletion(sessionCuid: string) {
+    return this._checkIfSessionComplete(sessionCuid);
+  }
+
   private async _checkIfSessionComplete(
     sessionCuid: string,
     //tx: PrismaService,
@@ -280,7 +497,7 @@ export class BroadcastService {
       case TransportType.ECHO:
         return dtoMaxAttempts;
       case TransportType.API:
-        return 1;
+        return dtoMaxAttempts;
       case TransportType.SMTP:
         return 1;
       case TransportType.VOICE:
@@ -309,7 +526,7 @@ export class BroadcastService {
     transport: Transport,
     broadcasts: Broadcast[],
   ) {
-    this.logger.log('Adding broadcasts to queue:', session);
+    this.logger.log(`Adding broadcasts to queue: sessionId: ${session.cuid}`);
     const queueTransport = this._getQueueName(transport.type as TransportType);
 
     const broadcastQueueData = broadcasts.map((broadcast) => {
@@ -372,11 +589,11 @@ export class BroadcastService {
           xref: dto.xref,
           ...(dto.startDate && dto.endDate
             ? {
-              createdAt: {
-                gte: new Date(dto.startDate),
-                lte: new Date(dto.endDate),
-              },
-            }
+                createdAt: {
+                  gte: new Date(dto.startDate),
+                  lte: new Date(dto.endDate),
+                },
+              }
             : {}),
         },
         orderBy,
@@ -430,29 +647,6 @@ export class BroadcastService {
     });
   }
 
-  async validateBroadcastData(
-    transportId: string,
-    message: MessageDto,
-    addresses: string[],
-  ) {
-    const t = await this.prisma.transport.findUnique({
-      where: {
-        cuid: transportId,
-      },
-    });
-    if (!t) throw new Error('Transport not found.');
-    const contentValidator = getContentValidator(t.validationContent);
-    const addressValidator = getAddressValidator(t.validationAddress);
-
-    if (!contentValidator(message.content))
-      throw new Error(`Content: ${message.content} validation failed.`);
-    for (const address of addresses) {
-      if (!addressValidator(address))
-        throw new Error(`Address: ${address} validation failed.`);
-    }
-    return true;
-  }
-
   async broadcastStatusCount(appId: string) {
     const broadcastCounts = await this.prisma.broadcast.groupBy({
       by: ['status'],
@@ -470,10 +664,23 @@ export class BroadcastService {
     });
     const counts = broadcastCounts.reduce(
       (acc, item) => {
-        acc[item.status.toLowerCase()] = item._count.status;
+        if (['SCHEDULED', 'PENDING'].includes(item.status)) {
+          acc.pending += item._count.status;
+          return acc;
+        }
+
+        if (item.status === BroadcastStatus.SUCCESS) {
+          acc.success += item._count.status;
+          return acc;
+        }
+
+        if (item.status === BroadcastStatus.FAIL) {
+          acc.fail += item._count.status;
+        }
+
         return acc;
       },
-      { fail: 0, success: 0 },
+      { fail: 0, pending: 0, success: 0 },
     );
     return {
       data: {
@@ -483,20 +690,24 @@ export class BroadcastService {
     };
   }
 
-  async fetchReportData(appId: string, where: ReportWhereClause, xref?: string) {
+  async fetchReportData(
+    appId: string,
+    where: ReportWhereClause,
+    xref?: string,
+  ) {
     return Promise.all([
       this.prisma.session.aggregate({
         where,
         _count: { id: true },
-        _sum: { totalAddresses: true }
+        _sum: { totalAddresses: true },
       }),
       this.prisma.broadcast.groupBy({
         by: ['status'],
         where: {
           app: appId,
-          ...(xref ? { Session: { xref } } : {})
+          ...(xref ? { Session: { xref } } : {}),
         },
-        _count: { _all: true }
+        _count: { _all: true },
       }),
       this.prisma.$queryRaw<TransportStatsRaw[]>`
         WITH transport_recipients AS (
@@ -505,7 +716,9 @@ export class BroadcastService {
             SUM(s."totalAddresses") as total_recipients
           FROM "tbl_transports" t
           JOIN "tbl_sessions" s ON s.transport = t.cuid
-          WHERE t.app = ${appId} ${xref ? Prisma.sql`AND s.xref = ${xref}` : Prisma.empty}
+          WHERE t.app = ${appId} ${
+        xref ? Prisma.sql`AND s.xref = ${xref}` : Prisma.empty
+      }
           GROUP BY t.cuid
         )
         SELECT 
@@ -515,7 +728,7 @@ export class BroadcastService {
           COUNT(DISTINCT b.id) as total_broadcasts,
           SUM(CASE WHEN b.status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
           SUM(CASE WHEN b.status = 'FAIL' THEN 1 ELSE 0 END) as failed_count,
-          SUM(CASE WHEN b.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+          SUM(CASE WHEN b.status IN ('PENDING', 'SCHEDULED') THEN 1 ELSE 0 END) as pending_count,
           ROUND(AVG(CAST(b.attempts as float))::numeric, 2) as average_attempts,
           MAX(b.attempts) as max_attempts,
           COALESCE(tr.total_recipients, 0) as total_recipients
@@ -523,20 +736,23 @@ export class BroadcastService {
         LEFT JOIN "tbl_broadcasts" b ON b.transport = t.cuid
         LEFT JOIN transport_recipients tr ON tr.cuid = t.cuid
         WHERE t.app = ${appId}
-        ${xref ? Prisma.sql`AND EXISTS (
+        ${
+          xref
+            ? Prisma.sql`AND EXISTS (
           SELECT 1 FROM "tbl_sessions" s 
           WHERE s.transport = t.cuid 
           AND s.xref = ${xref}
-        )` : Prisma.empty}
+        )`
+            : Prisma.empty
+        }
         GROUP BY t.cuid, t.name, t.type, tr.total_recipients
         HAVING COUNT(DISTINCT b.id) > 0
-      `
+      `,
     ]);
   }
 
   async calculateTransportStats(transportStats: TransportStatsRaw[]) {
-
-    return transportStats.map(t => ({
+    return transportStats.map((t) => ({
       transport: t.transport_id,
       name: t.transport_name,
       type: t.transport_type,
@@ -627,24 +843,30 @@ export class BroadcastService {
     this.logger.log(`Fetching reports for app: ${appId}, xref: ${xref}`);
     const where = xref ? { app: appId, xref } : { app: appId };
 
-    const [
-      sessionStats,
-      broadcastStats,
-      transportStats
-    ] = await this.fetchReportData(appId, where, xref);
+    const [sessionStats, broadcastStats, transportStats] =
+      await this.fetchReportData(appId, where, xref);
 
-
-
-    const totalMessages = broadcastStats.reduce((sum, stat) => sum + stat._count._all, 0);
-    const successCount = broadcastStats.find(stat => stat.status === BroadcastStatus.SUCCESS)?._count._all ?? 0;
-    const failedCount = broadcastStats.find(stat => stat.status === BroadcastStatus.FAIL)?._count._all ?? 0;
-    const pendingCount = broadcastStats.find(stat => stat.status === BroadcastStatus.PENDING)?._count._all ?? 0;
-    const successRate = totalMessages ? Number(((successCount / totalMessages) * 100).toFixed(2)) : 0;
+    const totalMessages = broadcastStats.reduce(
+      (sum, stat) => sum + stat._count._all,
+      0,
+    );
+    const successCount =
+      broadcastStats.find((stat) => stat.status === BroadcastStatus.SUCCESS)
+        ?._count._all ?? 0;
+    const failedCount =
+      broadcastStats.find((stat) => stat.status === BroadcastStatus.FAIL)
+        ?._count._all ?? 0;
+    const pendingCount = broadcastStats
+      .filter((stat) => ['SCHEDULED', 'PENDING'].includes(stat.status))
+      .reduce((sum, stat) => sum + stat._count._all, 0);
+    const successRate = totalMessages
+      ? Number(((successCount / totalMessages) * 100).toFixed(2))
+      : 0;
 
     return {
       sessionStats: {
         count: sessionStats._count.id ?? 0,
-        totalRecipients: sessionStats._sum.totalAddresses ?? 0
+        totalRecipients: sessionStats._sum.totalAddresses ?? 0,
       },
       messageStats: {
         totalMessages,

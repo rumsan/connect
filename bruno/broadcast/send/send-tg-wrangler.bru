@@ -1,0 +1,41 @@
+meta {
+  name: send-tg-wrangler
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+   "transport": "{{transport-id-tg-wrangler}}",
+    "message": {
+      "content": "Hello from telegram transport test@username"
+    },
+    "addresses": [
+      "man_sth"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
+}

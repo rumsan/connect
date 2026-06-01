@@ -1,0 +1,41 @@
+meta {
+  name: send-telegram
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+   "transport": "{{transport-id-telegram}}",
+    "message": {
+      "content": "Hello from telegram transport test"
+    },
+    "addresses": [
+      "6672084715" //channelId
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
+}

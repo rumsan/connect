@@ -30,10 +30,11 @@ export class BroadcastLogQueue {
       //TODO: check if existingLog is null, if that is necessary
       const existingLogDetails = (existingLog.details as object) || {};
       const details = { ...existingLogDetails, ...data.details };
-      let isBroadcastComplete = data.status === BroadcastStatus.SUCCESS;
-      if (!isBroadcastComplete) {
-        isBroadcastComplete = data.attempt >= existingLog.Broadcast.maxAttempts; // +1 because attempt starts from 1
-      }
+      const isSuccess = data.status === BroadcastStatus.SUCCESS;
+      const isFail = data.status === BroadcastStatus.FAIL;
+      const isBroadcastComplete =
+        isSuccess ||
+        (isFail && data.attempt >= existingLog.Broadcast.maxAttempts); // attempt starts from 1
 
       await tx.broadcastLog.update({
         where: {
