@@ -9,47 +9,28 @@ import {
   BroadcastLogQueue,
 } from '@rsconnect/queue';
 import { Broadcast, QueueBroadcastLog } from '@rumsan/connect/types';
-import ari, { Channel, Client, Playback } from 'ari-client';
+import ari, { Channel, Client } from 'ari-client';
+import { randomBytes } from 'crypto';
+import { EventEmitter } from 'events';
+import { ChannelStateManager } from './channel-state.manager';
+import { PlaybackService } from './playback.service';
 
-interface IVRMenuOption {
-  digit: number;
-  prompt?: string;
-  hangup?: boolean;
-  action?: string; // For webhooks
-  destination?: string; // For webhooks
-}
-
-interface IVRMenu {
-  prompt: string;
-  options: IVRMenuOption[];
-}
-
-interface IVRDialPlan {
-  main: IVRMenu;
-  [key: string]: IVRMenu; // For other menus
-}
-
-interface ChannelState {
-  channelId: string;
-  ivrDialPlan: IVRDialPlan | null;
-  sessionId: string;
-  broadcastLogId: string;
-  address: string;
-  activePlayback: Playback | null;
-  activePlaybackId: string | null; // Track playback ID to prevent stale event handlers
-  hangupTimer: NodeJS.Timeout | null;
-  isActive: boolean;
-}
 @Injectable()
 export class IVRService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(IVRService.name);
   private client: Client;
   private config;
-  private channelStates: Map<string, ChannelState>; // Maps channelId -> ChannelState
+  private isConnected = false;
+  private isShuttingDown = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private broadcastAddressPrefix: string | null;
 
   constructor(
     private readonly batchManager: BatchManager,
     private readonly broadcastLogQueue: BroadcastLogQueue,
+    private readonly channelStateManager: ChannelStateManager,
+    private readonly playbackService: PlaybackService,
   ) {
     this.config = {
       appName: 'rs-connect',
@@ -61,14 +42,28 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       audioPath: process.env.ASTERISK_AUDIO_PATH,
       callerId: process.env.ASTERISK_CALLER_ID,
     };
-    this.channelStates = new Map(); // Maps channelId -> ChannelState
+    this.broadcastAddressPrefix = process.env.BROADCAST_ADDRESS_PREFIX || null;
     this.logger.log('IVRService initialized', this.config);
   }
 
   callEndpoint = (broadcastAddress: string) => {
+    // Strip +977 prefix if present
     if (broadcastAddress.startsWith('+977')) {
+      this.logger.log(`Stripping '+977' prefix from broadcast address: ${broadcastAddress}`);
       broadcastAddress = broadcastAddress.slice(4);
     }
+    if (broadcastAddress.startsWith('977')) {
+      this.logger.log(`Stripping '977' prefix from broadcast address: ${broadcastAddress}`);
+      broadcastAddress = broadcastAddress.slice(3);
+    }
+
+    // Apply broadcast address prefix if configured
+    if (this.broadcastAddressPrefix) {
+      this.logger.log(`Applying broadcast address prefix: ${this.broadcastAddressPrefix} to ${broadcastAddress}`);
+      broadcastAddress = `${this.broadcastAddressPrefix}${broadcastAddress}`;
+    }
+
+    this.logger.log(`Constructed call endpoint for broadcast address: ${broadcastAddress}`);
     return `${this.config.trunk}/${broadcastAddress}`;
   };
 
@@ -77,50 +72,72 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     broadcastLog: QueueBroadcastLog,
     ivrJSON?: string,
   ) {
-    try {
-      const ivrDialPlan = ivrJSON ? JSON.parse(ivrJSON) : null;
+    // Lazy connection: connect if not connected
+    if (!this.isConnected) {
+      this.logger.log(
+        'ARI not connected, attempting connection before call...',
+      );
+      try {
+        await this.connect();
+        this.setupEventHandlers();
+      } catch (err) {
+        throw new Error(
+          `Failed to connect to ARI: ${(err as Error).message}`,
+        );
+      }
+    }
 
-      const channel = await this.originateCall(
+    // Explicit Stasis verification before every call
+    const ready = await this.ensureConnected();
+    if (!ready) {
+      throw new Error('ARI not ready — Stasis app not registered');
+    }
+
+    const ivrDialPlan = ivrJSON ? JSON.parse(ivrJSON) : null;
+
+    // BUG FIX: Pre-generate channelId and register state BEFORE originate
+    // to prevent race condition where StasisStart fires before state is set.
+    // Use 24-char hex (96 bits) — UUID v4's 36 chars overflow Asterisk's
+    // default uniqueid VARCHAR(32) and triggers CDR/CEL truncation warnings.
+    const channelId = randomBytes(12).toString('hex');
+
+    this.channelStateManager.registerChannel({
+      channelId,
+      ivrDialPlan,
+      sessionId: broadcast.session,
+      broadcastLogId: broadcastLog.broadcastLogId,
+      address: broadcast.address,
+    });
+
+    try {
+      await this.originateCall(
+        channelId,
         this.callEndpoint(broadcast.address),
         `${broadcastLog.broadcastId} <${broadcast.address}>`,
         [broadcastLog.broadcastLogId, broadcast.session, broadcast.address],
       );
 
-      if (!channel?.id) {
-        throw new Error('Failed to originate call - no channel ID returned');
-      }
-
-      // Create and store channel state
-      const channelState: ChannelState = {
-        channelId: channel.id,
-        ivrDialPlan,
-        sessionId: broadcast.session,
-        broadcastLogId: broadcastLog.broadcastLogId,
-        address: broadcast.address,
-        activePlayback: null,
-        activePlaybackId: null,
-        hangupTimer: null,
-        isActive: true,
-      };
-
-      this.channelStates.set(channel.id, channelState);
-      this.batchManager.startMonitoring(channel.id, broadcastLog);
+      this.batchManager.startMonitoring(channelId, broadcastLog);
       this.logger.log(
-        `Broadcast started for IVR - Channel: ${channel.id}, Address: ${broadcast.address}`,
+        `Broadcast started for IVR - Channel: ${channelId}, Address: ${broadcast.address}`,
       );
     } catch (error) {
+      // Clean up pre-registered state on originate failure
+      this.channelStateManager.removeChannel(channelId);
       this.logger.error('Error in sendBroadcast:', error);
       throw error;
     }
   }
 
   async originateCall(
+    channelId: string,
     callEndpoint: string,
     callerId: string,
     appArgs: string[] = [],
   ) {
     try {
       return await this.client.channels.originate({
+        channelId,
         endpoint: callEndpoint,
         context: 'from-internal',
         priority: 1,
@@ -134,6 +151,31 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Ensures ARI is connected AND Stasis app is registered.
+   * Returns true if ready, false otherwise.
+   */
+  private async ensureConnected(): Promise<boolean> {
+    if (!this.isConnected || !this.client) {
+      return false;
+    }
+
+    // Double-check Stasis registration before returning true
+    try {
+      await this.client.applications.get({
+        applicationName: this.config.appName,
+      });
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `Stasis verification failed: ${(err as Error).message}`,
+      );
+      this.isConnected = false;
+      this.scheduleReconnect(1);
+      return false;
+    }
+  }
+
   private async connect() {
     try {
       const { appName, server, user, password } = this.config;
@@ -142,6 +184,54 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       this.client = await ari.connect(server, user, password);
       await this.client.start(appName);
 
+      // Confirm Asterisk actually registered our Stasis app on this WebSocket.
+      // If the WS opened but Asterisk hasn't bound the app, fail fast so the
+      // reconnect loop retries instead of leaving originate calls broken.
+      try {
+        await this.client.applications.get({ applicationName: appName });
+      } catch (err) {
+        throw new Error(
+          `Stasis app '${appName}' did not register with Asterisk: ${(err as Error).message}`,
+        );
+      }
+
+      this.isConnected = true;
+
+      // First sign of disconnect — don't wait for built-in retry to "succeed"
+      // with a stale Stasis registration on a restarted Asterisk. Tear down
+      // and do a full reconnect (new client + new start(appName)) which
+      // re-registers the app via a fresh WebSocket session.
+      this.client.once('WebSocketReconnecting', (err: Error) => {
+        if (this.isShuttingDown) return;
+        this.isConnected = false;
+        this.stopHeartbeat();
+        this.logger.warn(
+          `ARI WebSocket dropped (${err?.message ?? 'unknown'}) — forcing full reconnect`,
+        );
+        this.scheduleReconnect(1);
+      });
+
+      // Fallback: if built-in retry exhausts before our scheduled reconnect runs.
+      this.client.once('WebSocketMaxRetries', () => {
+        if (this.isShuttingDown) return;
+        this.isConnected = false;
+        this.stopHeartbeat();
+        this.logger.error('ARI WebSocket max retries exceeded');
+        this.scheduleReconnect(1);
+      });
+
+      this.client.on('WebSocketConnected', () => {
+        // DO NOT set isConnected = true here — it will be set by attemptReconnect()
+        // after full connect() + Stasis verification
+        this.logger.log('ARI WebSocket connected');
+      });
+
+      // Share the ARI client with dependent services
+      this.channelStateManager.setClient(this.client);
+      this.playbackService.setClient(this.client);
+
+      this.startHeartbeat();
+
       this.logger.log('ARI connected');
     } catch (error) {
       this.logger.error('Error connecting to ARI', error);
@@ -149,19 +239,14 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async onModuleInit() {
-    this.logger.log('Module Init');
-    await this.connect();
-    // Register event listeners only once at startup
-
+  private setupEventHandlers() {
     // Handle StasisStart - when a channel enters the Stasis application
     this.client.on('StasisStart', async (event, incomingChannel) => {
       try {
         const channelId = event.channel.id;
         const [broadcastLogId, sessionId, incomingAddress] = event.args || [];
 
-        // Get channel state
-        const channelState = this.channelStates.get(channelId);
+        const channelState = this.channelStateManager.getState(channelId);
         if (!channelState) {
           this.logger.warn(
             `StasisStart received for unknown channel: ${channelId}`,
@@ -169,7 +254,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
           return;
         }
 
-        // Update state with actual session info if available
         if (sessionId) channelState.sessionId = sessionId;
         if (broadcastLogId) channelState.broadcastLogId = broadcastLogId;
         if (incomingAddress) channelState.address = incomingAddress;
@@ -179,16 +263,17 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
           `Call Answered: ${incomingChannel.caller.number} on channel: ${channelId}`,
         );
 
-        // Check if this is an IVR call or regular audio call
         if (channelState.ivrDialPlan?.main?.prompt) {
           const mainPrompt = channelState.ivrDialPlan.main.prompt.replace(
             '.wav',
             '',
           );
-          await this.playPrompt(channelId, mainPrompt);
+          await this.playbackService.playPrompt(channelId, mainPrompt);
         } else {
-          // Regular audio playback
-          await this.playAudio(channelState.sessionId, incomingChannel);
+          await this.playbackService.playAudio(
+            channelState.sessionId,
+            incomingChannel,
+          );
         }
       } catch (error) {
         this.logger.error('Error in StasisStart handler:', error);
@@ -209,7 +294,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       try {
         const channelId = event.channel.id;
         this.logger.log(`StasisEnd received for channel: ${channelId}`);
-        this.cleanupChannel(channelId);
+        await this.channelStateManager.cleanupChannel(channelId);
       } catch (error) {
         this.logger.error('Error in StasisEnd handler:', error);
       }
@@ -221,14 +306,13 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
         const channelId = event.channel.id;
         const state = event.channel.state;
 
-        // If channel is hung up, cleanup
         if (state === 'Down' || state === 'Rsrvd') {
-          const channelState = this.channelStates.get(channelId);
+          const channelState = this.channelStateManager.getState(channelId);
           if (channelState?.isActive) {
             this.logger.log(
               `Channel ${channelId} state changed to ${state}, cleaning up`,
             );
-            this.cleanupChannel(channelId);
+            await this.channelStateManager.cleanupChannel(channelId);
           }
         }
       } catch (error) {
@@ -237,253 +321,115 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  private startHeartbeat() {
+    // Detect half-open ARI WebSockets (idle close by Asterisk, NAT timeout,
+    // etc.) that the ari-client library does not surface. Failing pings
+    // force a full reconnect so Stasis app stays bound.
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(async () => {
+      if (this.isShuttingDown || !this.client) return;
+      try {
+        await this.client.applications.get({
+          applicationName: this.config.appName,
+        });
+        // Explicitly set true on success to recover from false-negative states
+        if (!this.isConnected) {
+          this.logger.log(
+            'Heartbeat verified Stasis registration, marking connected',
+          );
+          this.isConnected = true;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `ARI heartbeat failed (${(err as Error).message}) — forcing reconnect`,
+        );
+        this.isConnected = false;
+        this.stopHeartbeat();
+        this.scheduleReconnect(1);
+      }
+    }, 10_000); // 10s heartbeat to keep WebSocket alive
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private scheduleReconnect(attempt: number) {
+    if (this.isShuttingDown) return;
+    if (this.reconnectTimer) return;
+    const delay = attempt === 1 ? 1_000 : Math.min(5_000 * attempt, 60_000);
+    this.logger.warn(
+      `ARI disconnected — reconnecting in ${delay / 1000}s (attempt ${attempt})`,
+    );
+    this.reconnectTimer = setTimeout(
+      () => this.attemptReconnect(attempt),
+      delay,
+    );
+  }
+
+  private async attemptReconnect(attempt: number) {
+    this.reconnectTimer = null;
+    if (this.isShuttingDown) return;
+    this.stopHeartbeat();
+    this.logger.log(`Attempting ARI full reconnect (attempt ${attempt})`);
+    try {
+      // Clean up the dead client before creating a new one
+      if (this.client) {
+        (this.client as unknown as EventEmitter).removeAllListeners();
+        try { this.client.stop(); } catch (_) { /* ignore */ }
+      }
+      await this.connect();
+      this.setupEventHandlers();
+      this.logger.log(
+        `ARI full reconnect succeeded on attempt ${attempt}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `ARI reconnect attempt ${attempt} failed:`,
+        error,
+      );
+      this.scheduleReconnect(attempt + 1);
+    }
+  }
+
+  async onModuleInit() {
+    this.logger.log('Module Init');
+    try {
+      await this.connect();
+      this.setupEventHandlers();
+      this.logger.log('ARI connection established successfully on startup');
+    } catch (error) {
+      this.logger.warn(
+        'Initial ARI connection failed, will retry on first call:',
+        error,
+      );
+      this.isConnected = false;
+      // Don't throw - allow worker to start even if Asterisk is down
+    }
+  }
+
   async onModuleDestroy() {
+    this.isShuttingDown = true;
+    this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.client) {
       this.logger.log('Stopping ARI client');
+      (this.client as unknown as EventEmitter).removeAllListeners();
       this.client.stop();
     }
-  }
-
-  async playAudio(sessionId: string, channel: Channel) {
-    const channelId = channel.id;
-    const channelState = this.channelStates.get(channelId);
-
-    if (!channelState || !channelState.isActive) {
-      this.logger.warn(
-        `Attempted to play audio on inactive or unknown channel: ${channelId}`,
-      );
-      return;
-    }
-
-    const audio = `${this.config.audioPath}/${sessionId}`;
-    const playbackId = `${channelId}-${audio}`;
-
-    const playback = this.client.Playback();
-    channelState.activePlayback = playback;
-    channelState.activePlaybackId = playbackId;
-
-    playback.once('PlaybackFinished', async () => {
-      // Only process if this is still the active playback
-      if (channelState.activePlaybackId !== playbackId) {
-        this.logger.log(
-          `PlaybackFinished for stale playback ${playbackId} on channel: ${channelId}, ignoring`,
-        );
-        return;
-      }
-
-      try {
-        if (channelState.isActive) {
-          await channel.hangup();
-        }
-      } catch (error) {
-        this.logger.error(
-          `Error hanging up channel ${channelId} after playback:`,
-          error,
-        );
-      }
-      this.logger.log(
-        `PlaybackFinished for channel: ${channelId}, caller: ${channel?.caller?.number}`,
-      );
-      channelState.activePlayback = null;
-      channelState.activePlaybackId = null;
-    });
-
-    await channel.play(
-      { playbackId: playbackId, media: `sound:${audio}` },
-      playback,
-    );
-    this.logger.log(`Playing recording for channel: ${channelId}`);
-    playback.once('PlaybackStarted', () => {
-      this.logger.log(
-        `PlaybackStarted for channel: ${channelId}, caller: ${channel?.caller?.number}`,
-      );
-    });
-  }
-
-  //////////// WORK FLOW CODE ///////////
-  private async playPrompt(
-    channelId: string,
-    media: string,
-    immediateHangup = false,
-  ) {
-    const channelState = this.channelStates.get(channelId);
-    if (!channelState || !channelState.isActive) {
-      this.logger.warn(
-        `Attempted to play prompt on inactive or unknown channel: ${channelId}`,
-      );
-      return;
-    }
-
-    try {
-      // Stop any active playback
-      await this.stopActivePlayback(channelId);
-      this.cancelScheduledHangup(channelId);
-
-      // Create a new playback
-      const playback = this.client.Playback();
-      const playbackId = playback.id;
-      channelState.activePlayback = playback;
-      channelState.activePlaybackId = playbackId;
-
-      await this.client.channels.play({
-        channelId: channelId,
-        playbackId: playbackId,
-        media: media,
-      });
-
-      this.logger.log(`Playback started: ${media} on channel: ${channelId}`);
-
-      // Handle playback completion
-      playback.once('PlaybackFinished', async () => {
-        // Only process if this is still the active playback
-        if (channelState.activePlaybackId !== playbackId) {
-          this.logger.log(
-            `PlaybackFinished for stale playback ${playbackId} on channel: ${channelId}, ignoring`,
-          );
-          return;
-        }
-
-        this.logger.log(`Playback finished on channel: ${channelId}`);
-        channelState.activePlayback = null;
-        channelState.activePlaybackId = null;
-        if (immediateHangup) {
-          // Hang up immediately after playback (option has hangup: true)
-          try {
-            await this.client.channels.hangup({ channelId });
-            this.logger.log(
-              `Channel ${channelId} hung up immediately after playback (hangup: true)`,
-            );
-            this.cleanupChannel(channelId);
-          } catch (error) {
-            this.logger.error(
-              `Error hanging up channel ${channelId}: ${error.message}`,
-            );
-            this.cleanupChannel(channelId);
-          }
-        } else {
-          // Schedule hangup after 10 seconds
-          if (channelState.isActive) {
-            this.scheduleHangup(channelId, 10000); // 10000 ms = 10s
-          }
-        }
-      });
-    } catch (error) {
-      this.logger.error(
-        `Error playing prompt on channel ${channelId}: ${error.message}`,
-      );
-      channelState.activePlayback = null;
-      channelState.activePlaybackId = null;
-    }
-  }
-
-  // Stop any active playback on a channel
-  async stopActivePlayback(channelId: string) {
-    const channelState = this.channelStates.get(channelId);
-    if (!channelState) {
-      return;
-    }
-
-    try {
-      if (channelState.activePlayback) {
-        // Clear the playback ID first to prevent event handlers from firing
-        const oldPlaybackId = channelState.activePlaybackId;
-        channelState.activePlaybackId = null;
-        
-        await channelState.activePlayback.stop();
-        this.logger.log(
-          `Stopped active playback ${oldPlaybackId} on channel: ${channelId}`,
-        );
-        channelState.activePlayback = null;
-      }
-    } catch (error) {
-      this.logger.error(
-        `Error stopping playback on channel ${channelId}: ${error.message}`,
-      );
-      channelState.activePlayback = null;
-      channelState.activePlaybackId = null;
-    }
-  }
-
-  // Schedule call hangup after a delay
-  async scheduleHangup(channelId: string, delay: number) {
-    const channelState = this.channelStates.get(channelId);
-    if (!channelState || !channelState.isActive) {
-      return;
-    }
-
-    // Cancel any existing hangup timer
-    this.cancelScheduledHangup(channelId);
-
-    const timer = setTimeout(async () => {
-      try {
-        // Double-check channel is still active before hanging up
-        const currentState = this.channelStates.get(channelId);
-        if (currentState?.isActive) {
-          this.logger.log(`Attempting to hang up channel: ${channelId}`);
-          await this.client.channels.hangup({ channelId });
-          this.logger.log(`Channel ${channelId} successfully hung up.`);
-          this.cleanupChannel(channelId);
-        }
-      } catch (error) {
-        this.logger.error(
-          `Error hanging up channel ${channelId}: ${error.message}`,
-        );
-        // Still cleanup even if hangup fails
-        this.cleanupChannel(channelId);
-      }
-    }, delay);
-
-    channelState.hangupTimer = timer;
-    this.logger.log(
-      `Scheduled hangup for channel ${channelId} in ${delay / 1000} seconds`,
-    );
-  }
-
-  // Cancel a scheduled hangup for a specific channel
-  cancelScheduledHangup(channelId: string) {
-    const channelState = this.channelStates.get(channelId);
-    if (!channelState) {
-      return;
-    }
-
-    if (channelState.hangupTimer) {
-      clearTimeout(channelState.hangupTimer);
-      channelState.hangupTimer = null;
-      this.logger.log(`Cancelled scheduled hangup for channel: ${channelId}`);
-    }
-  }
-
-  // Cleanup resources when the call ends
-  cleanupChannel(channelId: string) {
-    const channelState = this.channelStates.get(channelId);
-    if (!channelState) {
-      return;
-    }
-
-    // Mark channel as inactive first to prevent new operations
-    channelState.isActive = false;
-
-    // Stop any active playback (this will also clear activePlaybackId)
-    this.stopActivePlayback(channelId);
-
-    // Cancel any scheduled hangup
-    this.cancelScheduledHangup(channelId);
-
-    // Ensure playback ID is cleared
-    channelState.activePlaybackId = null;
-
-    // Remove channel state
-    this.channelStates.delete(channelId);
-
-    this.logger.log(`Cleaned up resources for channel: ${channelId}`);
   }
 
   // HANDLE DTMF SIGNALS
   async handleDTMF(channel: Channel, digit: string) {
     const channelId = channel.id;
-    const channelState = this.channelStates.get(channelId);
+    const channelState = this.channelStateManager.getState(channelId);
 
-    // Verify channel exists and is active
     if (!channelState) {
       this.logger.warn(
         `DTMF received for unknown channel: ${channelId}, digit: ${digit}`,
@@ -498,7 +444,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Verify this is an IVR call (has dial plan)
     if (!channelState.ivrDialPlan) {
       this.logger.warn(
         `DTMF received for non-IVR channel: ${channelId}, digit: ${digit}`,
@@ -508,15 +453,14 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
     try {
       this.logger.log(`DTMF received: ${digit} on channel: ${channelId}`);
-      await this.stopActivePlayback(channelId);
-      // Cancel any scheduled hangup if new interaction occurs
-      this.cancelScheduledHangup(channelId);
+      await this.channelStateManager.stopActivePlayback(channelId);
+      this.channelStateManager.cancelScheduledHangup(channelId);
 
-      // If digit is '0', replay the main IVR prompt
+      // Digit '0' replays the main IVR prompt
       if (digit === '0') {
         const mainPrompt = channelState.ivrDialPlan.main?.prompt;
         if (mainPrompt) {
-          await this.playPrompt(
+          await this.playbackService.playPrompt(
             channelId,
             mainPrompt.replace('.wav', ''),
           );
@@ -526,24 +470,27 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
       const options = channelState.ivrDialPlan.main?.options || [];
       const option = options.find((opt) => opt.digit === parseInt(digit));
-      // Play the corresponding prompt; if option has hangup: true, hang up immediately after playback
-      if (option && option.prompt) {
-        await this.playPrompt(
-          channel.id,
+
+      if (option?.prompt) {
+        await this.playbackService.playPrompt(
+          channelId,
           option.prompt.replace('.wav', ''),
           option.hangup === true,
         );
       } else {
-        await this.playPrompt(channelId, 'sound:option-is-invalid');
+        await this.playbackService.playPrompt(
+          channelId,
+          'sound:option-is-invalid',
+        );
       }
 
       // TODO: Trigger the webhook if provided
       // if (option?.action === 'webhook' && option?.destination) {
       //   this.sendWebhook(option.destination, { channelId, digit });
       // }
-    } catch (error) {
+    } catch (err) {
       this.logger.error(
-        `Error handling DTMF on channel ${channelId}: ${error.message}`,
+        `Error handling DTMF on channel ${channelId}: ${(err as Error).message}`,
       );
     }
   }
