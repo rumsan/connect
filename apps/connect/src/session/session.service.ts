@@ -131,6 +131,7 @@ export class SessionService {
         where: {
           app: appId,
           session: { in: sessionCuids },
+          ...(dto.status ? { status: dto.status } : {}),
         },
         orderBy,
       },
