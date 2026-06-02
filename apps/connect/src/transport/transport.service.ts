@@ -4,6 +4,7 @@ import { Transport } from '@prisma/client';
 import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
 import { CreateTransportDto } from './dto/create-transport.dto';
 import { ListTransportDto } from './dto/list-transport.dto';
+import { SetTransportPricingDto } from './dto/set-transport-pricing.dto';
 import { UpdateTransportDto } from './dto/update-transport.dto';
 
 
@@ -16,8 +17,24 @@ export class TransportService {
   async create(appId: string, dto: CreateTransportDto) {
     this.logger.log(`Creating transport for app ${appId}`);
     this.logger.debug(`Transport details: name=${dto.name}, type=${dto.type}`);
-    const transport = await this.prisma.transport.create({
-      data: { cuid: createId(), ...{ app: appId }, ...dto },
+    const { pricing, ...transportData } = dto;
+    const transport = await this.prisma.$transaction(async (tx) => {
+      const t = await tx.transport.create({
+        data: { cuid: createId(), app: appId, ...transportData },
+      });
+      if (pricing) {
+        await tx.transportPricing.create({
+          data: {
+            cuid: createId(),
+            transportCuid: t.cuid,
+            creditPerUnit: pricing.creditPerUnit,
+            unitType: pricing.unitType,
+            currency: pricing.currency ?? 'USD',
+            notes: pricing.notes,
+          },
+        });
+      }
+      return t;
     });
     this.logger.debug(`Transport created with cuid: ${transport.cuid}`);
     return transport;
@@ -58,9 +75,8 @@ export class TransportService {
   async findOne(cuid: string) {
     this.logger.log(`Finding transport with cuid: ${cuid}`);
     const transport = await this.prisma.transport.findUnique({
-      where: {
-        cuid,
-      },
+      where: { cuid },
+      include: { Pricing: true },
     });
     if (!transport) {
       this.logger.debug(`Transport not found for cuid: ${cuid}`);
@@ -86,5 +102,40 @@ export class TransportService {
     });
     this.logger.debug(`Transport removed successfully`);
     return transport;
+  }
+
+  async setPricing(transportCuid: string, dto: SetTransportPricingDto) {
+    this.logger.log(`Setting pricing for transport: ${transportCuid}`);
+    return this.prisma.transportPricing.upsert({
+      where: { transportCuid },
+      update: {
+        creditPerUnit: dto.creditPerUnit,
+        unitType: dto.unitType,
+        currency: dto.currency ?? 'USD',
+        notes: dto.notes,
+      },
+      create: {
+        cuid: createId(),
+        transportCuid,
+        creditPerUnit: dto.creditPerUnit,
+        unitType: dto.unitType,
+        currency: dto.currency ?? 'USD',
+        notes: dto.notes,
+      },
+    });
+  }
+
+  async getPricing(transportCuid: string) {
+    this.logger.log(`Getting pricing for transport: ${transportCuid}`);
+    return this.prisma.transportPricing.findUnique({
+      where: { transportCuid },
+    });
+  }
+
+  async removePricing(transportCuid: string) {
+    this.logger.log(`Removing pricing for transport: ${transportCuid}`);
+    return this.prisma.transportPricing.delete({
+      where: { transportCuid },
+    });
   }
 }

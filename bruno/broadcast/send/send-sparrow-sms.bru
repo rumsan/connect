@@ -1,0 +1,44 @@
+meta {
+  name: send-sparrow-sms
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-sparrow}}",
+    "message": {
+      "content": "Cool buddy ",
+      "meta": {
+          "url": "test1"
+      }
+    },
+    "addresses": [
+      "9841602388"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+   
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
+}

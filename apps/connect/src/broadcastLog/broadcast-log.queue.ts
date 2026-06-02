@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SessionStatus } from '@prisma/client';
 import {
   BroadcastStatus,
@@ -11,13 +12,19 @@ import { dev_SessionCompletionAlert } from '../utils/dev.alert';
 
 @Injectable()
 export class BroadcastLogQueue {
+  private readonly logger = new Logger(BroadcastLogQueue.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly broadcastService: BroadcastService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async update(data: QueueBroadcastLog) {
-    return this.prisma.$transaction(async (tx: PrismaService) => {
+    let sessionCompleted = false;
+    let sessionCuid = '';
+
+    await this.prisma.$transaction(async (tx: PrismaService) => {
       const existingLog = await tx.broadcastLog.findUnique({
         where: {
           cuid: data.broadcastLogId,
@@ -60,9 +67,15 @@ export class BroadcastLogQueue {
       });
 
       if (isBroadcastComplete) {
-        await this._checkSessionComplete(tx, existingLog.session);
+        sessionCuid = existingLog.session;
+        sessionCompleted = await this._checkSessionComplete(tx, sessionCuid);
       }
     });
+
+    if (sessionCompleted) {
+      this.logger.log(`Session ${sessionCuid} completed. Emitting event...`);
+      this.eventEmitter.emit('broadcast.session.completed', sessionCuid);
+    }
   }
 
   async updateDetails(data: QueueBroadcastLogDetails) {
@@ -102,7 +115,10 @@ export class BroadcastLogQueue {
     });
   }
 
-  private async _checkSessionComplete(tx: PrismaService, sessionId: string) {
+  private async _checkSessionComplete(
+    tx: PrismaService,
+    sessionId: string,
+  ): Promise<boolean> {
     const incompleteCount = await tx.broadcast.count({
       where: {
         session: sessionId,
@@ -112,14 +128,13 @@ export class BroadcastLogQueue {
 
     if (incompleteCount === 0) {
       await tx.session.update({
-        where: {
-          cuid: sessionId,
-        },
-        data: {
-          status: SessionStatus.COMPLETED,
-        },
+        where: { cuid: sessionId },
+        data: { status: SessionStatus.COMPLETED },
       });
       dev_SessionCompletionAlert(sessionId).then().catch();
+      return true;
     }
+
+    return false;
   }
 }

@@ -15,6 +15,14 @@ enum TransportType {
   ECHO
 }
 
+enum CreditUnitType {
+  MESSAGE
+  SEGMENT
+  API_CALL
+  SECOND
+  MINUTE
+}
+
 enum SessionStatus {
   NEW
   PENDING
@@ -76,6 +84,7 @@ model Transport {
   Sessions   Session[]
   Broadcasts Broadcast[]
   Templates  Template[]
+  Pricing    TransportPricing?
 
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
@@ -83,6 +92,21 @@ model Transport {
   deletedAt DateTime?
 
   @@map("tbl_transports")
+}
+
+model TransportPricing {
+  id            Int           @id @default(autoincrement())
+  cuid          String        @unique @default(cuid())
+  transportCuid String        @unique
+  transport     Transport     @relation(fields: [transportCuid], references: [cuid], onDelete: Cascade)
+  creditPerUnit Decimal       @db.Decimal(10, 6)
+  unitType      CreditUnitType
+  currency      String        @default("USD")
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@map("tbl_transport_pricing")
 }
 
 model Template {
@@ -206,6 +230,39 @@ model Application {
   deletedAt DateTime?
 
   @@map("tbl_applications")
+}
+
+model UsageSnapshot {
+  id              Int           @id @default(autoincrement())
+  cuid            String        @unique @default(cuid())
+  app             String
+  xref            String    @default("")
+  transportCuid   String
+  transportType   TransportType
+  date            DateTime      @db.Date
+
+  sessionCount    Int           @default(0)
+  broadcastCount  Int           @default(0)
+  successCount    Int           @default(0)
+  failCount       Int           @default(0)
+
+  totalCharacters Int           @default(0)
+  totalSegments   Int           @default(0)
+
+  totalDurationSec Int          @default(0)
+  totalCalls      Int           @default(0)
+
+  creditsUsed     Decimal       @default(0) @db.Decimal(14, 6)
+
+  sessionCuids    String[]
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([app, xref, transportCuid, date])
+  @@index([app, date])
+  @@index([app, xref, date])
+  @@map("tbl_usage_snapshots")
 }
 
 // ++++++++++++++++++ END: @rumsan/extensions/apps ++++++++++++++++++++++++++++++++
