@@ -71,6 +71,7 @@ export class UsageService {
       );
 
       await this.upsertSnapshot({
+        sessionCuid,
         app: session.app,
         xref: '',
         transportCuid: session.transport,
@@ -89,6 +90,7 @@ export class UsageService {
 
       if (session.xref) {
         await this.upsertSnapshot({
+          sessionCuid,
           app: session.app,
           xref: session.xref,
           transportCuid: session.transport,
@@ -139,6 +141,7 @@ export class UsageService {
   }
 
   private async upsertSnapshot(data: {
+    sessionCuid: string;
     app: string;
     xref: string;
     transportCuid: string;
@@ -179,6 +182,7 @@ export class UsageService {
         totalDurationSec: data.duration,
         totalCalls: data.calls,
         creditsUsed: data.credits,
+        sessionCuids: [data.sessionCuid],
       },
       update: {
         sessionCount: { increment: data.sessionIncrement },
@@ -190,6 +194,7 @@ export class UsageService {
         totalDurationSec: { increment: data.duration },
         totalCalls: { increment: data.calls },
         creditsUsed: { increment: data.credits },
+        sessionCuids: { push: [data.sessionCuid] },
       },
     });
   }
@@ -278,22 +283,34 @@ export class UsageService {
       if (to) where.date.lte = new Date(to);
     }
 
-    const result = await this.prisma.usageSnapshot.groupBy({
-      by: ['date'],
+    const transportCuids = await this.prisma.usageSnapshot.findMany({
       where,
-      _sum: {
-        creditsUsed: true,
-        sessionCount: true,
-        broadcastCount: true,
-      },
+      select: { transportCuid: true },
+      distinct: ['transportCuid'],
+    });
+    const tCuidList = transportCuids.map((t) => t.transportCuid);
+    const transports = await this.prisma.transport.findMany({
+      where: { cuid: { in: tCuidList } },
+      select: { cuid: true, name: true },
+    });
+    const transportNameMap = new Map(
+      transports.map((t) => [t.cuid, t.name]),
+    );
+
+    const snapshots = await this.prisma.usageSnapshot.findMany({
+      where,
       orderBy: { date: 'asc' },
     });
 
-    return result.map((r) => ({
-      date: r.date,
-      credits: Number(r._sum.creditsUsed ?? 0),
-      sessions: r._sum.sessionCount ?? 0,
-      broadcasts: r._sum.broadcastCount ?? 0,
+    return snapshots.map((s) => ({
+      date: s.date,
+      transportCuid: s.transportCuid,
+      transportName: transportNameMap.get(s.transportCuid) ?? 'Unknown',
+      transportType: s.transportType,
+      credits: Number(s.creditsUsed),
+      sessions: s.sessionCount,
+      broadcasts: s.broadcastCount,
+      sessionCuids: s.sessionCuids,
     }));
   }
 }

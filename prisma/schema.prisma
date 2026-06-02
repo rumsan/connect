@@ -254,6 +254,8 @@ model UsageSnapshot {
 
   creditsUsed     Decimal       @default(0) @db.Decimal(14, 6)
 
+  sessionCuids    String[]
+
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 

@@ -1,10 +1,10 @@
 -- CreateEnum
 CREATE TYPE "CreditUnitType" AS ENUM ('MESSAGE', 'SEGMENT', 'API_CALL', 'SECOND', 'MINUTE');
 
--- AlterTable
+-- AlterTable (from templates migration)
 ALTER TABLE "tbl_templates" ALTER COLUMN "media" DROP DEFAULT;
 
--- CreateTable
+-- CreateTable: transport pricing
 CREATE TABLE "tbl_transport_pricing" (
     "id" SERIAL NOT NULL,
     "cuid" TEXT NOT NULL,
@@ -15,11 +15,10 @@ CREATE TABLE "tbl_transport_pricing" (
     "notes" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
-
     CONSTRAINT "tbl_transport_pricing_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
+-- CreateTable: usage snapshots
 CREATE TABLE "tbl_usage_snapshots" (
     "id" SERIAL NOT NULL,
     "cuid" TEXT NOT NULL,
@@ -37,29 +36,22 @@ CREATE TABLE "tbl_usage_snapshots" (
     "totalDurationSec" INTEGER NOT NULL DEFAULT 0,
     "totalCalls" INTEGER NOT NULL DEFAULT 0,
     "creditsUsed" DECIMAL(14,6) NOT NULL DEFAULT 0,
+    "sessionCuids" TEXT[],
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
-
     CONSTRAINT "tbl_usage_snapshots_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
+-- Indexes
 CREATE UNIQUE INDEX "tbl_transport_pricing_cuid_key" ON "tbl_transport_pricing"("cuid");
-
--- CreateIndex
 CREATE UNIQUE INDEX "tbl_transport_pricing_transportCuid_key" ON "tbl_transport_pricing"("transportCuid");
-
--- CreateIndex
 CREATE UNIQUE INDEX "tbl_usage_snapshots_cuid_key" ON "tbl_usage_snapshots"("cuid");
-
--- CreateIndex
 CREATE INDEX "tbl_usage_snapshots_app_date_idx" ON "tbl_usage_snapshots"("app", "date");
-
--- CreateIndex
 CREATE INDEX "tbl_usage_snapshots_app_xref_date_idx" ON "tbl_usage_snapshots"("app", "xref", "date");
-
--- CreateIndex
 CREATE UNIQUE INDEX "tbl_usage_snapshots_app_xref_transportCuid_date_key" ON "tbl_usage_snapshots"("app", "xref", "transportCuid", "date");
 
--- AddForeignKey
+-- Foreign keys
 ALTER TABLE "tbl_transport_pricing" ADD CONSTRAINT "tbl_transport_pricing_transportCuid_fkey" FOREIGN KEY ("transportCuid") REFERENCES "tbl_transports"("cuid") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Make xref non-nullable with default
+ALTER TABLE "tbl_usage_snapshots" ALTER COLUMN "xref" SET NOT NULL, ALTER COLUMN "xref" SET DEFAULT '';
