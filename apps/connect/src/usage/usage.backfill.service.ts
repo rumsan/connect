@@ -12,7 +12,9 @@ export class UsageBackfillService {
   ) {}
 
   async backfill(batchSize = 100, concurrency = 5) {
-    this.logger.log('Starting usage backfill...');
+    this.logger.log('Clearing existing usage snapshots...');
+    await this.prisma.usageSnapshot.deleteMany();
+    this.logger.log('Starting usage backfill from scratch...');
     let cursor: number | undefined;
     let total = 0;
 

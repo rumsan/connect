@@ -40,9 +40,7 @@ export class UsageService {
       const successCount = broadcasts.filter(
         (b) => b.status === 'SUCCESS',
       ).length;
-      const failCount = broadcasts.filter(
-        (b) => b.status === 'FAIL',
-      ).length;
+      const failCount = broadcasts.filter((b) => b.status === 'FAIL').length;
 
       let chars = 0;
       let segments = 0;
@@ -196,12 +194,7 @@ export class UsageService {
     });
   }
 
-  async getUsage(
-    app: string,
-    xref: string,
-    from?: string,
-    to?: string,
-  ) {
+  async getUsage(app: string, xref: string, from?: string, to?: string) {
     const where: any = { app, xref };
     if (from || to) {
       where.date = {};
@@ -214,7 +207,16 @@ export class UsageService {
       orderBy: { date: 'asc' },
     });
 
-    const byTransportType: Record<string, any> = {};
+    const transportCuids = [...new Set(snapshots.map((s) => s.transportCuid))];
+    const transports = await this.prisma.transport.findMany({
+      where: { cuid: { in: transportCuids } },
+      select: { cuid: true, name: true, type: true },
+    });
+    const transportMap = new Map(
+      transports.map((t) => [t.cuid, { name: t.name, type: t.type }]),
+    );
+
+    const byTransport: Record<string, any> = {};
     const totals = {
       sessions: 0,
       broadcasts: 0,
@@ -228,9 +230,13 @@ export class UsageService {
     };
 
     for (const s of snapshots) {
-      const t = s.transportType;
-      if (!byTransportType[t]) {
-        byTransportType[t] = {
+      const cuid = s.transportCuid;
+      if (!byTransport[cuid]) {
+        const info = transportMap.get(cuid);
+        byTransport[cuid] = {
+          transportCuid: cuid,
+          transportName: info?.name ?? 'Unknown',
+          transportType: s.transportType,
           broadcasts: 0,
           success: 0,
           fail: 0,
@@ -241,14 +247,14 @@ export class UsageService {
           credits: 0,
         };
       }
-      byTransportType[t].broadcasts += s.broadcastCount;
-      byTransportType[t].success += s.successCount;
-      byTransportType[t].fail += s.failCount;
-      byTransportType[t].chars += s.totalCharacters;
-      byTransportType[t].segments += s.totalSegments;
-      byTransportType[t].duration += s.totalDurationSec;
-      byTransportType[t].calls += s.totalCalls;
-      byTransportType[t].credits += Number(s.creditsUsed);
+      byTransport[cuid].broadcasts += s.broadcastCount;
+      byTransport[cuid].success += s.successCount;
+      byTransport[cuid].fail += s.failCount;
+      byTransport[cuid].chars += s.totalCharacters;
+      byTransport[cuid].segments += s.totalSegments;
+      byTransport[cuid].duration += s.totalDurationSec;
+      byTransport[cuid].calls += s.totalCalls;
+      byTransport[cuid].credits += Number(s.creditsUsed);
 
       totals.sessions += s.sessionCount;
       totals.broadcasts += s.broadcastCount;
@@ -261,15 +267,10 @@ export class UsageService {
       totals.credits += Number(s.creditsUsed);
     }
 
-    return { totals, byTransportType };
+    return { totals, byTransport: Object.values(byTransport) };
   }
 
-  async getCredits(
-    app: string,
-    xref: string,
-    from?: string,
-    to?: string,
-  ) {
+  async getCredits(app: string, xref: string, from?: string, to?: string) {
     const where: any = { app, xref };
     if (from || to) {
       where.date = {};
