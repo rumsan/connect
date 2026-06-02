@@ -1,0 +1,44 @@
+meta {
+  name: send-sparrow-sms
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "mxp8k2329unggvqn4jm3xth3",
+    "message": {
+      "content": "This is a simple test message created to track usage and validate character limits in the system. It ensures that input handling, storage, and processing work correctly while providing a consistent sample for debugging, monitoring, and performance checks.",
+      "meta": {
+          "url": "test1"
+      }
+    },
+    "addresses": [
+      "9801109703"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "options": {
+   
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
+}
