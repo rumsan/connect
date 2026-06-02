@@ -1,0 +1,45 @@
+meta {
+  name: send-api-twilio-whatapp
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-api}}",
+    "message": {
+      "content": "{{TWILIO_WHATSAPP_TEST_TEMPALTE_SID}}",//Twilio template ID
+      "meta": {
+          "url": "test1"
+      }
+    },
+    "addresses": [
+      "{{WHATSAPP_DEV_PHONE}}"
+    ],
+    "maxAttempts": 5,
+    "trigger": "IMMEDIATE",//SCHEDULED
+    "webhook": "",
+    "options": {
+      "scheduledTimestamp": "2026-02-09T14:02:00+05:45",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("session-id", data.cuid);
+  }
+}

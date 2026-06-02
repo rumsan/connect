@@ -24,17 +24,20 @@ body:json {
       }
     },
     "addresses": [
-   "{{dev-email}}", "pratiksha@mailinator.com"
+   "{{dev-email}}", "bipinprjl@gmail.com"
     ],
     "xref": "hqbdoaa5eh3o8jdto671yey3",
     "maxAttempts": 5,
-    "trigger": "IMMEDIATE",
+    "trigger": "SCHEDULED",
     "webhook": "",
     "options": {
-      "attemptIntervalMinutes": "5"
+      "scheduledTimestamp": "2026-01-29T15:49:00+05:45",
+      "attemptIntervalMinutes": "5",
+      
     }
   }
 }
+
 
 tests {
   var data = res.getBody().data;

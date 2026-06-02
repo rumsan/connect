@@ -1,0 +1,20 @@
+meta {
+  name: list
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{url}}/template?appId={{app-id}}&transportId={{transport-id-twilio}}
+  body: json
+  auth: none
+}
+
+params:query {
+  appId: {{app-id}}
+  transportId: {{transport-id-twilio}}
+}
+
+headers {
+  app-id: {{app-id}}
+}

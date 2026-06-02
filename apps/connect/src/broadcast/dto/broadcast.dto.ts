@@ -12,6 +12,28 @@ import {
 import { BroadcastStatus, TriggerType } from '@rumsan/connect';
 import { PaginationDto } from '../../utils/pagination.dto';
 
+export class ContentMessageDto {
+  @ApiProperty({ description: 'Message content', example: 'Hello World' })
+  @IsNotEmpty()
+  @IsString()
+  content: string;
+
+  @ApiProperty({ description: 'Meta data for the message' })
+  @IsOptional()
+  meta?: Record<string, any>;
+}
+
+export class TemplateMessageDto {
+  @ApiProperty({ description: 'Template ID', example: 'template-123' })
+  @IsNotEmpty()
+  @IsString()
+  templateId: string;
+
+  @ApiProperty({ description: 'Meta data for the message' })
+  @IsOptional()
+  meta?: Record<string, any>;
+}
+
 export class MessageDto {
   @ApiProperty({ description: 'Message content', example: 'Hello World' })
   @IsNotEmpty()
@@ -48,7 +70,7 @@ export class BroadcastDto {
 
   @ApiProperty({ description: 'Message content' })
   @IsNotEmpty()
-  message: MessageDto;
+  message: ContentMessageDto | TemplateMessageDto;
 
   @ApiProperty({
     description: 'List of addresses to send the message to',

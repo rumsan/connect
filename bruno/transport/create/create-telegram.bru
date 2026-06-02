@@ -1,0 +1,69 @@
+meta {
+  name: create-telegram
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{url}}/transports
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+      "app": "{{app-id}}",
+      "name": "Telegram Bot",
+      "type": "API",
+      "validationAddress": "ANY",
+      "validationContent": "TEXT",
+      "config": {
+          "url": "https://api.telegram.org/bot{{TELEGRAM_BOT_TOKEN}}/sendMessage",
+          "body": {
+            "chat_id": "{%address%}",
+            "text": "{%message.content%}",
+            "parse_mode": "HTML"
+          },
+          "meta": {
+            "provider": "telegram"
+          }
+      }
+  }
+  
+  
+  // {
+    // "name": "Telegram Bot",
+    // "type": "API",
+    // "validationAddress": "ANY",
+    // "validationContent": "TEXT",
+    // "config": {
+    // "url": "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage",
+    // "method": "POST",
+    // "headers": {
+    // "Content-Type": "application/json"
+    // },
+    // "body": {
+    // "chat_id": "{%address%}",
+    // "text": "{%message.content%}",
+    // "parse_mode": "HTML"
+    // },
+    // "meta": {
+    // "provider": "telegram"
+    // }
+    // }
+  // }
+  
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setVar("transport-id-telegram", data.cuid);
+    bru.setVar("transport-id", data.cuid);
+  }
+}

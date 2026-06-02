@@ -1,6 +1,8 @@
 import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { QueueModule } from '@rsconnect/queue';
 import {
   AmqpModule,
   ApiWorkerModule,
@@ -15,24 +17,28 @@ import amqp from 'amqp-connection-manager';
 import { Channel } from 'amqplib';
 import { BroadcastModule } from '../broadcast/broadcast.module';
 import { BroadcastLogModule } from '../broadcastLog/broadcast-log.module';
-//import { QueueModule } from '../queues/queue.module';
-import { QueueModule } from '@rsconnect/queue';
+import { QueueModule as LocalQueueModule } from '../queues/queue.module';
 import { SessionModule } from '../session/session.module';
+import { TemplateModule } from '../template/template.module';
 import { TransportModule } from '../transport/transport.module';
+import { UsageModule } from '../usage/usage.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { WebhookModule } from '../webhook/webhook.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    EventEmitterModule.forRoot(),
     RumsanAppModule,
     PrismaModule,
     SessionModule,
     TransportModule,
     BroadcastModule,
     BroadcastLogModule,
+    TemplateModule,
     QueueModule,
-
+    WebhookModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -64,18 +70,19 @@ import { AppService } from './app.service';
             channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
             channel.assertQueue(QUEUES.TRANSPORT_SMTP, { durable: true });
             channel.assertQueue(QUEUES.TRANSPORT_VOICE, { durable: true });
-            channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
             channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
           },
         });
       },
     }),
+    LocalQueueModule,
     DataProviderModule.forRootAsync('prisma'),
     ApiWorkerModule,
     EchoWorkerModule,
     SmtpWorkerModule,
+    UsageModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}
