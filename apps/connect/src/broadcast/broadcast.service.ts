@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -48,6 +49,7 @@ export class BroadcastService {
     private readonly broadcastQueue: BroadcastQueue,
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
     private readonly broadcastValidationService: BroadcastValidationService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly twilioBatchingService: TwilioBatchingService,
   ) {}
 
@@ -485,6 +487,7 @@ export class BroadcastService {
           status: SessionStatus.COMPLETED,
         },
       });
+      this.eventEmitter.emit('broadcast.session.completed', sessionCuid);
       dev_SessionCompletionAlert(sessionCuid).then().catch();
       return true;
     }
