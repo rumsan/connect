@@ -17,8 +17,24 @@ export class TransportService {
   async create(appId: string, dto: CreateTransportDto) {
     this.logger.log(`Creating transport for app ${appId}`);
     this.logger.debug(`Transport details: name=${dto.name}, type=${dto.type}`);
-    const transport = await this.prisma.transport.create({
-      data: { cuid: createId(), ...{ app: appId }, ...dto },
+    const { pricing, ...transportData } = dto;
+    const transport = await this.prisma.$transaction(async (tx) => {
+      const t = await tx.transport.create({
+        data: { cuid: createId(), app: appId, ...transportData },
+      });
+      if (pricing) {
+        await tx.transportPricing.create({
+          data: {
+            cuid: createId(),
+            transportCuid: t.cuid,
+            creditPerUnit: pricing.creditPerUnit,
+            unitType: pricing.unitType,
+            currency: pricing.currency ?? 'USD',
+            notes: pricing.notes,
+          },
+        });
+      }
+      return t;
     });
     this.logger.debug(`Transport created with cuid: ${transport.cuid}`);
     return transport;
@@ -59,9 +75,8 @@ export class TransportService {
   async findOne(cuid: string) {
     this.logger.log(`Finding transport with cuid: ${cuid}`);
     const transport = await this.prisma.transport.findUnique({
-      where: {
-        cuid,
-      },
+      where: { cuid },
+      include: { Pricing: true },
     });
     if (!transport) {
       this.logger.debug(`Transport not found for cuid: ${cuid}`);
