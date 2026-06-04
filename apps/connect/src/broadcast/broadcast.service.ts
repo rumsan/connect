@@ -41,6 +41,11 @@ const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 export class BroadcastService {
   private readonly logger = new Logger(BroadcastService.name);
 
+  // Per-session mutex. Prevents two concurrent sendBroadcasts for the same
+  // session from racing on the SELECT-then-UPDATE of SCHEDULED broadcasts,
+  // which was causing duplicate broadcast_log rows and duplicate Twilio sends.
+  private readonly sessionSendLocks = new Map<string, Promise<void>>();
+
   constructor(
     @InjectQueue(QUEUES.SCHEDULED) public scheduleQueue: Queue,
     private readonly prisma: PrismaService,
@@ -267,6 +272,33 @@ export class BroadcastService {
   }
 
   async sendBroadcasts(sessionCuid: string, batchSize = 0) {
+    // Serialize concurrent sendBroadcasts calls for the same session. Without
+    // this, two parallel READINESS_CONFIRM messages (e.g. from the cron + the
+    // cascade in ApiWorker._sendBroadcast) would both run the SELECT, both see
+    // the same SCHEDULED row, and both create broadcast_log rows + AMQP jobs.
+    const prior = this.sessionSendLocks.get(sessionCuid) ?? Promise.resolve();
+    let releaseLock!: () => void;
+    const newLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    this.sessionSendLocks.set(
+      sessionCuid,
+      prior.then(() => newLock),
+    );
+    await prior;
+    try {
+      await this._sendBroadcastsLocked(sessionCuid, batchSize);
+    } finally {
+      releaseLock();
+      // Only clear the map entry if we're still the tail of the chain, so a
+      // newer pending lock doesn't get orphaned.
+      if (this.sessionSendLocks.get(sessionCuid) === newLock) {
+        this.sessionSendLocks.delete(sessionCuid);
+      }
+    }
+  }
+
+  private async _sendBroadcastsLocked(sessionCuid: string, batchSize = 0) {
     this.logger.log('Sending broadcasts for session:', sessionCuid);
     const session = await this.prisma.session.findUnique({
       where: {
@@ -344,6 +376,8 @@ export class BroadcastService {
           data: {
             status: BroadcastStatus.FAIL,
             isComplete: true,
+            attempts: { increment: 1 },
+            lastAttempt: new Date(),
             disposition: {
               error: 'Invalid phone number.',
               code: 'INVALID_PHONE',
@@ -540,6 +574,33 @@ export class BroadcastService {
 
     const broadcastIds = broadcastQueueData.map((b) => b.broadcastId);
 
+    // CAS-style claim: only flip rows that are still SCHEDULED. This stops
+    // duplicate queueing if a parallel sendBroadcasts somehow gets through the
+    // session mutex (e.g. when the connect-service runs more than one replica).
+    const claim = await this.prisma.broadcast.updateMany({
+      where: {
+        cuid: { in: broadcastIds },
+        status: BroadcastStatus.SCHEDULED,
+      },
+      data: {
+        status: BroadcastStatus.PENDING,
+        attempts: { increment: 1 },
+        lastAttempt: new Date(),
+      },
+    });
+
+    if (claim.count === 0) {
+      this.logger.warn(
+        `_addToQueue: all ${broadcastIds.length} candidate broadcasts were already claimed by another process; skipping log/queue. session=${session.cuid}`,
+      );
+      return;
+    }
+    if (claim.count !== broadcastIds.length) {
+      this.logger.warn(
+        `_addToQueue: only ${claim.count}/${broadcastIds.length} broadcasts were SCHEDULED at update time; proceeding with the full set (logs will be best-effort). session=${session.cuid}`,
+      );
+    }
+
     await this.prisma.broadcastLog.createMany({
       data: broadcastQueueData.map((broadcast) => {
         return {
@@ -551,20 +612,6 @@ export class BroadcastService {
           attempt: broadcast.attempt,
         };
       }),
-    });
-
-    await this.prisma.broadcast.updateMany({
-      where: {
-        cuid: {
-          in: broadcastIds,
-        },
-      },
-      data: {
-        status: BroadcastStatus.PENDING,
-        attempts: {
-          increment: 1,
-        },
-      },
     });
 
     await this.broadcastQueue.broadcast(queueTransport, {
