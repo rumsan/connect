@@ -7,6 +7,12 @@ export type CallDetails = {
   hangupDetails?: Record<string, string>;
   cdr?: Record<string, string>;
   ivrSequence?: string[];
+  playbackOk?: boolean;
+  playbackStarted?: boolean;
+  playbackFailed?: boolean;
+  playbackError?: string;
+  errorTag?: string;
+  ageMs?: number;
 };
 
 export enum CallDisposition {
