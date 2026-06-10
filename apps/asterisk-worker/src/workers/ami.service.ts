@@ -9,6 +9,7 @@ import {
 import { ChannelWrapper } from 'amqp-connection-manager';
 import AsteriskManager from 'asterisk-manager';
 import { getAsteriskDisposition } from '../utils';
+import { ChannelStateManager } from './channel-state.manager';
 
 const amiConfig = {
   host: process.env.ASTERISK_HOST,
@@ -30,17 +31,43 @@ export class AMIService implements OnModuleDestroy {
   // The old code used one ivrSequence[] for ALL concurrent calls, causing
   // jumbled reports where digits from different calls were mixed together.
   private ivrSequences = new Map<string, string[]>();
+  private ivrSequenceTimestamps = new Map<string, number>();
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private ivrReaperTimer: NodeJS.Timeout | null = null;
   private isDestroyed = false;
+  private readonly ivrSequenceTtlMs =
+    +(process.env['IVR_SEQUENCE_TTL_MS'] as string) || 300_000;
+  private readonly reaperIntervalMs =
+    +(process.env['REAPER_INTERVAL_MS'] as string) || 60_000;
 
   constructor(
     @Inject('AMQP_CONNECTION')
     protected readonly channel: ChannelWrapper,
     private readonly batchManager: BatchManger,
     private readonly broadcastLogQueue: BroadcastLogQueue,
+    private readonly channelStateManager: ChannelStateManager,
   ) {
     this.connect();
+    this.startIvrReaper();
+  }
+
+  private startIvrReaper() {
+    this.ivrReaperTimer = setInterval(() => {
+      const now = Date.now();
+      const expired: string[] = [];
+      for (const [id, ts] of this.ivrSequenceTimestamps.entries()) {
+        if (now - ts > this.ivrSequenceTtlMs) expired.push(id);
+      }
+      for (const id of expired) {
+        this.logger.warn(
+          `Reaper expiring stale ivrSequence ${id} (age=${now - (this.ivrSequenceTimestamps.get(id) ?? 0)}ms)`,
+        );
+        this.ivrSequences.delete(id);
+        this.ivrSequenceTimestamps.delete(id);
+      }
+    }, this.reaperIntervalMs);
+    this.ivrReaperTimer.unref?.();
   }
 
   connect() {
@@ -103,25 +130,47 @@ export class AMIService implements OnModuleDestroy {
           // Retrieve the per-channel DTMF sequence and clean up
           const ivrSequence = this.ivrSequences.get(evt.uniqueid) || [];
           this.ivrSequences.delete(evt.uniqueid);
+          this.ivrSequenceTimestamps.delete(evt.uniqueid);
 
-          broadcastLog.status =
-            disposition === CallDisposition.ANSWERED
-              ? BroadcastStatus.SUCCESS
-              : BroadcastStatus.FAIL;
+          // Read playback observability BEFORE Stasis cleanup races
+          const ps = this.channelStateManager.getPlaybackStatus(evt.uniqueid);
+          const answered = disposition === CallDisposition.ANSWERED;
+          const playbackOk =
+            ps?.playbackStarted === true && ps?.playbackFailed !== true;
+
+          let status: BroadcastStatus;
+          let errorTag: string | undefined;
+          if (!answered) {
+            status = BroadcastStatus.FAIL;
+          } else if (!playbackOk) {
+            status = BroadcastStatus.FAIL;
+            errorTag = 'ANSWERED_NO_PLAYBACK';
+          } else {
+            status = BroadcastStatus.SUCCESS;
+          }
+
+          broadcastLog.status = status;
           broadcastLog.details = {
             trunk: amiConfig.trunk,
             disposition,
+            playbackOk,
+            playbackStarted: ps?.playbackStarted ?? false,
+            playbackFailed: ps?.playbackFailed ?? false,
+            playbackError: ps?.playbackError,
+            errorTag,
             hangupDetails: evt,
             ivrSequence: [...ivrSequence], // snapshot copy
           };
           await this.broadcastLogQueue.addVoice(broadcastLog);
           await this.batchManager.endMonitoring(evt.uniqueid);
+          this.channelStateManager.consumePlaybackSnapshot(evt.uniqueid);
           this.logger.log(
-            `Call Hangup: ${evt.uniqueid}, DTMF sequence: [${ivrSequence.join(',')}]`,
+            `Call Hangup: ${evt.uniqueid}, status=${status}${errorTag ? ` (${errorTag})` : ''}, DTMF: [${ivrSequence.join(',')}]`,
           );
         } else {
           // Not a tracked call — clean up any stale DTMF data just in case
           this.ivrSequences.delete(evt.uniqueid);
+          this.ivrSequenceTimestamps.delete(evt.uniqueid);
           console.log('=====> Call Received: ', evt.calleridnum);
         }
       }
@@ -159,6 +208,7 @@ export class AMIService implements OnModuleDestroy {
         if (sequence) {
           sequence.push(evt.digit);
         }
+        this.ivrSequenceTimestamps.set(uniqueid, Date.now());
         this.logger.debug(
           `DTMF digit '${evt.digit}' recorded for channel ${uniqueid}`,
         );
@@ -188,6 +238,10 @@ export class AMIService implements OnModuleDestroy {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.ivrReaperTimer) {
+      clearInterval(this.ivrReaperTimer);
+      this.ivrReaperTimer = null;
     }
     if (this.ami) {
       try {

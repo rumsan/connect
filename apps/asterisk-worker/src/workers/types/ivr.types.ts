@@ -28,4 +28,15 @@ export interface ChannelState {
   activePlaybackId: string | null;
   hangupTimer: NodeJS.Timeout | null;
   isActive: boolean;
+  playbackStarted: boolean;
+  playbackFailed: boolean;
+  playbackError?: string;
+  createdAt: number;
+  lastActivityAt: number;
+}
+
+export interface PlaybackStatus {
+  playbackStarted: boolean;
+  playbackFailed: boolean;
+  playbackError?: string;
 }

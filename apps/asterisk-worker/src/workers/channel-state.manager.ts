@@ -1,15 +1,54 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Client } from 'ari-client';
-import { ChannelState, IVRDialPlan } from './types/ivr.types';
+import {
+  ChannelState,
+  IVRDialPlan,
+  PlaybackStatus,
+} from './types/ivr.types';
 
 @Injectable()
-export class ChannelStateManager {
+export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ChannelStateManager.name);
   private client: Client;
   private channelStates = new Map<string, ChannelState>();
+  // Short-lived snapshot of playback status, retained briefly AFTER cleanup
+  // so the AMI Hangup handler (which fires AFTER StasisEnd) can still read it.
+  private playbackSnapshots = new Map<
+    string,
+    PlaybackStatus & { snapshotAt: number }
+  >();
+  private readonly snapshotRetentionMs = 60_000;
+  private reaperTimer: NodeJS.Timeout | null = null;
+  private readonly channelTtlMs =
+    +(process.env['CHANNEL_TTL_MS'] as string) || 180_000;
+  private readonly reaperIntervalMs =
+    +(process.env['REAPER_INTERVAL_MS'] as string) || 60_000;
 
   setClient(client: Client) {
     this.client = client;
+  }
+
+  onModuleInit() {
+    this.reaperTimer = setInterval(
+      () => this.reap(),
+      this.reaperIntervalMs,
+    );
+    this.reaperTimer.unref?.();
+    this.logger.log(
+      `Channel reaper started (ttl=${this.channelTtlMs}ms, interval=${this.reaperIntervalMs}ms)`,
+    );
+  }
+
+  onModuleDestroy() {
+    if (this.reaperTimer) {
+      clearInterval(this.reaperTimer);
+      this.reaperTimer = null;
+    }
   }
 
   registerChannel(params: {
@@ -19,6 +58,7 @@ export class ChannelStateManager {
     broadcastLogId: string;
     address: string;
   }): ChannelState {
+    const now = Date.now();
     const channelState: ChannelState = {
       channelId: params.channelId,
       ivrDialPlan: params.ivrDialPlan,
@@ -29,6 +69,11 @@ export class ChannelStateManager {
       activePlaybackId: null,
       hangupTimer: null,
       isActive: true,
+      playbackStarted: false,
+      playbackFailed: false,
+      playbackError: undefined,
+      createdAt: now,
+      lastActivityAt: now,
     };
 
     this.channelStates.set(params.channelId, channelState);
@@ -36,6 +81,76 @@ export class ChannelStateManager {
       `Channel registered: ${params.channelId}, Address: ${params.address}`,
     );
     return channelState;
+  }
+
+  markPlaybackStarted(channelId: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.playbackStarted = true;
+    s.lastActivityAt = Date.now();
+  }
+
+  markPlaybackFailed(channelId: string, error: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.playbackFailed = true;
+    s.playbackError = error;
+    s.lastActivityAt = Date.now();
+  }
+
+  getPlaybackStatus(channelId: string): PlaybackStatus | undefined {
+    const s = this.channelStates.get(channelId);
+    if (s) {
+      return {
+        playbackStarted: s.playbackStarted,
+        playbackFailed: s.playbackFailed,
+        playbackError: s.playbackError,
+      };
+    }
+    // Channel already cleaned up (StasisEnd ran before AMI Hangup). Fall back
+    // to the post-cleanup snapshot so the AMI handler can still tag the call.
+    const snap = this.playbackSnapshots.get(channelId);
+    if (snap) {
+      return {
+        playbackStarted: snap.playbackStarted,
+        playbackFailed: snap.playbackFailed,
+        playbackError: snap.playbackError,
+      };
+    }
+    return undefined;
+  }
+
+  consumePlaybackSnapshot(channelId: string) {
+    this.playbackSnapshots.delete(channelId);
+  }
+
+  private async reap() {
+    const now = Date.now();
+    const expired: string[] = [];
+    for (const [id, state] of this.channelStates.entries()) {
+      if (now - state.lastActivityAt > this.channelTtlMs) expired.push(id);
+    }
+    for (const id of expired) {
+      const state = this.channelStates.get(id);
+      if (!state) continue;
+      this.logger.warn(
+        `Reaper expiring stuck channel ${id} (age=${now - state.createdAt}ms, started=${state.playbackStarted}, failed=${state.playbackFailed})`,
+      );
+      if (this.client) {
+        try {
+          await this.client.channels.hangup({ channelId: id });
+        } catch (_) {
+          // already gone
+        }
+      }
+      await this.cleanupChannel(id);
+    }
+    // Evict old playback snapshots that were never consumed (orphan AMI never arrived)
+    for (const [id, snap] of this.playbackSnapshots.entries()) {
+      if (now - snap.snapshotAt > this.snapshotRetentionMs) {
+        this.playbackSnapshots.delete(id);
+      }
+    }
   }
 
   getState(channelId: string): ChannelState | undefined {
@@ -122,6 +237,15 @@ export class ChannelStateManager {
     if (!channelState) {
       return; // Already cleaned up — idempotent guard
     }
+
+    // Snapshot playback status BEFORE deletion so AMI Hangup (which arrives
+    // AFTER StasisEnd) can still tag the call correctly.
+    this.playbackSnapshots.set(channelId, {
+      playbackStarted: channelState.playbackStarted,
+      playbackFailed: channelState.playbackFailed,
+      playbackError: channelState.playbackError,
+      snapshotAt: Date.now(),
+    });
 
     // Mark inactive first to prevent new operations
     channelState.isActive = false;

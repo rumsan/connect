@@ -34,6 +34,14 @@ export class PlaybackService {
     channelState.activePlayback = playback;
     channelState.activePlaybackId = playbackId;
 
+    playback.once('PlaybackStarted', () => {
+      if (channelState.activePlaybackId !== playbackId) return;
+      this.channelStateManager.markPlaybackStarted(channelId);
+      this.logger.log(
+        `PlaybackStarted for channel: ${channelId}, media: ${audio}`,
+      );
+    });
+
     playback.once('PlaybackFinished', async () => {
       if (channelState.activePlaybackId !== playbackId) {
         this.logger.log(
@@ -45,9 +53,21 @@ export class PlaybackService {
       channelState.activePlayback = null;
       channelState.activePlaybackId = null;
 
-      this.logger.log(
-        `PlaybackFinished for channel: ${channelId}, caller: ${channel?.caller?.number}`,
-      );
+      // If PlaybackStarted never fired, the media was missing/invalid and
+      // Asterisk skipped straight to PlaybackFinished. Tag silent failure.
+      if (!channelState.playbackStarted) {
+        this.channelStateManager.markPlaybackFailed(
+          channelId,
+          'PlaybackFinished without PlaybackStarted (media missing or invalid)',
+        );
+        this.logger.error(
+          `Silent playback failure on channel ${channelId}, media: ${audio}`,
+        );
+      } else {
+        this.logger.log(
+          `PlaybackFinished for channel: ${channelId}, caller: ${channel?.caller?.number}`,
+        );
+      }
 
       try {
         if (channelState.isActive) {
@@ -67,9 +87,11 @@ export class PlaybackService {
       );
       this.logger.log(`Playing recording for channel: ${channelId}`);
     } catch (err) {
+      const message = (err as Error).message;
       this.logger.error(
-        `Error starting audio playback on channel ${channelId}: ${(err as Error).message}`,
+        `Error starting audio playback on channel ${channelId}: ${message}`,
       );
+      this.channelStateManager.markPlaybackFailed(channelId, message);
       channelState.activePlayback = null;
       channelState.activePlaybackId = null;
     }
@@ -97,13 +119,13 @@ export class PlaybackService {
       channelState.activePlayback = playback;
       channelState.activePlaybackId = playbackId;
 
-      await this.client.channels.play({
-        channelId: channelId,
-        playbackId: playbackId,
-        media: media,
+      playback.once('PlaybackStarted', () => {
+        if (channelState.activePlaybackId !== playbackId) return;
+        this.channelStateManager.markPlaybackStarted(channelId);
+        this.logger.log(
+          `PlaybackStarted: ${media} on channel: ${channelId}`,
+        );
       });
-
-      this.logger.log(`Playback started: ${media} on channel: ${channelId}`);
 
       playback.once('PlaybackFinished', async () => {
         if (channelState.activePlaybackId !== playbackId) {
@@ -113,9 +135,29 @@ export class PlaybackService {
           return;
         }
 
-        this.logger.log(`Playback finished on channel: ${channelId}`);
         channelState.activePlayback = null;
         channelState.activePlaybackId = null;
+
+        if (!channelState.playbackStarted) {
+          this.channelStateManager.markPlaybackFailed(
+            channelId,
+            'PlaybackFinished without PlaybackStarted (media missing or invalid)',
+          );
+          this.logger.error(
+            `Silent playback failure on channel ${channelId}, media: ${media}`,
+          );
+          // Force hangup so the call doesn't sit silent
+          try {
+            await this.client.channels.hangup({ channelId });
+          } catch (err) {
+            this.logger.debug(
+              `Hangup after silent playback failure for channel ${channelId}: ${(err as Error).message}`,
+            );
+          }
+          return;
+        }
+
+        this.logger.log(`Playback finished on channel: ${channelId}`);
 
         if (immediateHangup) {
           try {
@@ -133,10 +175,20 @@ export class PlaybackService {
           this.channelStateManager.scheduleHangup(channelId, 10000);
         }
       });
+
+      await this.client.channels.play({
+        channelId: channelId,
+        playbackId: playbackId,
+        media: media,
+      });
+
+      this.logger.log(`Playback started: ${media} on channel: ${channelId}`);
     } catch (err) {
+      const message = (err as Error).message;
       this.logger.error(
-        `Error playing prompt on channel ${channelId}: ${(err as Error).message}`,
+        `Error playing prompt on channel ${channelId}: ${message}`,
       );
+      this.channelStateManager.markPlaybackFailed(channelId, message);
       channelState.activePlayback = null;
       channelState.activePlaybackId = null;
     }
