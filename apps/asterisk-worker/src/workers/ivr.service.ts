@@ -136,11 +136,14 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     appArgs: string[] = [],
   ) {
     try {
+      // Route directly to Stasis app. Do NOT pass context/priority alongside
+      // `app` — ARI treats dialplan + Stasis routing as mutually exclusive
+      // and behavior is undefined when both are set. Symptom: channel enters
+      // Stasis but StasisStart event is lost / fires before state queryable,
+      // so the playback handler never runs and the call sits silent.
       return await this.client.channels.originate({
         channelId,
         endpoint: callEndpoint,
-        context: 'from-internal',
-        priority: 1,
         callerId: callerId || this.config.callerId || 'Rumsan Connect <0000>',
         app: this.config.appName,
         appArgs: appArgs.toString(),
