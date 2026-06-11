@@ -136,11 +136,14 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     appArgs: string[] = [],
   ) {
     try {
+      // Route directly to Stasis app. Do NOT pass context/priority alongside
+      // `app` — ARI treats dialplan + Stasis routing as mutually exclusive
+      // and behavior is undefined when both are set. Symptom: channel enters
+      // Stasis but StasisStart event is lost / fires before state queryable,
+      // so the playback handler never runs and the call sits silent.
       return await this.client.channels.originate({
         channelId,
         endpoint: callEndpoint,
-        context: 'from-internal',
-        priority: 1,
         callerId: callerId || this.config.callerId || 'Rumsan Connect <0000>',
         app: this.config.appName,
         appArgs: appArgs.toString(),
@@ -283,6 +286,10 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     // Handle DTMF events
     this.client.on('ChannelDtmfReceived', async (event, channel) => {
       try {
+        // Record digit FIRST (before IVR action) so reporting captures it
+        // even if the dialplan handler throws. Keyed by Stasis channelId —
+        // unambiguous mapping to our broadcast.
+        this.channelStateManager.recordDtmf(channel.id, event.digit);
         await this.handleDTMF(channel, event.digit);
       } catch (error) {
         this.logger.error('Error in ChannelDtmfReceived handler:', error);
