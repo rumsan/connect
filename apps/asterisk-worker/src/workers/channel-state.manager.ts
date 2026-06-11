@@ -16,11 +16,12 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ChannelStateManager.name);
   private client: Client;
   private channelStates = new Map<string, ChannelState>();
-  // Short-lived snapshot of playback status, retained briefly AFTER cleanup
-  // so the AMI Hangup handler (which fires AFTER StasisEnd) can still read it.
+  // Short-lived snapshot of playback status + DTMF sequence, retained briefly
+  // AFTER cleanup so the AMI Hangup handler (which fires AFTER StasisEnd) can
+  // still read them.
   private playbackSnapshots = new Map<
     string,
-    PlaybackStatus & { snapshotAt: number }
+    PlaybackStatus & { dtmfSequence: string[]; snapshotAt: number }
   >();
   private readonly snapshotRetentionMs = 60_000;
   private reaperTimer: NodeJS.Timeout | null = null;
@@ -72,6 +73,7 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       playbackStarted: false,
       playbackFailed: false,
       playbackError: undefined,
+      dtmfSequence: [],
       createdAt: now,
       lastActivityAt: now,
     };
@@ -118,6 +120,29 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       };
     }
     return undefined;
+  }
+
+  recordDtmf(channelId: string, digit: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) {
+      this.logger.warn(
+        `recordDtmf: channel ${channelId} not found, digit '${digit}' dropped`,
+      );
+      return;
+    }
+    s.dtmfSequence.push(digit);
+    s.lastActivityAt = Date.now();
+    this.logger.log(
+      `DTMF '${digit}' recorded for channel ${channelId} (sequence: [${s.dtmfSequence.join(',')}])`,
+    );
+  }
+
+  getDtmfSequence(channelId: string): string[] {
+    const s = this.channelStates.get(channelId);
+    if (s) return [...s.dtmfSequence];
+    const snap = this.playbackSnapshots.get(channelId);
+    if (snap) return [...snap.dtmfSequence];
+    return [];
   }
 
   consumePlaybackSnapshot(channelId: string) {
@@ -238,12 +263,13 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       return; // Already cleaned up — idempotent guard
     }
 
-    // Snapshot playback status BEFORE deletion so AMI Hangup (which arrives
-    // AFTER StasisEnd) can still tag the call correctly.
+    // Snapshot playback status + DTMF sequence BEFORE deletion so AMI Hangup
+    // (which arrives AFTER StasisEnd) can still tag the call correctly.
     this.playbackSnapshots.set(channelId, {
       playbackStarted: channelState.playbackStarted,
       playbackFailed: channelState.playbackFailed,
       playbackError: channelState.playbackError,
+      dtmfSequence: [...channelState.dtmfSequence],
       snapshotAt: Date.now(),
     });
 

@@ -31,6 +31,7 @@ export interface ChannelState {
   playbackStarted: boolean;
   playbackFailed: boolean;
   playbackError?: string;
+  dtmfSequence: string[];
   createdAt: number;
   lastActivityAt: number;
 }
