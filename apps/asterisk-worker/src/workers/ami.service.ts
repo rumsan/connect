@@ -127,8 +127,27 @@ export class AMIService implements OnModuleDestroy {
         );
 
         if (broadcastLog) {
-          // Retrieve the per-channel DTMF sequence and clean up
-          const ivrSequence = this.ivrSequences.get(evt.uniqueid) || [];
+          // ARI-recorded DTMF is authoritative — keyed by Stasis channelId
+          // which exactly matches our broadcast. AMI DTMF kept as fallback
+          // (AMI events fire on the bridged SIP leg whose uniqueid may differ
+          // from the Stasis channel).
+          const ariSequence = this.channelStateManager.getDtmfSequence(
+            evt.uniqueid,
+          );
+          const amiSequence = this.ivrSequences.get(evt.uniqueid) || [];
+          const ivrSequence =
+            ariSequence.length > 0 ? ariSequence : amiSequence;
+
+          if (
+            ariSequence.length > 0 &&
+            amiSequence.length > 0 &&
+            ariSequence.join(',') !== amiSequence.join(',')
+          ) {
+            this.logger.warn(
+              `DTMF mismatch for ${evt.uniqueid}: ARI=[${ariSequence.join(',')}] AMI=[${amiSequence.join(',')}] (using ARI)`,
+            );
+          }
+
           this.ivrSequences.delete(evt.uniqueid);
           this.ivrSequenceTimestamps.delete(evt.uniqueid);
 
