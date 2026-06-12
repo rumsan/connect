@@ -100,6 +100,7 @@ export class PlaybackService {
   async playPrompt(
     channelId: string,
     media: string,
+    channel: Channel,
     immediateHangup = false,
   ) {
     const channelState = this.channelStateManager.getState(channelId);
@@ -176,11 +177,10 @@ export class PlaybackService {
         }
       });
 
-      await this.client.channels.play({
-        channelId: channelId,
-        playbackId: playbackId,
-        media: media,
-      });
+      await channel.play(
+        { playbackId: playbackId, media: media },
+        playback,
+      );
 
       this.logger.log(`Playback started: ${media} on channel: ${channelId}`);
     } catch (err) {
