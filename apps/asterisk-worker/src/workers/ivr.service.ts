@@ -93,6 +93,10 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       throw new Error('ARI not ready — Stasis app not registered');
     }
 
+    this.logger.log(
+      `ARI connection state: isConnected=${this.isConnected}, clientId=${(this.client as any)?._id?.() ?? 'unset'}`,
+    );
+
     const ivrDialPlan = ivrJSON ? JSON.parse(ivrJSON) : null;
 
     // BUG FIX: Pre-generate channelId and register state BEFORE originate
@@ -271,7 +275,11 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
             '.wav',
             '',
           );
-          await this.playbackService.playPrompt(channelId, mainPrompt);
+          await this.playbackService.playPrompt(
+            channelId,
+            mainPrompt,
+            incomingChannel,
+          );
         } else {
           await this.playbackService.playAudio(
             channelState.sessionId,
@@ -466,6 +474,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
           await this.playbackService.playPrompt(
             channelId,
             mainPrompt.replace('.wav', ''),
+            channel,
           );
         }
         return;
@@ -478,12 +487,14 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
         await this.playbackService.playPrompt(
           channelId,
           option.prompt.replace('.wav', ''),
+          channel,
           option.hangup === true,
         );
       } else {
         await this.playbackService.playPrompt(
           channelId,
           'sound:option-is-invalid',
+          channel,
         );
       }
 
