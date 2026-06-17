@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{url}}/usage/backfill
+  url: {{url}}/usage/backfill?batchSize=100&concurrency=5
   body: json
   auth: none
 }
