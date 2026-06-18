@@ -36,6 +36,6 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("session-id", data.cuid);
+    bru.setEnvVar("session-id", data.cuid);
   }
 }

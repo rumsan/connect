@@ -127,25 +127,26 @@ export class AMIService implements OnModuleDestroy {
         );
 
         if (broadcastLog) {
-          // ARI-recorded DTMF is authoritative — keyed by Stasis channelId
-          // which exactly matches our broadcast. AMI DTMF kept as fallback
-          // (AMI events fire on the bridged SIP leg whose uniqueid may differ
-          // from the Stasis channel).
-          const ariSequence = this.channelStateManager.getDtmfSequence(
-            evt.uniqueid,
-          );
-          const amiSequence = this.ivrSequences.get(evt.uniqueid) || [];
-          const ivrSequence =
-            ariSequence.length > 0 ? ariSequence : amiSequence;
+          const isIvr = this.channelStateManager.isIvrChannel(evt.uniqueid);
+          let ivrSequence: string[] = [];
 
-          if (
-            ariSequence.length > 0 &&
-            amiSequence.length > 0 &&
-            ariSequence.join(',') !== amiSequence.join(',')
-          ) {
-            this.logger.warn(
-              `DTMF mismatch for ${evt.uniqueid}: ARI=[${ariSequence.join(',')}] AMI=[${amiSequence.join(',')}] (using ARI)`,
+          if (isIvr) {
+            const ariSequence = this.channelStateManager.getDtmfSequence(
+              evt.uniqueid,
             );
+            const amiSequence = this.ivrSequences.get(evt.uniqueid) || [];
+            ivrSequence =
+              ariSequence.length > 0 ? ariSequence : amiSequence;
+
+            if (
+              ariSequence.length > 0 &&
+              amiSequence.length > 0 &&
+              ariSequence.join(',') !== amiSequence.join(',')
+            ) {
+              this.logger.warn(
+                `DTMF mismatch for ${evt.uniqueid}: ARI=[${ariSequence.join(',')}] AMI=[${amiSequence.join(',')}] (using ARI)`,
+              );
+            }
           }
 
           this.ivrSequences.delete(evt.uniqueid);
@@ -218,8 +219,10 @@ export class AMIService implements OnModuleDestroy {
       }
 
       if (eventType === 'DTMFEnd') {
-        // Track DTMF digit per-channel using uniqueid
         const uniqueid = evt.uniqueid;
+        if (!this.channelStateManager.isIvrChannel(uniqueid)) {
+          return;
+        }
         if (!this.ivrSequences.has(uniqueid)) {
           this.ivrSequences.set(uniqueid, []);
         }
