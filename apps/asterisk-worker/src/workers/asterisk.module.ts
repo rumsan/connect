@@ -10,6 +10,7 @@ import { AudioService } from './audio.service';
 import { ChannelStateManager } from './channel-state.manager';
 import { IVRService } from './ivr.service';
 import { PlaybackService } from './playback.service';
+import { SessionGate } from './session-gate';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { PlaybackService } from './playback.service';
     ChannelStateManager,
     PlaybackService,
     IVRService,
+    SessionGate,
   ],
   exports: [AsteriskWorker, AMIService],
 })
