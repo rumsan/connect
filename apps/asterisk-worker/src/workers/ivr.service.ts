@@ -291,12 +291,13 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    // Handle DTMF events
+    // Handle DTMF events — only for IVR calls
     this.client.on('ChannelDtmfReceived', async (event, channel) => {
       try {
-        // Record digit FIRST (before IVR action) so reporting captures it
-        // even if the dialplan handler throws. Keyed by Stasis channelId —
-        // unambiguous mapping to our broadcast.
+        const channelState = this.channelStateManager.getState(channel.id);
+        if (!channelState?.ivrDialPlan) {
+          return;
+        }
         this.channelStateManager.recordDtmf(channel.id, event.digit);
         await this.handleDTMF(channel, event.digit);
       } catch (error) {

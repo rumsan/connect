@@ -21,7 +21,7 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
   // still read them.
   private playbackSnapshots = new Map<
     string,
-    PlaybackStatus & { dtmfSequence: string[]; snapshotAt: number }
+    PlaybackStatus & { dtmfSequence: string[]; isIvr: boolean; snapshotAt: number }
   >();
   private readonly snapshotRetentionMs = 60_000;
   private reaperTimer: NodeJS.Timeout | null = null;
@@ -135,6 +135,14 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `DTMF '${digit}' recorded for channel ${channelId} (sequence: [${s.dtmfSequence.join(',')}])`,
     );
+  }
+
+  isIvrChannel(channelId: string): boolean {
+    const s = this.channelStates.get(channelId);
+    if (s) return !!s.ivrDialPlan;
+    const snap = this.playbackSnapshots.get(channelId);
+    if (snap) return snap.isIvr;
+    return false;
   }
 
   getDtmfSequence(channelId: string): string[] {
@@ -270,6 +278,7 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       playbackFailed: channelState.playbackFailed,
       playbackError: channelState.playbackError,
       dtmfSequence: [...channelState.dtmfSequence],
+      isIvr: !!channelState.ivrDialPlan,
       snapshotAt: Date.now(),
     });
 
