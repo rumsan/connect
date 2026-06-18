@@ -24,7 +24,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("broadcast-id", data[0].cuid);
-    bru.setVar("xref-id",data[0].xref)
+    bru.setEnvVar("broadcast-id", data[0].cuid);
+    bru.setEnvVar("xref-id",data[0].xref)
   }
 }
