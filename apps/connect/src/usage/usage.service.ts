@@ -19,6 +19,9 @@ export class UsageService {
 
   @OnEvent('broadcast.session.completed')
   async handleSessionCompleted(sessionCuid: string) {
+    this.logger.log(
+      `Handling usage after session completion for ${sessionCuid}`,
+    );
     try {
       const session = await this.prisma.session.findUnique({
         where: { cuid: sessionCuid },
@@ -26,54 +29,123 @@ export class UsageService {
       });
       if (!session) return;
 
-      const broadcasts = await this.prisma.broadcast.findMany({
-        where: { session: sessionCuid, isComplete: true },
-      });
-      if (!broadcasts.length) return;
-
-      const pricing = await this.prisma.transportPricing.findUnique({
-        where: { transportCuid: session.transport },
-      });
-      const date = startOfDay(session.updatedAt ?? session.createdAt);
-
-      const broadcastCount = broadcasts.length;
-      const successCount = broadcasts.filter(
-        (b) => b.status === 'SUCCESS',
-      ).length;
-      const failCount = broadcasts.filter((b) => b.status === 'FAIL').length;
-
-      let chars = 0;
-      let segments = 0;
-      if (pricing?.unitType === 'SEGMENT') {
-        const body =
-          (session.message as any)?.body ??
-          (session.message as any)?.content ??
-          '';
-        const info = getSmsSegments(body);
-        chars = info.chars * successCount;
-        segments = info.segments * successCount;
-      }
-
-      let duration = 0;
       if (session.Transport.type === 'VOICE') {
-        for (const b of broadcasts) {
-          if (b.status === 'SUCCESS') {
-            duration += (b.disposition as any)?.duration ?? 0;
-          }
+        const hasSuccess = await this.prisma.broadcast.count({
+          where: { session: sessionCuid, status: 'SUCCESS', isComplete: true },
+        });
+        if (hasSuccess > 0) {
+          this.logger.log(
+            `Deferring VOICE usage for session ${sessionCuid} until CDR data arrives`,
+          );
+          return;
         }
       }
 
-      const credits = this.calculateCredits(
-        pricing,
-        successCount,
-        segments,
-        duration,
+      await this.calculateAndRecordUsage(sessionCuid);
+    } catch (error) {
+      this.logger.error(
+        `Failed to record usage for session ${sessionCuid}: ${error.message}`,
       );
+    }
+  }
 
+  @OnEvent('broadcast.voice.usage_ready')
+  async handleVoiceUsageReady(sessionCuid: string) {
+    this.logger.log(
+      `Handling VOICE usage after CDR received for session ${sessionCuid}`,
+    );
+    try {
+      await this.calculateAndRecordUsage(sessionCuid);
+    } catch (error) {
+      this.logger.error(
+        `Failed to record VOICE usage for session ${sessionCuid}: ${error.message}`,
+      );
+    }
+  }
+
+  private async calculateAndRecordUsage(sessionCuid: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { cuid: sessionCuid },
+      include: { Transport: true },
+    });
+    if (!session) return;
+
+    const broadcasts = await this.prisma.broadcast.findMany({
+      where: { session: sessionCuid, isComplete: true },
+    });
+    if (!broadcasts.length) return;
+
+    const pricing = await this.prisma.transportPricing.findUnique({
+      where: { transportCuid: session.transport },
+    });
+    const date = startOfDay(session.updatedAt ?? session.createdAt);
+
+    const broadcastCount = broadcasts.length;
+    const successCount = broadcasts.filter(
+      (b) => b.status === 'SUCCESS',
+    ).length;
+    const failCount = broadcasts.filter((b) => b.status === 'FAIL').length;
+
+    let chars = 0;
+    let segments = 0;
+    if (pricing?.unitType === 'SEGMENT') {
+      const body =
+        (session.message as any)?.body ??
+        (session.message as any)?.content ??
+        '';
+      const info = getSmsSegments(body);
+      chars = info.chars * successCount;
+      segments = info.segments * successCount;
+    }
+
+    let duration = 0;
+    if (session.Transport.type === 'VOICE') {
+      for (const b of broadcasts) {
+        if (b.status === 'SUCCESS') {
+          duration += (b.disposition as any)?.duration ?? 0;
+          this.logger.debug(
+            `Broadcast ${b.cuid} duration: ${
+              (b.disposition as any)?.duration ?? 0
+            }s`,
+          );
+        }
+      }
+    }
+
+    const credits = this.calculateCredits(
+      pricing,
+      successCount,
+      segments,
+      duration,
+    );
+
+    this.logger.log(
+      `Usage for session ${sessionCuid}: success=${successCount}, duration=${duration}s, credits=${credits}`,
+    );
+
+    await this.upsertSnapshot({
+      sessionCuid,
+      app: session.app,
+      xref: '',
+      transportCuid: session.transport,
+      transportType: session.Transport.type as TransportType,
+      date,
+      sessionIncrement: 1,
+      broadcastCount,
+      success: successCount,
+      fail: failCount,
+      chars,
+      segments,
+      duration,
+      calls: successCount,
+      credits,
+    });
+
+    if (session.xref) {
       await this.upsertSnapshot({
         sessionCuid,
         app: session.app,
-        xref: '',
+        xref: session.xref,
         transportCuid: session.transport,
         transportType: session.Transport.type as TransportType,
         date,
@@ -87,30 +159,6 @@ export class UsageService {
         calls: successCount,
         credits,
       });
-
-      if (session.xref) {
-        await this.upsertSnapshot({
-          sessionCuid,
-          app: session.app,
-          xref: session.xref,
-          transportCuid: session.transport,
-          transportType: session.Transport.type as TransportType,
-          date,
-          sessionIncrement: 1,
-          broadcastCount,
-          success: successCount,
-          fail: failCount,
-          chars,
-          segments,
-          duration,
-          calls: successCount,
-          credits,
-        });
-      }
-    } catch (error) {
-      this.logger.error(
-        `Failed to record usage for session ${sessionCuid}: ${error.message}`,
-      );
     }
   }
 
@@ -293,9 +341,7 @@ export class UsageService {
       where: { cuid: { in: tCuidList } },
       select: { cuid: true, name: true },
     });
-    const transportNameMap = new Map(
-      transports.map((t) => [t.cuid, t.name]),
-    );
+    const transportNameMap = new Map(transports.map((t) => [t.cuid, t.name]));
 
     const snapshots = await this.prisma.usageSnapshot.findMany({
       where,

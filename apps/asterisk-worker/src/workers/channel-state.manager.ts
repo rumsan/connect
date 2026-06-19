@@ -194,6 +194,16 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     return this.channelStates.has(channelId);
   }
 
+  getChannelsPendingPlayback(): ChannelState[] {
+    const pending: ChannelState[] = [];
+    for (const state of this.channelStates.values()) {
+      if (state.isActive && !state.playbackStarted && !state.playbackFailed) {
+        pending.push(state);
+      }
+    }
+    return pending;
+  }
+
   removeChannel(channelId: string) {
     this.channelStates.delete(channelId);
   }
