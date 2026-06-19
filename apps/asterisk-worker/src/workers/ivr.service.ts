@@ -25,6 +25,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private broadcastAddressPrefix: string | null;
+  private connectingPromise: Promise<void> | null = null;
 
   constructor(
     private readonly batchManager: BatchManager,
@@ -67,27 +68,41 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     return `${this.config.trunk}/${broadcastAddress}`;
   };
 
+  private async waitForConnection(): Promise<void> {
+    if (this.isConnected) return;
+
+    if (this.connectingPromise) {
+      this.logger.log('ARI reconnect already in progress, waiting...');
+      await this.connectingPromise;
+      return;
+    }
+
+    this.logger.log('ARI not connected, initiating connection...');
+    await this.doConnect();
+  }
+
+  private async doConnect(): Promise<void> {
+    if (this.connectingPromise) return this.connectingPromise;
+
+    this.connectingPromise = (async () => {
+      try {
+        await this.connect();
+        this.setupEventHandlers();
+      } finally {
+        this.connectingPromise = null;
+      }
+    })();
+
+    return this.connectingPromise;
+  }
+
   async sendBroadcast(
     broadcast: Broadcast,
     broadcastLog: QueueBroadcastLog,
     ivrJSON?: string,
   ) {
-    // Lazy connection: connect if not connected
-    if (!this.isConnected) {
-      this.logger.log(
-        'ARI not connected, attempting connection before call...',
-      );
-      try {
-        await this.connect();
-        this.setupEventHandlers();
-      } catch (err) {
-        throw new Error(
-          `Failed to connect to ARI: ${(err as Error).message}`,
-        );
-      }
-    }
+    await this.waitForConnection();
 
-    // Explicit Stasis verification before every call
     const ready = await this.ensureConnected();
     if (!ready) {
       throw new Error('ARI not ready — Stasis app not registered');
@@ -389,25 +404,84 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
   private async attemptReconnect(attempt: number) {
     this.reconnectTimer = null;
     if (this.isShuttingDown) return;
+
+    if (this.connectingPromise) {
+      this.logger.log(
+        `Skipping reconnect attempt ${attempt} — connection already in progress`,
+      );
+      return;
+    }
+
     this.stopHeartbeat();
     this.logger.log(`Attempting ARI full reconnect (attempt ${attempt})`);
     try {
-      // Clean up the dead client before creating a new one
       if (this.client) {
         (this.client as unknown as EventEmitter).removeAllListeners();
         try { this.client.stop(); } catch (_) { /* ignore */ }
       }
-      await this.connect();
-      this.setupEventHandlers();
+      await this.doConnect();
       this.logger.log(
         `ARI full reconnect succeeded on attempt ${attempt}`,
       );
+      await this.recoverInFlightChannels();
     } catch (error) {
       this.logger.error(
         `ARI reconnect attempt ${attempt} failed:`,
         error,
       );
       this.scheduleReconnect(attempt + 1);
+    }
+  }
+
+  private async recoverInFlightChannels() {
+    const pending = this.channelStateManager.getChannelsPendingPlayback();
+    if (pending.length === 0) return;
+
+    this.logger.log(
+      `Recovering ${pending.length} in-flight channel(s) after reconnect`,
+    );
+
+    for (const channelState of pending) {
+      const { channelId, sessionId } = channelState;
+      try {
+        const ch = this.client.Channel(channelId);
+        const details = await ch.get();
+        const state = (details as any).state;
+
+        if (state === 'Up') {
+          this.logger.log(
+            `Channel ${channelId} is alive (state=${state}), triggering playback`,
+          );
+          if (channelState.ivrDialPlan?.main?.prompt) {
+            const mainPrompt = channelState.ivrDialPlan.main.prompt.replace(
+              '.wav',
+              '',
+            );
+            await this.playbackService.playPrompt(
+              channelId,
+              mainPrompt,
+              ch,
+            );
+          } else {
+            await this.playbackService.playAudio(sessionId, ch);
+          }
+        } else {
+          this.logger.warn(
+            `Channel ${channelId} in unexpected state (${state}) after reconnect, hanging up`,
+          );
+          try {
+            await ch.hangup();
+          } catch (_) { /* already gone */ }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Channel ${channelId} no longer exists after reconnect: ${(err as Error).message}`,
+        );
+        this.channelStateManager.markPlaybackFailed(
+          channelId,
+          'Channel lost during ARI reconnect',
+        );
+      }
     }
   }
 

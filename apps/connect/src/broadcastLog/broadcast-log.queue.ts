@@ -104,7 +104,7 @@ export class BroadcastLogQueue {
       },
     });
 
-    return this.prisma.broadcast.update({
+    await this.prisma.broadcast.update({
       where: {
         cuid: broadcastLog.broadcast,
       },
@@ -113,6 +113,39 @@ export class BroadcastLogQueue {
         disposition: updatedDetails,
       },
     });
+
+    await this.checkVoiceUsageReady(existingLog.session);
+  }
+
+  private async checkVoiceUsageReady(sessionCuid: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { cuid: sessionCuid },
+      include: { Transport: true },
+    });
+    if (!session || session.status !== 'COMPLETED') return;
+    if (session.Transport.type !== 'VOICE') return;
+
+    const successBroadcasts = await this.prisma.broadcast.findMany({
+      where: {
+        session: sessionCuid,
+        status: 'SUCCESS',
+        isComplete: true,
+      },
+      select: { disposition: true },
+    });
+
+    if (successBroadcasts.length === 0) return;
+
+    const allHaveDuration = successBroadcasts.every(
+      (b) => ((b.disposition as Record<string, unknown>)?.duration as number) > 0,
+    );
+
+    if (allHaveDuration) {
+      this.logger.log(
+        `All CDRs received for VOICE session ${sessionCuid}, triggering usage calculation`,
+      );
+      this.eventEmitter.emit('broadcast.voice.usage_ready', sessionCuid);
+    }
   }
 
   private async _checkSessionComplete(
