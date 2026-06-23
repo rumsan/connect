@@ -24,6 +24,7 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     PlaybackStatus & { dtmfSequence: string[]; isIvr: boolean; snapshotAt: number }
   >();
   private readonly snapshotRetentionMs = 60_000;
+  private drainCallback: (() => void) | null = null;
   private reaperTimer: NodeJS.Timeout | null = null;
   private readonly channelTtlMs =
     +(process.env['CHANNEL_TTL_MS'] as string) || 180_000;
@@ -32,6 +33,22 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
 
   setClient(client: Client) {
     this.client = client;
+  }
+
+  clearClient() {
+    this.client = null;
+  }
+
+  get activeChannelCount(): number {
+    return this.channelStates.size;
+  }
+
+  onAllChannelsDrained(callback: () => void) {
+    this.drainCallback = callback;
+  }
+
+  clearDrainCallback() {
+    this.drainCallback = null;
   }
 
   onModuleInit() {
@@ -318,5 +335,11 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log(`Cleaned up resources for channel: ${channelId}`);
+
+    if (this.channelStates.size === 0 && this.drainCallback) {
+      const cb = this.drainCallback;
+      this.drainCallback = null;
+      cb();
+    }
   }
 }
