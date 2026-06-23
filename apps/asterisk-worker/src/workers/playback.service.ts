@@ -16,6 +16,10 @@ export class PlaybackService {
     this.client = client;
   }
 
+  clearClient() {
+    this.client = null;
+  }
+
   async playAudio(sessionId: string, channel: Channel) {
     const channelId = channel.id;
     const channelState = this.channelStateManager.getState(channelId);
