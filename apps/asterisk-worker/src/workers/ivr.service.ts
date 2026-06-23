@@ -247,6 +247,15 @@ export class IVRService implements OnModuleDestroy {
         if (incomingAddress) channelState.address = incomingAddress;
 
         await incomingChannel.answer();
+
+        const postAnswerState = this.channelStateManager.getState(channelId);
+        if (!postAnswerState?.isActive) {
+          this.logger.error(
+            `Channel ${channelId} was cleaned up during answer() — playback will not start`,
+          );
+          return;
+        }
+
         this.logger.log(
           `Call Answered: ${incomingChannel.caller.number} on channel: ${channelId}`,
         );
@@ -300,7 +309,7 @@ export class IVRService implements OnModuleDestroy {
         const channelId = event.channel.id;
         const state = event.channel.state;
 
-        if (state === 'Down' || state === 'Rsrvd') {
+        if (state === 'Down') {
           const channelState = this.channelStateManager.getState(channelId);
           if (channelState?.isActive) {
             this.logger.log(
