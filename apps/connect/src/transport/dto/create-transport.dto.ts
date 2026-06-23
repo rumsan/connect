@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { TransportType } from '@rumsan/connect/types';
+import { TransportType, ValidationContent, ValidationAddress } from '@rumsan/connect/types';
 import { Type } from 'class-transformer';
 import { IsEnum, IsNotEmpty, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { SetTransportPricingDto } from './set-transport-pricing.dto';
@@ -21,6 +21,26 @@ export class CreateTransportDto {
   })
   @IsNotEmpty()
   config: Record<string, any>;
+
+  @ApiProperty({
+    description: 'Content validation type',
+    enum: ValidationContent,
+    required: false,
+    example: ValidationContent.URL,
+  })
+  @IsOptional()
+  @IsEnum(ValidationContent)
+  validationContent?: ValidationContent;
+
+  @ApiProperty({
+    description: 'Address validation type',
+    enum: ValidationAddress,
+    required: false,
+    example: ValidationAddress.PHONE,
+  })
+  @IsOptional()
+  @IsEnum(ValidationAddress)
+  validationAddress?: ValidationAddress;
 
   @ApiProperty({
     description: 'Optional pricing configuration',
