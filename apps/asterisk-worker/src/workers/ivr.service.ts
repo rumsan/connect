@@ -2,7 +2,6 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
-  OnModuleInit,
 } from '@nestjs/common';
 import {
   BatchManger as BatchManager,
@@ -15,17 +14,17 @@ import { EventEmitter } from 'events';
 import { ChannelStateManager } from './channel-state.manager';
 import { PlaybackService } from './playback.service';
 
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECONNECT_DELAY_MS = 2_000;
+
 @Injectable()
-export class IVRService implements OnModuleInit, OnModuleDestroy {
+export class IVRService implements OnModuleDestroy {
   private readonly logger = new Logger(IVRService.name);
-  private client: Client;
+  private client: Client | null = null;
   private config;
   private isConnected = false;
   private isShuttingDown = false;
-  private reconnectTimer: NodeJS.Timeout | null = null;
-  private heartbeatTimer: NodeJS.Timeout | null = null;
   private broadcastAddressPrefix: string | null;
-  private connectingPromise: Promise<void> | null = null;
 
   constructor(
     private readonly batchManager: BatchManager,
@@ -44,11 +43,14 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       callerId: process.env.ASTERISK_CALLER_ID,
     };
     this.broadcastAddressPrefix = process.env.BROADCAST_ADDRESS_PREFIX || null;
-    this.logger.log('IVRService initialized', this.config);
+    this.logger.log('IVRService initialized');
+  }
+
+  get connected(): boolean {
+    return this.isConnected;
   }
 
   callEndpoint = (broadcastAddress: string) => {
-    // Strip +977 prefix if present
     if (broadcastAddress.startsWith('+977')) {
       this.logger.log(`Stripping '+977' prefix from broadcast address: ${broadcastAddress}`);
       broadcastAddress = broadcastAddress.slice(4);
@@ -58,7 +60,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       broadcastAddress = broadcastAddress.slice(3);
     }
 
-    // Apply broadcast address prefix if configured
     if (this.broadcastAddressPrefix) {
       this.logger.log(`Applying broadcast address prefix: ${this.broadcastAddressPrefix} to ${broadcastAddress}`);
       broadcastAddress = `${this.broadcastAddressPrefix}${broadcastAddress}`;
@@ -68,32 +69,25 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     return `${this.config.trunk}/${broadcastAddress}`;
   };
 
-  private async waitForConnection(): Promise<void> {
-    if (this.isConnected) return;
+  async connectForSession(): Promise<void> {
+    if (this.isConnected && this.client) return;
 
-    if (this.connectingPromise) {
-      this.logger.log('ARI reconnect already in progress, waiting...');
-      await this.connectingPromise;
-      return;
-    }
-
-    this.logger.log('ARI not connected, initiating connection...');
-    await this.doConnect();
+    this.logger.log('Connecting ARI for session');
+    await this.connect();
+    this.setupEventHandlers();
+    this.logger.log('ARI connected for session');
   }
 
-  private async doConnect(): Promise<void> {
-    if (this.connectingPromise) return this.connectingPromise;
-
-    this.connectingPromise = (async () => {
-      try {
-        await this.connect();
-        this.setupEventHandlers();
-      } finally {
-        this.connectingPromise = null;
-      }
-    })();
-
-    return this.connectingPromise;
+  disconnectForSession(): void {
+    if (this.client) {
+      this.logger.log('Disconnecting ARI for session');
+      (this.client as unknown as EventEmitter).removeAllListeners();
+      try { this.client.stop(); } catch (_) { /* ignore */ }
+      this.client = null;
+    }
+    this.isConnected = false;
+    this.channelStateManager.clearClient();
+    this.playbackService.clearClient();
   }
 
   async sendBroadcast(
@@ -101,11 +95,8 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     broadcastLog: QueueBroadcastLog,
     ivrJSON?: string,
   ) {
-    await this.waitForConnection();
-
-    const ready = await this.ensureConnected();
-    if (!ready) {
-      throw new Error('ARI not ready — Stasis app not registered');
+    if (!this.isConnected || !this.client) {
+      throw new Error('ARI not connected');
     }
 
     this.logger.log(
@@ -114,10 +105,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
 
     const ivrDialPlan = ivrJSON ? JSON.parse(ivrJSON) : null;
 
-    // BUG FIX: Pre-generate channelId and register state BEFORE originate
-    // to prevent race condition where StasisStart fires before state is set.
-    // Use 24-char hex (96 bits) — UUID v4's 36 chars overflow Asterisk's
-    // default uniqueid VARCHAR(32) and triggers CDR/CEL truncation warnings.
     const channelId = randomBytes(12).toString('hex');
 
     this.channelStateManager.registerChannel({
@@ -141,7 +128,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
         `Broadcast started for IVR - Channel: ${channelId}, Address: ${broadcast.address}`,
       );
     } catch (error) {
-      // Clean up pre-registered state on originate failure
       this.channelStateManager.removeChannel(channelId);
       this.logger.error('Error in sendBroadcast:', error);
       throw error;
@@ -154,12 +140,10 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     callerId: string,
     appArgs: string[] = [],
   ) {
+    if (!this.client) {
+      throw new Error('ARI client not available');
+    }
     try {
-      // Route directly to Stasis app. Do NOT pass context/priority alongside
-      // `app` — ARI treats dialplan + Stasis routing as mutually exclusive
-      // and behavior is undefined when both are set. Symptom: channel enters
-      // Stasis but StasisStart event is lost / fires before state queryable,
-      // so the playback handler never runs and the call sits silent.
       return await this.client.channels.originate({
         channelId,
         endpoint: callEndpoint,
@@ -173,31 +157,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Ensures ARI is connected AND Stasis app is registered.
-   * Returns true if ready, false otherwise.
-   */
-  private async ensureConnected(): Promise<boolean> {
-    if (!this.isConnected || !this.client) {
-      return false;
-    }
-
-    // Double-check Stasis registration before returning true
-    try {
-      await this.client.applications.get({
-        applicationName: this.config.appName,
-      });
-      return true;
-    } catch (err) {
-      this.logger.warn(
-        `Stasis verification failed: ${(err as Error).message}`,
-      );
-      this.isConnected = false;
-      this.scheduleReconnect(1);
-      return false;
-    }
-  }
-
   private async connect() {
     try {
       const { appName, server, user, password } = this.config;
@@ -206,9 +165,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       this.client = await ari.connect(server, user, password);
       await this.client.start(appName);
 
-      // Confirm Asterisk actually registered our Stasis app on this WebSocket.
-      // If the WS opened but Asterisk hasn't bound the app, fail fast so the
-      // reconnect loop retries instead of leaving originate calls broken.
       try {
         await this.client.applications.get({ applicationName: appName });
       } catch (err) {
@@ -218,41 +174,23 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.isConnected = true;
+      const client = this.client;
 
-      // First sign of disconnect — don't wait for built-in retry to "succeed"
-      // with a stale Stasis registration on a restarted Asterisk. Tear down
-      // and do a full reconnect (new client + new start(appName)) which
-      // re-registers the app via a fresh WebSocket session.
-      this.client.once('WebSocketReconnecting', (err: Error) => {
+      client.once('WebSocketReconnecting', (err: Error) => {
         if (this.isShuttingDown) return;
         this.isConnected = false;
-        this.stopHeartbeat();
         this.logger.warn(
-          `ARI WebSocket dropped (${err?.message ?? 'unknown'}) — forcing full reconnect`,
+          `ARI WebSocket dropped (${err?.message ?? 'unknown'}) — attempting mid-session reconnect`,
         );
-        this.scheduleReconnect(1);
+        this.midSessionReconnect(1);
       });
 
-      // Fallback: if built-in retry exhausts before our scheduled reconnect runs.
-      this.client.once('WebSocketMaxRetries', () => {
-        if (this.isShuttingDown) return;
-        this.isConnected = false;
-        this.stopHeartbeat();
-        this.logger.error('ARI WebSocket max retries exceeded');
-        this.scheduleReconnect(1);
-      });
-
-      this.client.on('WebSocketConnected', () => {
-        // DO NOT set isConnected = true here — it will be set by attemptReconnect()
-        // after full connect() + Stasis verification
+      client.on('WebSocketConnected', () => {
         this.logger.log('ARI WebSocket connected');
       });
 
-      // Share the ARI client with dependent services
-      this.channelStateManager.setClient(this.client);
-      this.playbackService.setClient(this.client);
-
-      this.startHeartbeat();
+      this.channelStateManager.setClient(client);
+      this.playbackService.setClient(client);
 
       this.logger.log('ARI connected');
     } catch (error) {
@@ -261,9 +199,37 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async midSessionReconnect(attempt: number) {
+    if (this.isShuttingDown) return;
+    if (attempt > MAX_RECONNECT_ATTEMPTS) {
+      this.logger.error(
+        `ARI mid-session reconnect failed after ${MAX_RECONNECT_ATTEMPTS} attempts`,
+      );
+      return;
+    }
+
+    await new Promise((r) => setTimeout(r, RECONNECT_DELAY_MS));
+
+    this.logger.log(`ARI mid-session reconnect attempt ${attempt}`);
+    try {
+      if (this.client) {
+        (this.client as unknown as EventEmitter).removeAllListeners();
+        try { this.client.stop(); } catch (_) { /* ignore */ }
+      }
+      await this.connect();
+      this.setupEventHandlers();
+      this.logger.log(`ARI mid-session reconnect succeeded on attempt ${attempt}`);
+    } catch (error) {
+      this.logger.error(`ARI mid-session reconnect attempt ${attempt} failed:`, error);
+      this.midSessionReconnect(attempt + 1);
+    }
+  }
+
   private setupEventHandlers() {
-    // Handle StasisStart - when a channel enters the Stasis application
-    this.client.on('StasisStart', async (event, incomingChannel) => {
+    if (!this.client) return;
+    const client = this.client;
+
+    client.on('StasisStart', async (event, incomingChannel) => {
       try {
         const channelId = event.channel.id;
         const [broadcastLogId, sessionId, incomingAddress] = event.args || [];
@@ -306,8 +272,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    // Handle DTMF events — only for IVR calls
-    this.client.on('ChannelDtmfReceived', async (event, channel) => {
+    client.on('ChannelDtmfReceived', async (event, channel) => {
       try {
         const channelState = this.channelStateManager.getState(channel.id);
         if (!channelState?.ivrDialPlan) {
@@ -320,8 +285,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    // Handle channel hangup events
-    this.client.on('StasisEnd', async (event) => {
+    client.on('StasisEnd', async (event) => {
       try {
         const channelId = event.channel.id;
         this.logger.log(`StasisEnd received for channel: ${channelId}`);
@@ -331,8 +295,7 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    // Handle channel state changes (including hangup)
-    this.client.on('ChannelStateChange', async (event) => {
+    client.on('ChannelStateChange', async (event) => {
       try {
         const channelId = event.channel.id;
         const state = event.channel.state;
@@ -352,170 +315,11 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private startHeartbeat() {
-    // Detect half-open ARI WebSockets (idle close by Asterisk, NAT timeout,
-    // etc.) that the ari-client library does not surface. Failing pings
-    // force a full reconnect so Stasis app stays bound.
-    this.stopHeartbeat();
-    this.heartbeatTimer = setInterval(async () => {
-      if (this.isShuttingDown || !this.client) return;
-      try {
-        await this.client.applications.get({
-          applicationName: this.config.appName,
-        });
-        // Explicitly set true on success to recover from false-negative states
-        if (!this.isConnected) {
-          this.logger.log(
-            'Heartbeat verified Stasis registration, marking connected',
-          );
-          this.isConnected = true;
-        }
-      } catch (err) {
-        this.logger.warn(
-          `ARI heartbeat failed (${(err as Error).message}) — forcing reconnect`,
-        );
-        this.isConnected = false;
-        this.stopHeartbeat();
-        this.scheduleReconnect(1);
-      }
-    }, 10_000); // 10s heartbeat to keep WebSocket alive
-  }
-
-  private stopHeartbeat() {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-  }
-
-  private scheduleReconnect(attempt: number) {
-    if (this.isShuttingDown) return;
-    if (this.reconnectTimer) return;
-    const delay = attempt === 1 ? 1_000 : Math.min(5_000 * attempt, 60_000);
-    this.logger.warn(
-      `ARI disconnected — reconnecting in ${delay / 1000}s (attempt ${attempt})`,
-    );
-    this.reconnectTimer = setTimeout(
-      () => this.attemptReconnect(attempt),
-      delay,
-    );
-  }
-
-  private async attemptReconnect(attempt: number) {
-    this.reconnectTimer = null;
-    if (this.isShuttingDown) return;
-
-    if (this.connectingPromise) {
-      this.logger.log(
-        `Skipping reconnect attempt ${attempt} — connection already in progress`,
-      );
-      return;
-    }
-
-    this.stopHeartbeat();
-    this.logger.log(`Attempting ARI full reconnect (attempt ${attempt})`);
-    try {
-      if (this.client) {
-        (this.client as unknown as EventEmitter).removeAllListeners();
-        try { this.client.stop(); } catch (_) { /* ignore */ }
-      }
-      await this.doConnect();
-      this.logger.log(
-        `ARI full reconnect succeeded on attempt ${attempt}`,
-      );
-      await this.recoverInFlightChannels();
-    } catch (error) {
-      this.logger.error(
-        `ARI reconnect attempt ${attempt} failed:`,
-        error,
-      );
-      this.scheduleReconnect(attempt + 1);
-    }
-  }
-
-  private async recoverInFlightChannels() {
-    const pending = this.channelStateManager.getChannelsPendingPlayback();
-    if (pending.length === 0) return;
-
-    this.logger.log(
-      `Recovering ${pending.length} in-flight channel(s) after reconnect`,
-    );
-
-    for (const channelState of pending) {
-      const { channelId, sessionId } = channelState;
-      try {
-        const ch = this.client.Channel(channelId);
-        const details = await ch.get();
-        const state = (details as any).state;
-
-        if (state === 'Up') {
-          this.logger.log(
-            `Channel ${channelId} is alive (state=${state}), triggering playback`,
-          );
-          if (channelState.ivrDialPlan?.main?.prompt) {
-            const mainPrompt = channelState.ivrDialPlan.main.prompt.replace(
-              '.wav',
-              '',
-            );
-            await this.playbackService.playPrompt(
-              channelId,
-              mainPrompt,
-              ch,
-            );
-          } else {
-            await this.playbackService.playAudio(sessionId, ch);
-          }
-        } else {
-          this.logger.warn(
-            `Channel ${channelId} in unexpected state (${state}) after reconnect, hanging up`,
-          );
-          try {
-            await ch.hangup();
-          } catch (_) { /* already gone */ }
-        }
-      } catch (err) {
-        this.logger.warn(
-          `Channel ${channelId} no longer exists after reconnect: ${(err as Error).message}`,
-        );
-        this.channelStateManager.markPlaybackFailed(
-          channelId,
-          'Channel lost during ARI reconnect',
-        );
-      }
-    }
-  }
-
-  async onModuleInit() {
-    this.logger.log('Module Init');
-    try {
-      await this.connect();
-      this.setupEventHandlers();
-      this.logger.log('ARI connection established successfully on startup');
-    } catch (error) {
-      this.logger.warn(
-        'Initial ARI connection failed, will retry on first call:',
-        error,
-      );
-      this.isConnected = false;
-      // Don't throw - allow worker to start even if Asterisk is down
-    }
-  }
-
   async onModuleDestroy() {
     this.isShuttingDown = true;
-    this.stopHeartbeat();
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.client) {
-      this.logger.log('Stopping ARI client');
-      (this.client as unknown as EventEmitter).removeAllListeners();
-      this.client.stop();
-    }
+    this.disconnectForSession();
   }
 
-  // HANDLE DTMF SIGNALS
   async handleDTMF(channel: Channel, digit: string) {
     const channelId = channel.id;
     const channelState = this.channelStateManager.getState(channelId);
@@ -546,7 +350,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
       await this.channelStateManager.stopActivePlayback(channelId);
       this.channelStateManager.cancelScheduledHangup(channelId);
 
-      // Digit '0' replays the main IVR prompt
       if (digit === '0') {
         const mainPrompt = channelState.ivrDialPlan.main?.prompt;
         if (mainPrompt) {
@@ -576,11 +379,6 @@ export class IVRService implements OnModuleInit, OnModuleDestroy {
           channel,
         );
       }
-
-      // TODO: Trigger the webhook if provided
-      // if (option?.action === 'webhook' && option?.destination) {
-      //   this.sendWebhook(option.destination, { channelId, digit });
-      // }
     } catch (err) {
       this.logger.error(
         `Error handling DTMF on channel ${channelId}: ${(err as Error).message}`,

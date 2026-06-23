@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { ConnectionLifecycleManager } from './connection-lifecycle.manager';
 
 interface PendingSession {
   sessionCuid: string;
@@ -15,6 +16,10 @@ export class SessionGate implements OnModuleDestroy {
   private sessionTimeout: NodeJS.Timeout | null = null;
   private readonly sessionTimeoutMs =
     +(process.env['SESSION_GATE_TIMEOUT_MS'] as string) || 600_000;
+
+  constructor(
+    private readonly connectionLifecycle: ConnectionLifecycleManager,
+  ) {}
 
   onModuleDestroy() {
     this.clearSessionTimeout();
@@ -51,6 +56,7 @@ export class SessionGate implements OnModuleDestroy {
     this.logger.log(`Session ${sessionCuid} completed`);
     this.activeSessionCuid = null;
     this.clearSessionTimeout();
+    this.connectionLifecycle.endSession(sessionCuid);
     this.startNext();
   }
 
@@ -66,12 +72,15 @@ export class SessionGate implements OnModuleDestroy {
     this.runWork(next.sessionCuid, next.work);
   }
 
-  private runWork(sessionCuid: string, work: () => Promise<void>) {
-    work().catch((err) =>
+  private async runWork(sessionCuid: string, work: () => Promise<void>) {
+    try {
+      await this.connectionLifecycle.startSession(sessionCuid);
+      await work();
+    } catch (err) {
       this.logger.error(
-        `Work failed for session ${sessionCuid}: ${err.message}`,
-      ),
-    );
+        `Work failed for session ${sessionCuid}: ${(err as Error).message}`,
+      );
+    }
   }
 
   private resetSessionTimeout(sessionCuid: string) {
@@ -82,6 +91,7 @@ export class SessionGate implements OnModuleDestroy {
           `Session ${sessionCuid} timed out after ${this.sessionTimeoutMs}ms, force-completing`,
         );
         this.activeSessionCuid = null;
+        this.connectionLifecycle.endSession(sessionCuid);
         this.startNext();
       }
     }, this.sessionTimeoutMs);
