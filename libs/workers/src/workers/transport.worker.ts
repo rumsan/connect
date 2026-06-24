@@ -43,12 +43,20 @@ export abstract class TransportWorker implements OnModuleInit {
 
               if (job.action === QUEUE_ACTIONS.READINESS_CHECK) {
                 const data = job.data as { sessionCuid: string };
-                this._makeTransportReady(data.sessionCuid).then();
+                this._makeTransportReady(data.sessionCuid).catch((err) =>
+                  console.error(
+                    `_makeTransportReady failed for session ${data.sessionCuid}:`,
+                    err,
+                  ),
+                );
               }
 
               if (job.action === QUEUE_ACTIONS.BROADCAST) {
                 console.log('Received broadcast job:', job);
-                this._sendBroadcast(job.data as QueueBroadcastJobData).then();
+                this._sendBroadcast(job.data as QueueBroadcastJobData).catch(
+                  (err) =>
+                    console.error('_sendBroadcast failed:', err),
+                );
               }
 
               channel.ack(message);

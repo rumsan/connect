@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -53,6 +54,7 @@ export class BroadcastService {
     private readonly broadcastQueue: BroadcastQueue,
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
     private readonly broadcastValidationService: BroadcastValidationService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly twilioBatchingService: TwilioBatchingService,
   ) {}
 
@@ -413,27 +415,14 @@ export class BroadcastService {
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();
-      // TODO:DON'T RETRY COMPLETE SESSION, RETRY ONLY FAILED BROADCASTS
 
-      // broadcasts = await this.prisma.broadcast.findMany({
-      //   where: {
-      //     session: sessionCuid,
-      //     status: {
-      //       in: [BroadcastStatus.FAIL],
-      //     },
-      //   },
-      // });
-      // // If there are failed broadcasts, attempt retries
-      // if (broadcasts.length > 0) {
-      //   this.logger.log(
-      //     `Session ${sessionCuid} has failed broadcasts, scheduling retries.`,
-      //   );
-      //   await this.retryBroadcasts(
-      //     sessionCuid,
-      //     session.Transport.type as TransportType,
-      //     true,
-      //   );
-      // }
+      const transportQueue = this._getQueueName(
+        session.Transport.type as TransportType,
+      );
+      await this.transportQueue.notifySessionComplete({
+        transportQueue,
+        sessionCuid,
+      });
     }
   }
 
@@ -519,6 +508,8 @@ export class BroadcastService {
           status: SessionStatus.COMPLETED,
         },
       });
+      this.eventEmitter.emit('broadcast.session.completed', sessionCuid);
+      this.logger.log(`Session ${sessionCuid} marked as COMPLETED`);
       dev_SessionCompletionAlert(sessionCuid).then().catch();
       return true;
     }
@@ -815,7 +806,10 @@ export class BroadcastService {
     }));
   }
 
-  async generateBroadcastCsv(appId: string, sessionId?: string): Promise<string> {
+  async generateBroadcastCsv(
+    appId: string,
+    sessionId?: string,
+  ): Promise<string> {
     const broadcasts = await this.prisma.broadcast.findMany({
       where: {
         app: appId,
@@ -869,9 +863,7 @@ export class BroadcastService {
         xref: b.xref ?? '',
         disposition: disp.disposition ?? '',
         duration: disp.duration ?? '',
-        ivrSequence: disp.ivrSequence
-          ? JSON.stringify(disp.ivrSequence)
-          : '[]',
+        ivrSequence: disp.ivrSequence ? JSON.stringify(disp.ivrSequence) : '[]',
         trunk: disp.trunk ?? '',
         answerTime: disp.answerTime ?? '',
         endTime: disp.endTime ?? '',

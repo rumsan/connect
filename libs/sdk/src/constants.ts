@@ -15,6 +15,7 @@ export enum QUEUE_ACTIONS {
   BROADCAST_LOG_UPDATE = 'broadcast_log_update',
   BROADCAST_LOG_DETAILS = 'broadcast_log_details',
   DELAY = 'delay',
+  SESSION_COMPLETE = 'session_complete',
 }
 
 export const ACTION_LABEL = 'action'; // 'action' is the key in the message content in BullMQ this would be "name"

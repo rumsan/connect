@@ -3,6 +3,12 @@ import axios from 'axios';
 export const dev_SessionCompletionAlert = async (sessionCuid) => {
   try {
     console.log('===== Session Complete =====');
+    if (!process.env.SLACK_URL || !process.env.SLACK_EMAIL) {
+      console.log(
+        'Notification Skipped! SLACK_URL or SLACK_EMAIL is not defined in environment variables',
+      );
+      return;
+    }
 
     await axios.post(
       process.env.SLACK_URL as string,
@@ -19,6 +25,12 @@ export const dev_SessionCompletionAlert = async (sessionCuid) => {
 export const dev_SessionAttemptComplete = async (sessionCuid) => {
   try {
     console.log('===== Session Attempt Complete =====');
+    if (!process.env.SLACK_URL || !process.env.SLACK_EMAIL) {
+      console.log(
+        'Notification Skipped! SLACK_URL or SLACK_EMAIL is not defined in environment variables',
+      );
+      return;
+    }
     await axios.post(
       process.env.SLACK_URL as string,
       JSON.stringify({
@@ -37,6 +49,12 @@ export const dev_NewBatchAlert = async (
 ) => {
   try {
     console.log(`===== Batch Started ${batchSize} =====`);
+    if (!process.env.SLACK_URL || !process.env.SLACK_EMAIL) {
+      console.log(
+        'Notification Skipped! SLACK_URL or SLACK_EMAIL is not defined in environment variables',
+      );
+      return;
+    }
     await axios.post(
       process.env.SLACK_URL as string,
       JSON.stringify({
