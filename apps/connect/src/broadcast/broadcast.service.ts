@@ -42,11 +42,6 @@ const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 export class BroadcastService {
   private readonly logger = new Logger(BroadcastService.name);
 
-  // Per-session mutex. Prevents two concurrent sendBroadcasts for the same
-  // session from racing on the SELECT-then-UPDATE of SCHEDULED broadcasts,
-  // which was causing duplicate broadcast_log rows and duplicate Twilio sends.
-  private readonly sessionSendLocks = new Map<string, Promise<void>>();
-
   constructor(
     @InjectQueue(QUEUES.SCHEDULED) public scheduleQueue: Queue,
     private readonly prisma: PrismaService,
@@ -274,33 +269,6 @@ export class BroadcastService {
   }
 
   async sendBroadcasts(sessionCuid: string, batchSize = 0) {
-    // Serialize concurrent sendBroadcasts calls for the same session. Without
-    // this, two parallel READINESS_CONFIRM messages (e.g. from the cron + the
-    // cascade in ApiWorker._sendBroadcast) would both run the SELECT, both see
-    // the same SCHEDULED row, and both create broadcast_log rows + AMQP jobs.
-    const prior = this.sessionSendLocks.get(sessionCuid) ?? Promise.resolve();
-    let releaseLock!: () => void;
-    const newLock = new Promise<void>((resolve) => {
-      releaseLock = resolve;
-    });
-    this.sessionSendLocks.set(
-      sessionCuid,
-      prior.then(() => newLock),
-    );
-    await prior;
-    try {
-      await this._sendBroadcastsLocked(sessionCuid, batchSize);
-    } finally {
-      releaseLock();
-      // Only clear the map entry if we're still the tail of the chain, so a
-      // newer pending lock doesn't get orphaned.
-      if (this.sessionSendLocks.get(sessionCuid) === newLock) {
-        this.sessionSendLocks.delete(sessionCuid);
-      }
-    }
-  }
-
-  private async _sendBroadcastsLocked(sessionCuid: string, batchSize = 0) {
     this.logger.log('Sending broadcasts for session:', sessionCuid);
     const session = await this.prisma.session.findUnique({
       where: {
