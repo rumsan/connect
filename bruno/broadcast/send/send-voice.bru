@@ -18,7 +18,8 @@ body:json {
   {
     "transport": "{{transport-id-voice}}",
     "message": {
-      "content": "https://lime-voluntary-lizard-659.mypinata.cloud/ipfs/bafybeiaay3cpmbomiskvooz4mtwlbs2o55hvyyc6h5pbsij4nj3nlaentq",
+    // "content": "https://lime-voluntary-lizard-659.mypinata.cloud/ipfs/bafybeiaay3cpmbomiskvooz4mtwlbs2o55hvyyc6h5pbsij4nj3nlaentq",
+      "content":"https://rahat-rumsan.s3.us-east-1.amazonaws.com/aa/dev/QmSukMcbeT2DmVCpFMYgWgfBKKqddfEADuxfKPvHbU1gSC",
       "meta": {}
     },
     "addresses": [
@@ -40,7 +41,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("session-id", data.cuid);
-    bru.setVar("xref",data.xref);
+    bru.setEnvVar("session-id", data.cuid);
+    bru.setEnvVar("xref",data.xref);
   }
 }

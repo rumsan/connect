@@ -1,0 +1,15 @@
+meta {
+  name: get-by-xref
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{url}}/usage/{{app-id}}/xref/{{xref}}
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}

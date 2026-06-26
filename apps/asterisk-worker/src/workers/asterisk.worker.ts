@@ -6,21 +6,25 @@ import {
   TransportQueue,
 } from '@rsconnect/queue';
 import { IDataProvider, TransportWorker } from '@rsconnect/workers';
-import { QUEUES } from '@rumsan/connect';
+import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
 import {
   Broadcast,
   BroadcastJobData,
   BroadcastStatus,
+  QueueBroadcastJobData,
   QueueBroadcastLog,
+  QueueJobData,
   Session,
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
+import { ConfirmChannel } from 'amqplib';
 import { IvrModel } from '../entities/ivr.entity';
 import { SessionModel } from '../entities/session.entity';
 
 import { wait } from '../utils';
 import { AudioService } from './audio.service';
 import { IVRService } from './ivr.service';
+import { SessionGate } from './session-gate';
 
 @Injectable()
 export class AsteriskWorker extends TransportWorker {
@@ -41,8 +45,56 @@ export class AsteriskWorker extends TransportWorker {
     private readonly broadcastLogQueue: BroadcastLogQueue,
     override readonly batchManager: BatchManger,
     private readonly ivrService: IVRService,
+    private readonly sessionGate: SessionGate,
   ) {
     super(dataProvider, channel, transportQueue);
+  }
+
+  public override async onModuleInit() {
+    try {
+      await this.channel.addSetup(async (channel: ConfirmChannel) => {
+        await this.assertQueue(channel);
+        await channel.prefetch(1);
+
+        await channel.consume(
+          this.queueTransport,
+          async (message) => {
+            if (!message) return;
+
+            const job: QueueJobData<unknown> = JSON.parse(
+              message.content.toString(),
+            );
+
+            if (job.action === QUEUE_ACTIONS.READINESS_CHECK) {
+              const data = job.data as { sessionCuid: string };
+              this.sessionGate.enqueue(data.sessionCuid, () =>
+                this._makeTransportReady(data.sessionCuid),
+              );
+            }
+
+            if (job.action === QUEUE_ACTIONS.BROADCAST) {
+              const data = job.data as QueueBroadcastJobData;
+              this.sessionGate.enqueue(data.sessionId, () =>
+                this._sendBroadcast(data),
+              );
+            }
+
+            if (job.action === QUEUE_ACTIONS.SESSION_COMPLETE) {
+              const data = job.data as { sessionCuid: string };
+              this.logger.log(
+                `Received SESSION_COMPLETE for session: ${data.sessionCuid}`,
+              );
+              this.sessionGate.completeSession(data.sessionCuid);
+            }
+
+            channel.ack(message);
+          },
+          {},
+        );
+      });
+    } catch (err) {
+      this.logger.error('Error starting the consumer:', err);
+    }
   }
 
   async sendBroadcast(data: {

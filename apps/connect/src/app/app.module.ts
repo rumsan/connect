@@ -1,6 +1,7 @@
 import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { QueueModule } from '@rsconnect/queue';
 import {
   AmqpModule,
@@ -20,6 +21,7 @@ import { QueueModule as LocalQueueModule } from '../queues/queue.module';
 import { SessionModule } from '../session/session.module';
 import { TemplateModule } from '../template/template.module';
 import { TransportModule } from '../transport/transport.module';
+import { UsageModule } from '../usage/usage.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { WebhookModule } from '../webhook/webhook.module';
@@ -27,6 +29,7 @@ import { WebhookModule } from '../webhook/webhook.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    EventEmitterModule.forRoot(),
     RumsanAppModule,
     PrismaModule,
     SessionModule,
@@ -77,6 +80,7 @@ import { WebhookModule } from '../webhook/webhook.module';
     ApiWorkerModule,
     EchoWorkerModule,
     SmtpWorkerModule,
+    UsageModule,
   ],
   controllers: [AppController],
   providers: [AppService],

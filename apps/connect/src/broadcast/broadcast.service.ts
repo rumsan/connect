@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createId } from '@paralleldrive/cuid2';
 import {
   Broadcast,
@@ -41,11 +42,6 @@ const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
 export class BroadcastService {
   private readonly logger = new Logger(BroadcastService.name);
 
-  // Per-session mutex. Prevents two concurrent sendBroadcasts for the same
-  // session from racing on the SELECT-then-UPDATE of SCHEDULED broadcasts,
-  // which was causing duplicate broadcast_log rows and duplicate Twilio sends.
-  private readonly sessionSendLocks = new Map<string, Promise<void>>();
-
   constructor(
     @InjectQueue(QUEUES.SCHEDULED) public scheduleQueue: Queue,
     private readonly prisma: PrismaService,
@@ -53,6 +49,7 @@ export class BroadcastService {
     private readonly broadcastQueue: BroadcastQueue,
     private readonly redisZsetScheduler: RedisZsetSchedulerService,
     private readonly broadcastValidationService: BroadcastValidationService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly twilioBatchingService: TwilioBatchingService,
   ) {}
 
@@ -272,33 +269,6 @@ export class BroadcastService {
   }
 
   async sendBroadcasts(sessionCuid: string, batchSize = 0) {
-    // Serialize concurrent sendBroadcasts calls for the same session. Without
-    // this, two parallel READINESS_CONFIRM messages (e.g. from the cron + the
-    // cascade in ApiWorker._sendBroadcast) would both run the SELECT, both see
-    // the same SCHEDULED row, and both create broadcast_log rows + AMQP jobs.
-    const prior = this.sessionSendLocks.get(sessionCuid) ?? Promise.resolve();
-    let releaseLock!: () => void;
-    const newLock = new Promise<void>((resolve) => {
-      releaseLock = resolve;
-    });
-    this.sessionSendLocks.set(
-      sessionCuid,
-      prior.then(() => newLock),
-    );
-    await prior;
-    try {
-      await this._sendBroadcastsLocked(sessionCuid, batchSize);
-    } finally {
-      releaseLock();
-      // Only clear the map entry if we're still the tail of the chain, so a
-      // newer pending lock doesn't get orphaned.
-      if (this.sessionSendLocks.get(sessionCuid) === newLock) {
-        this.sessionSendLocks.delete(sessionCuid);
-      }
-    }
-  }
-
-  private async _sendBroadcastsLocked(sessionCuid: string, batchSize = 0) {
     this.logger.log('Sending broadcasts for session:', sessionCuid);
     const session = await this.prisma.session.findUnique({
       where: {
@@ -413,27 +383,14 @@ export class BroadcastService {
       dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
     } else {
       dev_SessionAttemptComplete(session.cuid).then().catch();
-      // TODO:DON'T RETRY COMPLETE SESSION, RETRY ONLY FAILED BROADCASTS
 
-      // broadcasts = await this.prisma.broadcast.findMany({
-      //   where: {
-      //     session: sessionCuid,
-      //     status: {
-      //       in: [BroadcastStatus.FAIL],
-      //     },
-      //   },
-      // });
-      // // If there are failed broadcasts, attempt retries
-      // if (broadcasts.length > 0) {
-      //   this.logger.log(
-      //     `Session ${sessionCuid} has failed broadcasts, scheduling retries.`,
-      //   );
-      //   await this.retryBroadcasts(
-      //     sessionCuid,
-      //     session.Transport.type as TransportType,
-      //     true,
-      //   );
-      // }
+      const transportQueue = this._getQueueName(
+        session.Transport.type as TransportType,
+      );
+      await this.transportQueue.notifySessionComplete({
+        transportQueue,
+        sessionCuid,
+      });
     }
   }
 
@@ -519,6 +476,8 @@ export class BroadcastService {
           status: SessionStatus.COMPLETED,
         },
       });
+      this.eventEmitter.emit('broadcast.session.completed', sessionCuid);
+      this.logger.log(`Session ${sessionCuid} marked as COMPLETED`);
       dev_SessionCompletionAlert(sessionCuid).then().catch();
       return true;
     }
@@ -815,7 +774,10 @@ export class BroadcastService {
     }));
   }
 
-  async generateBroadcastCsv(appId: string, sessionId?: string): Promise<string> {
+  async generateBroadcastCsv(
+    appId: string,
+    sessionId?: string,
+  ): Promise<string> {
     const broadcasts = await this.prisma.broadcast.findMany({
       where: {
         app: appId,
@@ -869,9 +831,7 @@ export class BroadcastService {
         xref: b.xref ?? '',
         disposition: disp.disposition ?? '',
         duration: disp.duration ?? '',
-        ivrSequence: disp.ivrSequence
-          ? JSON.stringify(disp.ivrSequence)
-          : '[]',
+        ivrSequence: disp.ivrSequence ? JSON.stringify(disp.ivrSequence) : '[]',
         trunk: disp.trunk ?? '',
         answerTime: disp.answerTime ?? '',
         endTime: disp.endTime ?? '',
