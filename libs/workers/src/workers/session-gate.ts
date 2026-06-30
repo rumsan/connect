@@ -56,10 +56,8 @@ export class SessionGate implements OnModuleDestroy {
   }
 
   private startNext() {
-    if (this.pendingQueue.length === 0) return;
-
     const next = this.pendingQueue.shift();
-    this.activeSessionCuid = next.sessionCuid;
+    if (!next) return;
     this.logger.log(
       `Session ${next.sessionCuid} is now active (${this.pendingQueue.length} remaining)`,
     );
