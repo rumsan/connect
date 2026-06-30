@@ -1,5 +1,10 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 
+export interface ISessionGate {
+  enqueue(sessionCuid: string, work: () => Promise<void>): Promise<void>;
+  completeSession(sessionCuid: string): void;
+}
+
 interface PendingSession {
   sessionCuid: string;
   work: () => Promise<void>;

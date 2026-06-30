@@ -1,7 +1,7 @@
 import { Inject, OnModuleInit } from '@nestjs/common';
 import { BatchManger, TransportQueue } from '@rsconnect/queue';
 import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
-import { SessionGate } from './session-gate';
+import { ISessionGate, SessionGate } from './session-gate';
 import {
   Broadcast,
   BroadcastJobData,
@@ -18,7 +18,7 @@ import { IDataProvider } from '../data-providers/data-provider.interface';
 export abstract class TransportWorker implements OnModuleInit {
   abstract queueTransport: QUEUES;
   protected batchManager: BatchManger;
-  protected sessionGate: SessionGate = new SessionGate();
+  protected sessionGate: ISessionGate = new SessionGate();
 
   constructor(
     @Inject('IDataProvider')
