@@ -533,13 +533,9 @@ export class BroadcastService {
 
     const broadcastIds = broadcastQueueData.map((b) => b.broadcastId);
 
-    // CAS-style claim: only flip rows that are still SCHEDULED. This stops
-    // duplicate queueing if a parallel sendBroadcasts somehow gets through the
-    // session mutex (e.g. when the connect-service runs more than one replica).
-    const claim = await this.prisma.broadcast.updateMany({
+    await this.prisma.broadcast.updateMany({
       where: {
         cuid: { in: broadcastIds },
-        status: BroadcastStatus.SCHEDULED,
       },
       data: {
         status: BroadcastStatus.PENDING,
@@ -547,18 +543,6 @@ export class BroadcastService {
         lastAttempt: new Date(),
       },
     });
-
-    if (claim.count === 0) {
-      this.logger.warn(
-        `_addToQueue: all ${broadcastIds.length} candidate broadcasts were already claimed by another process; skipping log/queue. session=${session.cuid}`,
-      );
-      return;
-    }
-    if (claim.count !== broadcastIds.length) {
-      this.logger.warn(
-        `_addToQueue: only ${claim.count}/${broadcastIds.length} broadcasts were SCHEDULED at update time; proceeding with the full set (logs will be best-effort). session=${session.cuid}`,
-      );
-    }
 
     await this.prisma.broadcastLog.createMany({
       data: broadcastQueueData.map((broadcast) => {
