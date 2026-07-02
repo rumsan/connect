@@ -44,7 +44,7 @@ export class UsageBackfillService {
         await Promise.all(
           chunk.map((s) =>
             this.usageService
-              .handleSessionCompleted(s.cuid)
+              .calculateAndRecordUsage(s.cuid)
               .catch((err) =>
                 this.logger.warn(
                   `Backfill failed for session ${s.cuid}: ${err.message}`,
