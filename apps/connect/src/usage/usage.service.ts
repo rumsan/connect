@@ -29,7 +29,7 @@ export class UsageService {
       });
       if (!session) return;
 
-      if (session.Transport.type === 'VOICE') {
+      if (session.Transport.type === 'VOICE' && session.status === 'COMPLETED') {
         const hasSuccess = await this.prisma.broadcast.count({
           where: { session: sessionCuid, status: 'SUCCESS', isComplete: true },
         });
@@ -63,7 +63,7 @@ export class UsageService {
     }
   }
 
-  private async calculateAndRecordUsage(sessionCuid: string) {
+  async calculateAndRecordUsage(sessionCuid: string) {
     const session = await this.prisma.session.findUnique({
       where: { cuid: sessionCuid },
       include: { Transport: true },
