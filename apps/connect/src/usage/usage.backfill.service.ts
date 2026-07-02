@@ -22,7 +22,7 @@ export class UsageBackfillService {
     while (hasMore) {
       const sessions = await this.prisma.session.findMany({
         where: {
-          status: 'COMPLETED',
+          status: { in: ['PENDING', 'COMPLETED'] },
           ...(cursor ? { id: { gt: cursor } } : {}),
         },
         orderBy: { id: 'asc' },
