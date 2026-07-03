@@ -71,7 +71,7 @@ export class UsageService {
     if (!session) return;
 
     const broadcasts = await this.prisma.broadcast.findMany({
-      where: { session: sessionCuid, isComplete: true },
+      where: { session: sessionCuid, status: { in: ['SUCCESS', 'FAIL'] } },
     });
     if (!broadcasts.length) return;
 
