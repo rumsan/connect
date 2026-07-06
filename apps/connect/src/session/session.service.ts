@@ -132,6 +132,22 @@ export class SessionService {
           app: appId,
           session: { in: sessionCuids },
           ...(dto.status ? { status: dto.status } : {}),
+          ...(dto.address
+            ? {
+                address: {
+                  contains: dto.address,
+                  mode: 'insensitive',
+                },
+              }
+            : {}),
+          ...(dto.startDate && dto.endDate
+            ? {
+                createdAt: {
+                  gte: new Date(dto.startDate),
+                  lte: new Date(dto.endDate),
+                },
+              }
+            : {}),
         },
         orderBy,
       },
