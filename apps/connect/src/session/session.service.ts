@@ -181,6 +181,8 @@ export class SessionService {
 
   async getBroadcastCountByStatuses(
     sessionCuids: string[],
+    startDate?: string,
+    endDate?: string,
   ): Promise<Record<BroadcastStatus | 'TOTAL', number>> {
     this.logger.log(
       `Getting broadcast counts for sessions: ${sessionCuids.join(', ')}`,
@@ -189,6 +191,14 @@ export class SessionService {
       by: ['status'],
       where: {
         session: { in: sessionCuids },
+        ...(startDate && endDate
+          ? {
+              createdAt: {
+                gte: new Date(startDate),
+                lte: new Date(endDate),
+              },
+            }
+          : {}),
       },
       _count: {
         status: true,
