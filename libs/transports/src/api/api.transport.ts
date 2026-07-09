@@ -115,6 +115,10 @@ export class ApiTransport implements IService {
   }
 
   normalizeSendOutcome(details: Record<string, any>): ApiSendOutcome {
+    if (this.isPlasgateProvider()) {
+      return this.normalizePlasgateOutcome(details);
+    }
+
     if (!this.isTwilioProvider()) {
       return {
         status: BroadcastStatus.SUCCESS,
@@ -144,5 +148,25 @@ export class ApiTransport implements IService {
 
   private isTwilioProvider(): boolean {
     return this.config?.['meta']?.provider === 'twilio';
+  }
+
+  private isPlasgateProvider(): boolean {
+    return this.config?.['meta']?.provider === 'plasgate';
+  }
+
+  private normalizePlasgateOutcome(
+    details: Record<string, any>,
+  ): ApiSendOutcome {
+    const queueId =
+      details?.['queue_id'] ?? details?.['queueId'] ?? details?.['id'] ?? null;
+
+    return {
+      status: BroadcastStatus.PENDING,
+      details: {
+        ...details,
+        provider: 'plasgate',
+        providerMessageSid: queueId,
+      },
+    };
   }
 }

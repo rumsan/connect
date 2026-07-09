@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { WebhookService } from './webhook.service';
 
@@ -13,5 +13,14 @@ export class WebhookController {
   })
   async create(@Body() body: any) {
     return this.webhookService.handleMessageStatusWebhook(body);
+  }
+
+  // Plasgate  sends DLR callbacks as GET with the report in the query
+  @Get('plasgate')
+  @ApiOperation({
+    summary: 'Receive Plasgate DLR (delivery report) callbacks',
+  })
+  async plasgateDlrGet(@Query() query: any) {
+    return this.webhookService.handlePlasgateDlrWebhook(query);
   }
 }
