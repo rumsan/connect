@@ -1,7 +1,6 @@
 import { Fira_Code, Fira_Sans } from 'next/font/google';
 import './global.css';
 import { Providers } from '../components/providers';
-import { Shell } from '../components/shell';
 
 /**
  * Self-hosted by next/font at build time — no external stylesheet request and
@@ -31,15 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${firaSans.variable} ${firaCode.variable}`}>
       <body className="font-sans">
-        <a
-          href="#main"
-          className="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-0 focus:z-50 focus:rounded-br-md focus:bg-primary focus:px-4 focus:py-2.5 focus:font-semibold focus:text-primary-foreground"
-        >
-          Skip to main content
-        </a>
-        <Providers>
-          <Shell>{children}</Shell>
-        </Providers>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

@@ -3,16 +3,16 @@
 import { AlertTriangle, FileText, Radio, Send } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
-import { OutcomeChart, TrendChart } from '../../../components/charts/charts';
-import { Badge } from '../../../components/ui/badge';
-import { Button } from '../../../components/ui/button';
+import { OutcomeChart, TrendChart } from '../../../../components/charts/charts';
+import { Badge } from '../../../../components/ui/badge';
+import { Button } from '../../../../components/ui/button';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '../../../components/ui/card';
+} from '../../../../components/ui/card';
 import {
   CopyId,
   Empty,
@@ -23,8 +23,8 @@ import {
   StatusBadge,
   formatDate,
   formatNumber,
-} from '../../../components/ui/feedback';
-import { TableSkeleton } from '../../../components/ui/skeleton';
+} from '../../../../components/ui/feedback';
+import { TableSkeleton } from '../../../../components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -32,8 +32,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '../../../components/ui/table';
-import { appHref, useApp } from '../../../lib/app-context';
+} from '../../../../components/ui/table';
+import { appHref, useApp } from '../../../../lib/app-context';
 import {
   useApplications,
   useBroadcastStatusCount,
@@ -43,8 +43,8 @@ import {
   useTemplates,
   useTransports,
   useUsage,
-} from '../../../lib/hooks';
-import { BroadcastStatus, TemplateStatus } from '../../../lib/types';
+} from '../../../../lib/hooks';
+import { BroadcastStatus, TemplateStatus } from '../../../../lib/types';
 
 function shortDate(iso: string) {
   const d = new Date(iso);

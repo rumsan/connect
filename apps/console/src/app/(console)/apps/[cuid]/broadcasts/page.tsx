@@ -3,37 +3,37 @@
 import { Loader2, Send } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { JsonEditor } from '../../../../components/json-editor';
-import { Button } from '../../../../components/ui/button';
+import { JsonEditor } from '../../../../../components/json-editor';
+import { Button } from '../../../../../components/ui/button';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '../../../../components/ui/card';
+} from '../../../../../components/ui/card';
 import {
   ErrorNotice,
   PageHead,
   SuccessNotice,
-} from '../../../../components/ui/feedback';
-import { Input, Textarea } from '../../../../components/ui/input';
-import { Field } from '../../../../components/ui/label';
+} from '../../../../../components/ui/feedback';
+import { Input, Textarea } from '../../../../../components/ui/input';
+import { Field } from '../../../../../components/ui/label';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../../../../components/ui/select';
-import { parseAddresses } from '../../../../lib/addresses';
-import { appHref, useApp } from '../../../../lib/app-context';
+} from '../../../../../components/ui/select';
+import { parseAddresses } from '../../../../../lib/addresses';
+import { appHref, useApp } from '../../../../../lib/app-context';
 import {
   useSendBroadcast,
   useTemplates,
   useTransports,
-} from '../../../../lib/hooks';
-import { TemplateStatus, TriggerType, type SendBroadcast } from '../../../../lib/types';
+} from '../../../../../lib/hooks';
+import { TemplateStatus, TriggerType, type SendBroadcast } from '../../../../../lib/types';
 
 type MessageMode = 'content' | 'template';
 

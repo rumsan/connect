@@ -7,10 +7,10 @@ import {
   OutcomeChart,
   RankedBarChart,
   TrendChart,
-} from '../components/charts/charts';
-import { CreateAppDialog } from '../components/create-app-dialog';
-import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+} from '../../components/charts/charts';
+import { CreateAppDialog } from '../../components/create-app-dialog';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
   Empty,
   ErrorNotice,
@@ -19,10 +19,10 @@ import {
   StatusBadge,
   SuccessNotice,
   formatNumber,
-} from '../components/ui/feedback';
-import { Input } from '../components/ui/input';
-import { Field } from '../components/ui/label';
-import { TableSkeleton } from '../components/ui/skeleton';
+} from '../../components/ui/feedback';
+import { Input } from '../../components/ui/input';
+import { Field } from '../../components/ui/label';
+import { TableSkeleton } from '../../components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -30,15 +30,15 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '../components/ui/table';
-import { appHref } from '../lib/app-context';
+} from '../../components/ui/table';
+import { appHref } from '../../lib/app-context';
 import {
   useApplications,
   useDailyForApps,
   useUsageForApps,
   type UsageRange,
-} from '../lib/hooks';
-import type { CreateApplicationResult, UsageByTransport } from '../lib/types';
+} from '../../lib/hooks';
+import type { CreateApplicationResult, UsageByTransport } from '../../lib/types';
 
 function share(part: number, whole: number) {
   if (!whole) return '—';

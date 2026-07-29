@@ -1,4 +1,6 @@
+import { getServerSession } from 'next-auth';
 import { NextRequest } from 'next/server';
+import { authOptions } from '../../../../lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,11 +9,23 @@ const CONNECT_API_URL = (
 ).replace(/\/+$/, '');
 
 /**
- * Thin pass-through to the Connect API so the browser never needs the upstream
- * URL and CORS is never in play. The Connect SDK runs against this route as its
- * baseURL; the only header it needs carried through is the app scope.
+ * Thin pass-through to the Connect API.
+ *
+ * It re-checks the session rather than trusting middleware alone: a matcher is
+ * easy to widen by accident, and this route is what actually reaches the API.
+ *
+ * Note this gates *the console*, not Connect. Anything calling the Connect API
+ * directly bypasses this route entirely.
  */
 async function proxy(req: NextRequest, path: string[]) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.email) {
+    return Response.json(
+      { success: false, message: 'Not signed in.' },
+      { status: 401 },
+    );
+  }
+
   const search = req.nextUrl.search;
   const target = `${CONNECT_API_URL}/${path.join('/')}${search}`;
 

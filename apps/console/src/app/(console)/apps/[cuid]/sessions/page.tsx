@@ -3,8 +3,8 @@
 import { Download, Loader2, X } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
-import { Button } from '../../../../components/ui/button';
-import { Card, CardDescription, CardHeader, CardTitle } from '../../../../components/ui/card';
+import { Button } from '../../../../../components/ui/button';
+import { Card, CardDescription, CardHeader, CardTitle } from '../../../../../components/ui/card';
 import {
   CopyId,
   Empty,
@@ -14,9 +14,9 @@ import {
   StatusBadge,
   formatDate,
   formatNumber,
-} from '../../../../components/ui/feedback';
-import { Input } from '../../../../components/ui/input';
-import { TableSkeleton } from '../../../../components/ui/skeleton';
+} from '../../../../../components/ui/feedback';
+import { Input } from '../../../../../components/ui/input';
+import { TableSkeleton } from '../../../../../components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -24,9 +24,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '../../../../components/ui/table';
-import { appHref, useApp } from '../../../../lib/app-context';
-import { useDownloadBroadcastsCsv, useSessions } from '../../../../lib/hooks';
+} from '../../../../../components/ui/table';
+import { appHref, useApp } from '../../../../../lib/app-context';
+import { useDownloadBroadcastsCsv, useSessions } from '../../../../../lib/hooks';
 
 export default function SessionsPage() {
   const { appId } = useApp();

@@ -2,20 +2,20 @@
 
 import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { AppCard } from '../../components/app-card';
-import { CreateAppDialog } from '../../components/create-app-dialog';
-import { Button } from '../../components/ui/button';
-import { Card } from '../../components/ui/card';
+import { AppCard } from '../../../components/app-card';
+import { CreateAppDialog } from '../../../components/create-app-dialog';
+import { Button } from '../../../components/ui/button';
+import { Card } from '../../../components/ui/card';
 import {
   Empty,
   ErrorNotice,
   PageHead,
   SuccessNotice,
-} from '../../components/ui/feedback';
-import { Input } from '../../components/ui/input';
-import { CardGridSkeleton } from '../../components/ui/skeleton';
-import { useApplications, useUsageForApps } from '../../lib/hooks';
-import type { CreateApplicationResult } from '../../lib/types';
+} from '../../../components/ui/feedback';
+import { Input } from '../../../components/ui/input';
+import { CardGridSkeleton } from '../../../components/ui/skeleton';
+import { useApplications, useUsageForApps } from '../../../lib/hooks';
+import type { CreateApplicationResult } from '../../../lib/types';
 
 export default function ApplicationsPage() {
   const { data, isLoading, error } = useApplications();

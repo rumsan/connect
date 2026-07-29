@@ -9,14 +9,17 @@ import {
   Send,
   Boxes,
   ListOrdered,
+  LogOut,
   Radio,
   Wallet,
 } from 'lucide-react';
+import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { appHref, useApp } from '../lib/app-context';
 import { useApplications } from '../lib/hooks';
 import { cn } from '../lib/utils';
+import { Button } from './ui/button';
 
 /** Shown when no application is open. */
 const GLOBAL_NAV = [
@@ -167,6 +170,28 @@ function Breadcrumb() {
   );
 }
 
+function SignedInAs() {
+  const { data: session } = useSession();
+  const email = session?.user?.email;
+  if (!email) return null;
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="hidden text-sm text-muted-foreground sm:inline" title={email}>
+        {email}
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => signOut({ callbackUrl: '/login' })}
+      >
+        <LogOut />
+        <span className="sr-only sm:not-sr-only">Sign out</span>
+      </Button>
+    </div>
+  );
+}
+
 export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
@@ -174,6 +199,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b bg-card px-6 py-3">
           <Breadcrumb />
+          <SignedInAs />
         </header>
         <main id="main" className="w-full max-w-[1400px] p-6 pb-16">
           {children}
