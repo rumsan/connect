@@ -52,7 +52,6 @@ COPY --from=builder /app/node_modules ./node_modules
 # Copy app files
 COPY --from=builder /app/apps/console/public ./apps/console/public
 COPY --from=builder /app/apps/console/.next ./apps/console/.next
-COPY --from=builder /app/apps/console/package.json ./apps/console/package.json
 COPY --from=builder /app/apps/console/project.json ./apps/console/project.json
 
 EXPOSE 3000
