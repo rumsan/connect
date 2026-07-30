@@ -64,3 +64,12 @@ jobs:
           file: Dockerfile.asterisk-worker
           push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
           tags: rumsan/asterisk-worker:dev
+
+      - name: build && push connect-ui
+        id: build-push-connect-ui
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/console/Dockerfile
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          tags: rumsan/connect-ui:dev
