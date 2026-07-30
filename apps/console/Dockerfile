@@ -44,11 +44,16 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Copy public assets and Next.js build output
+# Copy root configuration files needed by Nx
+COPY --from=builder /app/nx.json ./
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy app files
 COPY --from=builder /app/apps/console/public ./apps/console/public
 COPY --from=builder /app/apps/console/.next ./apps/console/.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/apps/console/package.json ./apps/console/package.json
+COPY --from=builder /app/apps/console/project.json ./apps/console/project.json
 
 EXPOSE 3000
 
