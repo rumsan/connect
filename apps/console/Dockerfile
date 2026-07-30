@@ -44,8 +44,9 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
+# Copy public assets and Next.js build output
 COPY --from=builder /app/apps/console/public ./apps/console/public
-COPY --from=builder /app/dist/apps/console ./dist/apps/console
+COPY --from=builder /app/apps/console/.next ./apps/console/.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
