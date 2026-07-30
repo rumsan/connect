@@ -76,7 +76,6 @@ jobs:
           file: apps/console/Dockerfile
           push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
           build-args: |
-            NEXT_PUBLIC_API_HOST_URL=${{ env.NEXT_PUBLIC_API_HOST_URL }}
             CONNECT_API_URL=${{ env.CONNECT_API_URL }}
             ADMIN_API_KEY=${{ env.ADMIN_API_KEY }}
             GOOGLE_CLIENT_ID=${{ env.GOOGLE_CLIENT_ID }}
