@@ -36,7 +36,7 @@ ENV ALLOWED_GOOGLE_DOMAIN=${ALLOWED_GOOGLE_DOMAIN}
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
-RUN pnpm nx build console
+RUN pnpm nx build console --skip-nx-cache
 
 # Step 4: Runner image
 FROM base AS runner
