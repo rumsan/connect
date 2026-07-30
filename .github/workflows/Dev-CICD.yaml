@@ -23,7 +23,7 @@ jobs:
 
       - name: import env file
         env:
-          env_release: ${{ secrets.connect-ui }}
+          env_release: ${{ secrets.CONNECT-UI }}
         run: |
           touch ./.env && echo "$env_release" >> ./.env
           grep -v '^#' ./.env | grep '=' >> $GITHUB_ENV  
