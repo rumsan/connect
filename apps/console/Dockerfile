@@ -44,16 +44,19 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Copy root configuration files needed by Nx
-COPY --from=builder /app/nx.json ./
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
+# Set working directory to the app folder
+WORKDIR /app/apps/console
 
-# Copy app files
-COPY --from=builder /app/apps/console/public ./apps/console/public
-COPY --from=builder /app/apps/console/.next ./apps/console/.next
-COPY --from=builder /app/apps/console/project.json ./apps/console/project.json
+# Copy root configurations & dependencies
+COPY --from=builder /app/package.json /app/
+COPY --from=builder /app/node_modules /app/node_modules
+
+# Copy built application assets
+COPY --from=builder /app/apps/console/public ./public
+COPY --from=builder /app/apps/console/.next ./.next
+COPY --from=builder /app/apps/console/project.json ./project.json
 
 EXPOSE 3000
 
-CMD ["pnpm", "nx", "start", "console"]
+# Start Next.js directly
+CMD ["pnpm", "exec", "next", "start"]
