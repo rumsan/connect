@@ -47,8 +47,8 @@ ENV HOSTNAME="0.0.0.0"
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Standalone output includes only the files needed to run — no full node_modules copy needed
-COPY --from=builder /app/dist/apps/console/.next/standalone ./
-COPY --from=builder /app/dist/apps/console/.next/static ./apps/console/.next/static
+COPY --from=builder /app/apps/console/.next/standalone ./
+COPY --from=builder /app/apps/console/.next/static ./apps/console/.next/static
 COPY --from=builder /app/apps/console/public ./apps/console/public
 
 EXPOSE 3000
