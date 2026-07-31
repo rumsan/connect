@@ -39,24 +39,17 @@ ENV NODE_ENV=production
 RUN pnpm nx build console --skip-nx-cache
 
 # Step 4: Runner image
-FROM base AS runner
+FROM node:22-alpine AS runner
+WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV NEXT_TELEMETRY_DISABLED=1
 
-# Set working directory to the app folder
-WORKDIR /app/apps/console
-
-# Copy root configurations & dependencies
-COPY --from=builder /app/package.json /app/
-COPY --from=builder /app/node_modules /app/node_modules
-
-# Copy built application assets from the Nx dist folder
-COPY --from=builder /app/apps/console/public ./public
-COPY --from=builder /app/dist/apps/console/.next ./.next
-COPY --from=builder /app/apps/console/project.json ./project.json
+# Standalone output includes only the files needed to run — no full node_modules copy needed
+COPY --from=builder /app/dist/apps/console/.next/standalone ./
+COPY --from=builder /app/dist/apps/console/.next/static ./apps/console/.next/static
+COPY --from=builder /app/apps/console/public ./apps/console/public
 
 EXPOSE 3000
-
-# Start Next.js directly
-CMD ["pnpm", "exec", "next", "start"]
+CMD ["node", "apps/console/server.js"]
