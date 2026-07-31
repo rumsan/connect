@@ -51,9 +51,9 @@ WORKDIR /app/apps/console
 COPY --from=builder /app/package.json /app/
 COPY --from=builder /app/node_modules /app/node_modules
 
-# Copy built application assets
+# Copy built application assets from the Nx dist folder
 COPY --from=builder /app/apps/console/public ./public
-COPY --from=builder /app/apps/console/.next ./.next
+COPY --from=builder /app/dist/apps/console/.next ./.next
 COPY --from=builder /app/apps/console/project.json ./project.json
 
 EXPOSE 3000
