@@ -38,6 +38,15 @@ export class LogStreamService extends ConsoleLogger implements LoggerService {
     this._push('verbose', message, context);
   }
 
+  /**
+   * Feed an entry from an external logging pipeline (e.g. a Winston transport)
+   * into the stream. Unlike `log()`/`warn()`/etc. this does NOT write to the
+   * console — the upstream logger owns terminal output.
+   */
+  ingest(level: LogEntry['level'], message: any, context?: string): void {
+    this._push(level, message, context);
+  }
+
   private _push(level: LogEntry['level'], message: any, context?: string): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
