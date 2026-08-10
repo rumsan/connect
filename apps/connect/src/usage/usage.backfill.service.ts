@@ -22,7 +22,7 @@ export class UsageBackfillService {
     while (hasMore) {
       const sessions = await this.prisma.session.findMany({
         where: {
-          status: 'COMPLETED',
+          status: { in: ['PENDING', 'COMPLETED'] },
           ...(cursor ? { id: { gt: cursor } } : {}),
         },
         orderBy: { id: 'asc' },
@@ -44,7 +44,7 @@ export class UsageBackfillService {
         await Promise.all(
           chunk.map((s) =>
             this.usageService
-              .handleSessionCompleted(s.cuid)
+              .calculateAndRecordUsage(s.cuid)
               .catch((err) =>
                 this.logger.warn(
                   `Backfill failed for session ${s.cuid}: ${err.message}`,
