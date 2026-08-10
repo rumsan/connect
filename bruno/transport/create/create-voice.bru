@@ -21,7 +21,12 @@ body:json {
       "type": "VOICE",
       "validationContent":"URL",
       "validationAddress":"PHONE",
-      "config": {}
+      "config": {},
+      "pricing": {
+          "creditPerUnit": 1,
+          "unitType": "MINUTE",
+          "currency": "NPR"
+  }
   }
 }
 
@@ -29,7 +34,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("transport-id-voice", data.cuid);
-    bru.setVar("transport-id", data.cuid);
+    bru.setEnvVar("transport-id-voice", data.cuid);
+    bru.setEnvVar("transport-id", data.cuid);
   }
 }

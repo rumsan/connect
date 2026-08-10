@@ -1,0 +1,23 @@
+meta {
+  name: set-api-call
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{url}}/transports/{{transport-id}}/pricing
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "creditPerUnit": 0.001,
+    "unitType": "API_CALL",
+    "currency": "USD"
+  }
+}

@@ -38,6 +38,35 @@ export class TransportQueue {
     return false;
   }
 
+  async notifySessionComplete(data: {
+    transportQueue: QUEUES;
+    sessionCuid: string;
+  }) {
+    try {
+      const queueJob: QueueJobData<{ sessionCuid: string }> = {
+        action: QUEUE_ACTIONS.SESSION_COMPLETE,
+        data: { sessionCuid: data.sessionCuid },
+      };
+      this.logger.log(
+        `Notifying session complete: ${data.sessionCuid} on ${data.transportQueue}`,
+      );
+      return await this._channel.sendToQueue(
+        data.transportQueue,
+        Buffer.from(JSON.stringify(queueJob)),
+        {
+          persistent: true,
+          timeout: 1000,
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `notifySessionComplete publish failed for session ${data.sessionCuid}`,
+        error,
+      );
+    }
+    return false;
+  }
+
   async confirmReadiness(data: { sessionCuid: string; maxBatchSize: number }) {
     try {
       const queueJob: QueueJobData<{

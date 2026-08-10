@@ -1,0 +1,23 @@
+meta {
+  name: set-voice-minute
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{url}}/transports/{{transport-id}}/pricing
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "creditPerUnit": 1,
+    "unitType": "MINUTE",
+    "currency": "NPR"
+  }
+}

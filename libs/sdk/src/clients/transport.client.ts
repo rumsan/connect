@@ -6,6 +6,7 @@ import {
   TransportApiConfig,
   TransportConfig,
   TransportEchoConfig,
+  TransportPricing,
   TransportSmtpConfig,
   TransportType,
 } from '../types';
@@ -75,5 +76,39 @@ export class TransportClient {
   ) {
     const payload: Transport = { ...data, type: TransportType.SMTP };
     return this.create(payload, config);
+  }
+
+  async setPricing(
+    cuid: string,
+    data: {
+      creditPerUnit: number;
+      unitType: string;
+      currency?: string;
+      notes?: string;
+    },
+    config?: AxiosRequestConfig
+  ) {
+    const response = await this._client.post(
+      `${this._prefix}/${cuid}/pricing`,
+      data,
+      config
+    );
+    return formatResponse<TransportPricing>(response);
+  }
+
+  async getPricing(cuid: string, config?: AxiosRequestConfig) {
+    const response = await this._client.get(
+      `${this._prefix}/${cuid}/pricing`,
+      config
+    );
+    return formatResponse<TransportPricing>(response);
+  }
+
+  async removePricing(cuid: string, config?: AxiosRequestConfig) {
+    const response = await this._client.delete(
+      `${this._prefix}/${cuid}/pricing`,
+      config
+    );
+    return formatResponse<TransportPricing>(response);
   }
 }

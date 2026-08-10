@@ -27,6 +27,6 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("template-id-whatsapp", data.cuid);
+    bru.setEnvVar("template-id-whatsapp", data.cuid);
   }
 }

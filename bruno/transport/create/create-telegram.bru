@@ -63,7 +63,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("transport-id-telegram", data.cuid);
-    bru.setVar("transport-id", data.cuid);
+    bru.setEnvVar("transport-id-telegram", data.cuid);
+    bru.setEnvVar("transport-id", data.cuid);
   }
 }

@@ -132,6 +132,22 @@ export class SessionService {
           app: appId,
           session: { in: sessionCuids },
           ...(dto.status ? { status: dto.status } : {}),
+          ...(dto.address
+            ? {
+                address: {
+                  contains: dto.address,
+                  mode: 'insensitive',
+                },
+              }
+            : {}),
+          ...(dto.startDate && dto.endDate
+            ? {
+                createdAt: {
+                  gte: new Date(dto.startDate),
+                  lte: new Date(dto.endDate),
+                },
+              }
+            : {}),
         },
         orderBy,
       },
@@ -165,6 +181,8 @@ export class SessionService {
 
   async getBroadcastCountByStatuses(
     sessionCuids: string[],
+    startDate?: string,
+    endDate?: string,
   ): Promise<Record<BroadcastStatus | 'TOTAL', number>> {
     this.logger.log(
       `Getting broadcast counts for sessions: ${sessionCuids.join(', ')}`,
@@ -173,6 +191,14 @@ export class SessionService {
       by: ['status'],
       where: {
         session: { in: sessionCuids },
+        ...(startDate && endDate
+          ? {
+              createdAt: {
+                gte: new Date(startDate),
+                lte: new Date(endDate),
+              },
+            }
+          : {}),
       },
       _count: {
         status: true,

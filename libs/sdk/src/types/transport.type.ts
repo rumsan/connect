@@ -16,10 +16,31 @@ export type Transport = {
   stats?: Record<string, any> | null;
   validationContent?: string;
   validationAddress?: string;
+  Pricing?: TransportPricing | null;
   createdAt?: Date;
   updatedAt?: Date | null;
   deletedAt?: Date | null;
 };
+
+export type TransportPricing = {
+  id: number;
+  cuid: string;
+  transportCuid: string;
+  creditPerUnit: number;
+  unitType: CreditUnitType;
+  currency: string;
+  notes?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date | null;
+};
+
+export enum CreditUnitType {
+  MESSAGE = 'MESSAGE',
+  SEGMENT = 'SEGMENT',
+  API_CALL = 'API_CALL',
+  SECOND = 'SECOND',
+  MINUTE = 'MINUTE',
+}
 
 export type TransportConfig<T> = {
   app?: string;

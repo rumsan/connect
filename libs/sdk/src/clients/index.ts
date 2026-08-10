@@ -5,6 +5,7 @@ import { BroadcastClient } from './broadcast.client';
 import { SessionClient } from './session.client';
 import { TransportClient } from './transport.client';
 import { TemplateClient } from './template.client';
+import { UsageClient } from './usage.client';
 
 export {
   ApiClient,
@@ -13,6 +14,7 @@ export {
   SessionClient,
   TransportClient,
   TemplateClient,
+  UsageClient,
 };
 
 export const getClient = (config: CreateAxiosDefaults) => {
@@ -28,5 +30,6 @@ export const getClient = (config: CreateAxiosDefaults) => {
     broadcastLog: new BroadcastLogClient(apiClient),
     transport: new TransportClient(apiClient),
     template: new TemplateClient(apiClient),
+    usage: new UsageClient(apiClient),
   };
 };

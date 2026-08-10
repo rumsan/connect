@@ -1,0 +1,20 @@
+meta {
+  name: backfill
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{url}}/usage/backfill?batchSize=100&concurrency=5
+  body: json
+  auth: none
+}
+
+params:query {
+  batchSize: 100
+  concurrency: 5
+}
+
+headers {
+  app-id: cm0aop2mi017vbka6ugpe0pjj
+}

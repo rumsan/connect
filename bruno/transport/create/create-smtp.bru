@@ -29,7 +29,13 @@ body:json {
           "password": "{{smtp-password}}",
           "defaultFrom": "{{smtp-username}}",
           "defaultSubject": "This is email broadcast"
-      }
+      },
+      "pricing": {
+          "creditPerUnit": 0.5,
+          "unitType": "MESSAGE",
+          "currency": "NPR"
+         }
+      
   }
 }
 
@@ -37,7 +43,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("transport-id-smtp", data.cuid);
-    bru.setVar("transport-id", data.cuid);
+    bru.setEnvVar("transport-id-smtp", data.cuid);
+    bru.setEnvVar("transport-id", data.cuid);
   }
 }

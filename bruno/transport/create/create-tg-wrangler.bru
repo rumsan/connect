@@ -41,7 +41,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("transport-id-tg-wrangler", data.cuid);
-    bru.setVar("transport-id", data.cuid);
+    bru.setEnvVar("transport-id-tg-wrangler", data.cuid);
+    bru.setEnvVar("transport-id", data.cuid);
   }
 }

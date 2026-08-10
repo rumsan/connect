@@ -1,0 +1,23 @@
+meta {
+  name: set-smtp-message
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{url}}/transports/{{transport-id}}/pricing
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "creditPerUnit": 1,
+    "unitType": "MESSAGE",
+    "currency": "NPR"
+  }
+}

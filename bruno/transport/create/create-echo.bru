@@ -29,7 +29,7 @@ tests {
   var data = res.getBody().data;
   
   if(data){
-    bru.setVar("transport-id-echo", data.cuid);
-    bru.setVar("transport-id", data.cuid);
+    bru.setEnvVar("transport-id-echo", data.cuid);
+    bru.setEnvVar("transport-id", data.cuid);
   }
 }

@@ -12,8 +12,14 @@ import { AppModule } from './app/app.module';
 // from inside its HTTP callback when ARI is unreachable, escaping the Promise
 // chain. Swallow it so IVRService's reconnect loop can keep running.
 process.on('uncaughtException', (err) => {
-  if (typeof err === 'string' || (err as { code?: string })?.code === 'HostIsNotReachable') {
-    Logger.warn(`Swallowed ARI/swagger error, will reconnect: ${String(err)}`, 'Bootstrap');
+  if (
+    typeof err === 'string' ||
+    (err as { code?: string })?.code === 'HostIsNotReachable'
+  ) {
+    Logger.warn(
+      `Swallowed ARI/swagger error, will reconnect: ${String(err)}`,
+      'Bootstrap',
+    );
     return;
   }
   Logger.error('Uncaught exception', err as Error, 'Bootstrap');
@@ -28,10 +34,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
-  const port = process.env.PORT || 3000;
+  const port = 5653;
   await app.listen(port);
   Logger.log(
-    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`
+    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`,
   );
 }
 

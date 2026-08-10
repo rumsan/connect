@@ -1,0 +1,15 @@
+meta {
+  name: get-credits-by-xref
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{url}}/usage/{{app-id}}/xref/{{xref}}/credits
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}

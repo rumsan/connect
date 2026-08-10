@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CreateTransportDto } from './dto/create-transport.dto';
+import { SetTransportPricingDto } from './dto/set-transport-pricing.dto';
 import { UpdateTransportDto } from './dto/update-transport.dto';
 import { TransportService } from './transport.service';
 
@@ -72,6 +73,27 @@ export class TransportController {
   })
   remove(@Param('cuid') cuid: string) {
     return this.transportService.remove(cuid);
+  }
+
+  @Post(':cuid/pricing')
+  @ApiOperation({ summary: 'Set pricing for a transport' })
+  setPricing(
+    @Param('cuid') cuid: string,
+    @Body() dto: SetTransportPricingDto,
+  ) {
+    return this.transportService.setPricing(cuid, dto);
+  }
+
+  @Get(':cuid/pricing')
+  @ApiOperation({ summary: 'Get pricing for a transport' })
+  getPricing(@Param('cuid') cuid: string) {
+    return this.transportService.getPricing(cuid);
+  }
+
+  @Delete(':cuid/pricing')
+  @ApiOperation({ summary: 'Remove pricing from a transport' })
+  removePricing(@Param('cuid') cuid: string) {
+    return this.transportService.removePricing(cuid);
   }
 
   async validateTransportConfig<T extends object>(
