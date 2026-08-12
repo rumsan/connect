@@ -131,6 +131,8 @@ export class BroadcastService {
         dto.maxAttempts,
       );
 
+      sessionData.webhook = this._resolveWebhook(transport, dto.webhook);
+
       sessionData.options = this.twilioBatchingService.enrichSessionOptions(
         (sessionData.options as Record<string, any>) ?? {},
         transport,
@@ -391,6 +393,8 @@ export class BroadcastService {
         transportQueue,
         sessionCuid,
       });
+
+      this.eventEmitter.emit('broadcast.session.executed', sessionCuid);
     }
   }
 
@@ -483,6 +487,12 @@ export class BroadcastService {
     }
 
     return false;
+  }
+
+  private _resolveWebhook(transport: Transport, dtoWebhook?: string) {
+    const configured = (transport?.config as any)?.meta?.webhook;
+    const resolved = dtoWebhook?.trim() || configured?.trim?.();
+    return resolved || null;
   }
 
   private _enforceMaxAttempts(transportType, dtoMaxAttempts) {
