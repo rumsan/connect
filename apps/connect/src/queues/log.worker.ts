@@ -4,11 +4,14 @@ import {
   QueueBroadcastLog,
   QueueBroadcastLogDetails,
   QueueJobData,
+  QueueReadinessConfirm,
+  QueueWorkerHeartbeat,
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
 import { BroadcastService } from '../broadcast/broadcast.service';
 import { BroadcastLogQueue } from '../broadcastLog/broadcast-log.queue';
+import { WorkerRegistry } from '../workers/worker-registry.service';
 
 @Injectable()
 export class LogWorker implements OnModuleInit {
@@ -17,6 +20,7 @@ export class LogWorker implements OnModuleInit {
   constructor(
     private readonly broadcastLogService: BroadcastLogQueue,
     private readonly broadcastService: BroadcastService,
+    private readonly workerRegistry: WorkerRegistry,
     @Inject('AMQP_CONNECTION')
     private readonly channel: ChannelWrapper,
   ) { }
@@ -65,14 +69,24 @@ export class LogWorker implements OnModuleInit {
 
     if (action === QUEUE_ACTIONS.READINESS_CONFIRM) {
       try {
-        console.log("CONFIRMING READINESS")
-        const data = job.data as { sessionCuid: string; maxBatchSize: number };
+        const data = job.data as QueueReadinessConfirm;
+        // workerId is present for multi-worker transports and routes the batch
+        // back to the worker that asked; absent, this behaves as before.
         this.broadcastService
-          .sendBroadcasts(data.sessionCuid, data.maxBatchSize)
-          .then();
+          .sendBroadcasts(data.sessionCuid, data.maxBatchSize, data.workerId)
+          .catch((error) =>
+            this.logger.error(
+              `sendBroadcasts failed for session ${data.sessionCuid}`,
+              error,
+            ),
+          );
       } catch (error) {
         console.log(error);
       }
+    }
+
+    if (action === QUEUE_ACTIONS.WORKER_HEARTBEAT) {
+      this.workerRegistry.record(job.data as QueueWorkerHeartbeat);
     }
   }
 }

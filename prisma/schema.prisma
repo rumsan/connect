@@ -178,6 +178,12 @@ model Broadcast {
   lastAttempt DateTime?
   xref        String?
 
+  // Worker that currently owns this broadcast. Set atomically by the claim
+  // query in BroadcastService._claimBroadcasts and cleared by the reclaim
+  // sweeper when a worker dies holding it.
+  workerId  String?
+  claimedAt DateTime?
+
   Session   Session   @relation(fields: [session], references: [cuid])
   Transport Transport @relation(fields: [transport], references: [cuid])
 
@@ -186,6 +192,9 @@ model Broadcast {
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
 
+  @@index([session, status, isComplete])
+  @@index([workerId, status, isComplete])
+  @@index([status, isComplete, claimedAt])
   @@map("tbl_broadcasts")
 }
 

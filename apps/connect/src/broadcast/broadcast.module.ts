@@ -15,6 +15,9 @@ import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
 import { RedisZsetSchedulerWorker } from './redis-zset-scheduler.worker';
 import { ScheduledWindowWorker } from './scheduled-window.worker';
 import { BroadcastPriceWorker } from './broadcast-price.worker';
+import { BroadcastReclaimWorker } from './broadcast-reclaim.worker';
+import { SessionAssignmentService } from './session-assignment.service';
+import { WorkerRegistryModule } from '../workers/worker-registry.module';
 
 @Module({
   imports: [
@@ -35,10 +38,13 @@ import { BroadcastPriceWorker } from './broadcast-price.worker';
       name: QUEUES.SCHEDULED,
     }),
     TemplateModule,
+    WorkerRegistryModule,
   ],
   controllers: [BroadcastController],
   providers: [
     BroadcastService,
+    SessionAssignmentService,
+    BroadcastReclaimWorker,
     {
       provide: TWILIO_BATCHING_BROADCAST_PORT,
       useExisting: BroadcastService,
@@ -53,6 +59,7 @@ import { BroadcastPriceWorker } from './broadcast-price.worker';
   ],
   exports: [
     BroadcastService,
+    SessionAssignmentService,
     BroadcastValidationService,
     RedisZsetSchedulerService,
     RedisZsetSchedulerWorker,

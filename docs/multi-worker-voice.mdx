@@ -1,0 +1,321 @@
+# Running Multiple Voice Workers
+
+How to run several `asterisk-worker` instances — each with its own Asterisk box,
+trunk and credentials — against one broadcast session, without dialling any
+address twice.
+
+## Why
+
+Before this, a voice deployment was one worker. Adding a second one broke in
+ways that were not obvious, because every part of the dispatch loop assumed a
+single consumer:
+
+| Assumption | What happened with two workers |
+| --- | --- |
+| One consumer on `rsconnect.transport.voice` | RabbitMQ round-robins. `READINESS_CHECK` reached one worker, so only one Asterisk got the audio; `SESSION_COMPLETE` reached one worker, so the other stayed gated for the full 10-minute `SESSION_GATE_TIMEOUT_MS`. |
+| `sendBroadcasts` selects then updates | Two concurrent calls selected the same `SCHEDULED` rows. The same address was dialled from both boxes and both wrote conflicting `Broadcast`/`BroadcastLog` rows. |
+| `BatchManger` tracks the batch in memory | Each worker drained its own map and confirmed readiness independently, so connect issued overlapping batches and live channels exceeded `BATCH_SIZE`. |
+| A batch was published to the transport queue | The worker that confirmed readiness was not necessarily the worker that received the batch. |
+
+## Allocation policy
+
+**Fill in priority order up to capacity, spill only the remainder, then let
+whoever is free pull next.**
+
+A worker's *capacity* is its `BATCH_SIZE` — the most concurrent broadcasts it
+accepts, which should match its trunk's channel count. Its position in the fill
+order is `WORKER_PRIORITY`, where `1` is the primary.
+
+### 1. Pick the worker set up front
+
+At session start connect walks idle workers in priority order, taking each until
+their combined capacity covers the addresses waiting:
+
+```
+candidates = idle workers for this transport, ordered by (priority, workerId)
+chosen = []; capacity = 0
+for w of candidates:
+    if capacity >= remaining: break
+    if remaining - capacity < BROADCAST_SPILLOVER_MIN: break
+    chosen.push(w); capacity += w.capacity
+```
+
+With `w1` (priority 1, capacity 10) and `w2` (priority 2, capacity 5):
+
+| Session size | Chosen | Why |
+| --- | --- | --- |
+| 8 | `w1` | 10 ≥ 8 — `w2` is never woken and prepares no audio |
+| 10 | `w1` | exactly covered |
+| 100 | `w1`, `w2` | 15 < 100, so everyone available is used |
+
+This is the point of the design: a session the primary can hold does not touch
+the second box, which keeps it free for the *next* session and avoids an audio
+upload plus a readiness wait that would buy nothing.
+
+### 2. Prepare the chosen workers in parallel
+
+Each chosen worker gets a `READINESS_CHECK` addressed to it and runs its own
+download → ffmpeg → SFTP → readiness wait concurrently against its own Asterisk.
+Preparing on demand instead would leave the second worker idle for roughly 25s
+(the upload plus `makeTransportReady`'s built-in wait) at exactly the moment
+throughput is wanted.
+
+### 3. First claims match capacity
+
+Each worker confirms readiness and claims its own `BATCH_SIZE`: `w1` takes the
+first 10, `w2` the next 5.
+
+### 4. Steady state is free-worker-pull
+
+After the first fill, priority no longer matters — whichever worker drains its
+batch first claims the next one. A worker with shorter calls cycles more often
+and ends up doing more of the session. That falls out of the existing loop:
+`BatchManger.endMonitoring` → `READINESS_CONFIRM` → next claim.
+
+### 5. Escalation covers the rest
+
+If work still exceeds the assigned workers' headroom and a worker frees up — or
+one dies — it is assigned mid-session, preparing on demand. This is also how a
+session that started while every other worker was busy grows its set later.
+
+Sessions themselves queue **per worker**: each runs one session at a time via
+its `SessionGate`. A worker outside session S1's chosen set is idle and so
+immediately eligible for S2.
+
+## Message flow
+
+```
+                 exchange: rsconnect.transport (topic, durable)
+connect ──rk voice.worker.<id>──┬────────────────┐
+                                ▼                ▼
+              queue rsconnect.transport.voice.w1   ...voice.w2
+              bind: voice.worker.w1, voice.control  voice.worker.w2, voice.control
+                                │                       │
+                          Asterisk A (trunk A)    Asterisk B (trunk B)
+```
+
+Each worker declares its own durable queue and binds it to two routing keys: one
+for messages addressed to it, one for fleet-wide control. Connect never needs a
+list of workers to publish — the bindings do the routing.
+
+| Message | From → to | Routing |
+| --- | --- | --- |
+| `READINESS_CHECK` | connect → one chosen worker | `voice.worker.<id>` |
+| `READINESS_CONFIRM` | worker → connect | queue `rsconnect.to.connect`, carries `workerId` |
+| `BROADCAST` | connect → the worker that asked | `voice.worker.<id>` |
+| `BROADCAST_LOG_UPDATE` / `_DETAILS` | worker → connect | queue `rsconnect.to.connect` |
+| `SESSION_COMPLETE` | connect → one worker | `voice.worker.<id>`, when *that worker's* claim returns nothing |
+| `WORKER_HEARTBEAT` | worker → connect | queue `rsconnect.to.connect`, every `WORKER_HEARTBEAT_MS` |
+
+`SESSION_COMPLETE` releasing one worker rather than the session is what lets the
+others keep working: a worker that has nothing left hands its `SessionGate` back
+and becomes available for the next session immediately.
+
+Queues carry `x-expires` (7 days), so a decommissioned worker's queue cleans
+itself up once nothing consumes it. A live worker always has a consumer and is
+never affected.
+
+### Worker roster
+
+There is no registration step and no roster config. Workers announce themselves
+by heartbeat (`workerId`, `priority`, `capacity`, `activeSessionCuid`,
+`inFlight`); connect's `WorkerRegistry` keeps them in memory and drops any worker
+that misses three heartbeats. A worker that stops heartbeating simply stops being
+assigned work.
+
+This is in-process state, which is safe because connect runs as a single replica.
+If that changes, back the registry with a table behind the same interface. A
+stale roster is bounded in consequence: the worst case is assigning one worker
+too many, never losing work.
+
+## The claim contract
+
+**A broadcast row is owned by exactly one worker between claim and terminal
+status.** That is the invariant everything else rests on.
+
+It is enforced by a single statement in `BroadcastService._claimBroadcasts`:
+
+```sql
+UPDATE tbl_broadcasts b
+   SET status = 'PENDING', attempts = b.attempts + 1,
+       "workerId" = $2, "claimedAt" = now(), "lastAttempt" = now()
+ WHERE b.cuid IN (
+   SELECT cuid FROM tbl_broadcasts
+    WHERE session = $1 AND status = 'SCHEDULED' AND "isComplete" = false
+    ORDER BY "createdAt" ASC
+    LIMIT $3
+    FOR UPDATE SKIP LOCKED
+ )
+RETURNING b.cuid, b.address, b.attempts;
+```
+
+`FOR UPDATE SKIP LOCKED` makes concurrent claimers step over each other's locked
+rows instead of blocking or duplicating, so two workers confirming readiness in
+the same millisecond receive disjoint sets. Selecting and then updating in
+separate statements — which is what this replaced — hands both of them the same
+rows.
+
+Two columns on `tbl_broadcasts` carry the ownership:
+
+- **`workerId`** — who owns it. `NULL` means unclaimed and available.
+- **`claimedAt`** — when. Drives the reclaim sweeper below.
+
+Both are cleared when a broadcast is handed back (retry or reclaim), and left in
+place once it reaches a terminal status so you can still see which box dialled it.
+
+## Failure modes and recovery
+
+There are two reapers, and they cover different windows. Getting the order wrong
+is the main configuration hazard.
+
+| | Worker reaper (`BatchManger.reap`) | Reclaim sweeper (`BroadcastReclaimWorker`) |
+| --- | --- | --- |
+| Runs in | the worker's memory | connect, against the DB |
+| Window | `BATCH_TTL_MS` (default 120s) | `BROADCAST_CLAIM_TTL_MS` (default 600s) |
+| Covers | a call that started but never produced a hangup | a worker that is gone and can no longer report anything |
+| Marks | `errorTag: REAPER_TIMEOUT` | `errorTag: WORKER_LOST` |
+
+**`BROADCAST_CLAIM_TTL_MS` must stay well above `BATCH_TTL_MS`.** A live worker
+has to get the first chance to report a real failure; the sweeper only exists for
+workers that cannot report at all. Setting it lower means connect reassigns
+broadcasts that are still ringing.
+
+**Worker dies mid-batch.** Its rows stay `PENDING`. After the claim TTL the
+sweeper reschedules any with attempts left (clearing `workerId`/`claimedAt`) and
+fails the rest as `WORKER_LOST` so the session can complete. By then the dead
+worker has aged out of the registry, so `ensureAssignment` hands the work to the
+next live worker by priority.
+
+**Every worker was busy when the session started.** The session still goes to
+`PENDING` with nobody assigned. `BroadcastReclaimWorker.assignStalledSessions`
+runs on the same 60s tick and retries assignment for any `PENDING` session with
+`SCHEDULED` work left, so it starts as soon as a worker frees up. This is also
+the backstop for any session that loses all its workers — without it a session
+would sit at `PENDING` forever, because the pull loop only advances when a
+worker asks for more.
+
+**Worker never gets `SESSION_COMPLETE`.** Its `SessionGate` force-completes after
+`SESSION_GATE_TIMEOUT_MS` (10 min) and moves on. Since assignment is per worker,
+this only costs that one worker.
+
+**A transport fails before producing a channel.** `TransportWorker._sendBroadcast`
+publishes the FAIL log and releases the slot. Without that the batch never drains
+and the worker never asks for another one — silently dropping itself from the
+pool for the rest of the session.
+
+**Connect restarts.** The roster is empty for up to one heartbeat interval;
+assignment resumes on the next confirm. In-flight claims are untouched — they
+live in the DB.
+
+## Operating a fleet
+
+Scale by adding a worker with its own `WORKER_ID` and its own Asterisk. Never by
+raising `replicas`: two processes sharing a `WORKER_ID` share a queue and a
+scratch directory.
+
+### Worker env (one file per worker)
+
+| var | meaning |
+| --- | --- |
+| `WORKER_ID` | Unique. Drives the queue name, routing key and `.data/<id>/` scratch dir. Unset = single worker on the shared queue, exactly as before. |
+| `WORKER_PRIORITY` | `1` = primary. Lower fills first. |
+| `BATCH_SIZE` | Capacity — max concurrent calls. Size from `ASTERISK_TRUNK_CHANNELS`. |
+| `WORKER_HEARTBEAT_MS` | Announcement interval (default 15000). |
+| `PORT` | Health endpoint port; must differ when workers share a host. |
+| `ASTERISK_*` | That worker's own host, trunk, ARI/AMI/SSH credentials. |
+
+### Connect env
+
+| var | meaning |
+| --- | --- |
+| `BROADCAST_CLAIM_TTL_MS` | Stale-claim window (default 600000). Keep above `BATCH_TTL_MS`. |
+| `BROADCAST_SPILLOVER_MIN` | Minimum overflow before waking another worker (default 1). |
+| `WORKER_HEARTBEAT_MS` | Must match the workers'; three misses drops a worker. |
+
+### Adding, removing, demoting
+
+- **Add** — start it with a fresh `WORKER_ID` and its own Asterisk. It declares
+  and binds its own queue, starts heartbeating, and is eligible on the next
+  assignment check. No connect restart.
+- **Remove** — stop it. It ages out of the roster in ~45s; anything it still held
+  is reclaimed after the claim TTL. Its queue self-deletes after 7 idle days.
+- **Demote** — raise its `WORKER_PRIORITY` and restart it. It will then only be
+  used for overflow.
+
+### Sizing
+
+`BATCH_SIZE` is the concurrency cap that actually matters — it is echoed to
+connect on every `READINESS_CONFIRM` and bounds how much that worker is given.
+Set it to the trunk's channel count. Over-sizing does not increase throughput; it
+produces `CONGESTION` dispositions.
+
+## Runbook
+
+**Which worker owns this broadcast?**
+
+```sql
+SELECT cuid, address, status, "workerId", "claimedAt", attempts
+  FROM tbl_broadcasts WHERE cuid = '<broadcast cuid>';
+```
+
+**How is a session split?**
+
+```sql
+SELECT "workerId", status, count(*)
+  FROM tbl_broadcasts WHERE session = '<session cuid>'
+ GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+Or `GET /broadcasts/:sessionCuid/workers`, which also flags whether each worker
+is still live.
+
+**Who is in the fleet right now?** `GET /broadcasts/workers`, or per worker
+`GET http://<worker>:<port>/api/health` for its gate state and in-flight count.
+
+**Anything stuck?**
+
+```sql
+SELECT "workerId", count(*), min("claimedAt")
+  FROM tbl_broadcasts
+ WHERE status = 'PENDING' AND "isComplete" = false
+   AND "claimedAt" < now() - interval '10 minutes'
+ GROUP BY 1;
+```
+
+Non-empty means the sweeper is about to reclaim, and usually that a worker died.
+Cross-check against `GET /broadcasts/workers` — a `workerId` here that is absent
+there is a dead worker.
+
+**Any address dialled twice?** Should always be empty:
+
+```sql
+SELECT broadcast, count(*) FROM tbl_broadcast_logs
+ WHERE session = '<session cuid>' GROUP BY 1 HAVING count(*) > 1;
+```
+
+Rows here with more than one *attempt* are legitimate retries; check `attempt`
+before treating it as a duplicate.
+
+**RabbitMQ.** The exchange `rsconnect.transport` should show one queue per live
+worker, each bound to its own `voice.worker.<id>` plus `voice.control`. A queue
+with no consumer is a stopped worker.
+
+## Other transports
+
+API, SMTP and ECHO keep their shared `rsconnect.transport.*` queues, their
+readiness confirms carry no `workerId`, and connect takes the original code path
+for them. The exchange, claim and registry are transport-agnostic, so any of them
+can opt in later by adding its slug to `MULTI_WORKER_TRANSPORTS` in
+`session-assignment.service.ts` and giving its worker a `WORKER_ID`.
+
+One behaviour did change for ECHO and SMTP, because they share the
+`TransportWorker` base class. They call `endMonitoring` without ever calling
+`startMonitoring`, so their in-flight map was always empty and the "batch
+drained" confirm never fired — a session over `BATCH_SIZE` addresses stalled
+after the first batch. The base class now confirms readiness when a batch
+finishes dispatching, so those sessions run to completion. API is unaffected: it
+overrides `_sendBroadcast` and drives its own loop.
+
+The same fallback makes upgrades safe: an old worker image against new connect
+consumes the shared queue and confirms without a `workerId`, so connect behaves
+exactly as it did before.
