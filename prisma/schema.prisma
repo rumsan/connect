@@ -147,6 +147,8 @@ model Session {
   webhook        String?
   options        Json?         @db.JsonB()
   status         SessionStatus @default(NEW)
+  startedAt      DateTime?
+  endedAt        DateTime?
   totalAddresses Int
   stats          Json?         @db.JsonB()
   xref           String?

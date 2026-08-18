@@ -56,3 +56,9 @@ export type QueueBroadcastJobData = {
   transportId: string;
   broadcasts: BroadcastJobData[];
 };
+
+export interface QueueSessionTiming {
+  sessionCuid: string;
+  at: string; // ISO timestamp, stamped by the worker
+  workerId?: string;
+}

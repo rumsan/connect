@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { QUEUE_ACTIONS } from '@rumsan/connect';
+import { TransportQueue } from '@rsconnect/queue';
 import { ConnectionLifecycleManager } from './connection-lifecycle.manager';
 
 interface PendingSession {
@@ -19,6 +21,7 @@ export class SessionGate implements OnModuleDestroy {
 
   constructor(
     private readonly connectionLifecycle: ConnectionLifecycleManager,
+    private readonly transportQueue: TransportQueue,
   ) {}
 
   onModuleDestroy() {
@@ -27,10 +30,8 @@ export class SessionGate implements OnModuleDestroy {
 
   async enqueue(sessionCuid: string, work: () => Promise<void>) {
     if (!this.activeSessionCuid) {
-      this.activeSessionCuid = sessionCuid;
       this.logger.log(`Session ${sessionCuid} is now active`);
-      this.resetSessionTimeout(sessionCuid);
-      this.runWork(sessionCuid, work);
+      this.activate(sessionCuid, work);
       return;
     }
 
@@ -55,6 +56,7 @@ export class SessionGate implements OnModuleDestroy {
     }
     this.logger.log(`Session ${sessionCuid} completed`);
     this.activeSessionCuid = null;
+    this.reportTiming(QUEUE_ACTIONS.SESSION_END, sessionCuid);
     this.clearSessionTimeout();
     this.connectionLifecycle.endSession(sessionCuid);
     this.startNext();
@@ -64,12 +66,40 @@ export class SessionGate implements OnModuleDestroy {
     if (this.pendingQueue.length === 0) return;
 
     const next = this.pendingQueue.shift();
-    this.activeSessionCuid = next.sessionCuid;
     this.logger.log(
       `Session ${next.sessionCuid} is now active (${this.pendingQueue.length} remaining)`,
     );
-    this.resetSessionTimeout(next.sessionCuid);
-    this.runWork(next.sessionCuid, next.work);
+    this.activate(next.sessionCuid, next.work);
+  }
+
+  /**
+   * Claims the gate for a session. This — not enqueue() — is the moment the
+   * session actually starts running, so it is where SESSION_START is reported.
+   */
+  private activate(sessionCuid: string, work: () => Promise<void>) {
+    this.activeSessionCuid = sessionCuid;
+    this.reportTiming(QUEUE_ACTIONS.SESSION_START, sessionCuid);
+    this.resetSessionTimeout(sessionCuid);
+    this.runWork(sessionCuid, work);
+  }
+
+  private reportTiming(
+    action: QUEUE_ACTIONS.SESSION_START | QUEUE_ACTIONS.SESSION_END,
+    sessionCuid: string,
+  ) {
+    // Fire-and-forget: timing telemetry must never interrupt dialling.
+    this.transportQueue
+      .reportSessionTiming(action, {
+        sessionCuid,
+        at: new Date().toISOString(),
+      })
+      .catch((err) =>
+        this.logger.error(
+          `Failed to report ${action} for session ${sessionCuid}: ${
+            (err as Error).message
+          }`,
+        ),
+      );
   }
 
   private async runWork(sessionCuid: string, work: () => Promise<void>) {
@@ -90,9 +120,7 @@ export class SessionGate implements OnModuleDestroy {
         this.logger.warn(
           `Session ${sessionCuid} timed out after ${this.sessionTimeoutMs}ms, force-completing`,
         );
-        this.activeSessionCuid = null;
-        this.connectionLifecycle.endSession(sessionCuid);
-        this.startNext();
+        this.completeSession(sessionCuid);
       }
     }, this.sessionTimeoutMs);
     this.sessionTimeout.unref?.();

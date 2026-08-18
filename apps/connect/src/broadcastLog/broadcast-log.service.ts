@@ -83,12 +83,16 @@ export class BroadcastLogService {
       },
     });
     if (inCompleteCount === 0) {
-      await tx.session.update({
+      // Edge-triggered, same as the other completion sites, so a re-check
+      // cannot drag endedAt forward.
+      await tx.session.updateMany({
         where: {
           cuid: sessionId,
+          status: { not: SessionStatus.COMPLETED },
         },
         data: {
           status: SessionStatus.COMPLETED,
+          endedAt: new Date(),
         },
       });
     }

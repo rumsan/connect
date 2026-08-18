@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
-import { QueueJobData } from '@rumsan/connect/types';
+import { QueueJobData, QueueSessionTiming } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 
 @Injectable()
@@ -88,6 +88,29 @@ export class TransportQueue {
     } catch (error) {
       this.logger.error(
         `confirmReadiness publish failed for session ${data.sessionCuid}`,
+        error,
+      );
+    }
+    return false;
+  }
+
+  async reportSessionTiming(
+    action: QUEUE_ACTIONS.SESSION_START | QUEUE_ACTIONS.SESSION_END,
+    data: QueueSessionTiming,
+  ) {
+    try {
+      const queueJob: QueueJobData<QueueSessionTiming> = { action, data };
+      return await this._channel.sendToQueue(
+        QUEUES.TO_CONNECT,
+        Buffer.from(JSON.stringify(queueJob)),
+        {
+          persistent: true,
+          timeout: 1000,
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `${action} publish failed for session ${data.sessionCuid}`,
         error,
       );
     }
