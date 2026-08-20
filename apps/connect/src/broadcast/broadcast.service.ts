@@ -29,6 +29,7 @@ import {
   dev_SessionAttemptComplete,
   dev_SessionCompletionAlert,
 } from '../utils/dev.alert';
+import { SessionTimingService } from '../session/session-timing.service';
 import { TransportStatsRaw } from '../utils/types/report';
 import { BroadcastValidationService } from './broadcast-validation.service';
 import { BROADCAST_CONSTANTS } from './broadcast.constants';
@@ -51,6 +52,7 @@ export class BroadcastService {
     private readonly broadcastValidationService: BroadcastValidationService,
     private readonly eventEmitter: EventEmitter2,
     private readonly twilioBatchingService: TwilioBatchingService,
+    private readonly sessionTiming: SessionTimingService,
   ) {}
 
   /**
@@ -438,6 +440,16 @@ export class BroadcastService {
       };
     }
 
+    // The session is going back to work, so any end time it carries is now in
+    // the past. startedAt is left alone — it remains the true first start.
+    await this.prisma.session.update({
+      where: { cuid: sessionCuid },
+      data: { endedAt: null },
+    });
+    // startedAt is filled in when the transport actually reports in; the gap is
+    // the worker's queue time.
+    await this.sessionTiming.openRun(sessionCuid, 'retry');
+
     setTimeout(async () => {
       console.log('========== Retrying Failed Broadcasts ==========');
       await this.checkTransportReadiness(sessionCuid, transportType);
@@ -466,16 +478,27 @@ export class BroadcastService {
     });
 
     if (inCompleteCount === 0) {
-      await this.prisma.session.update({
+      const endedAt = new Date();
+      // Edge-triggered: this method doubles as a guard (webhook callbacks, the
+      // retry endpoint) and runs long after a session finishes. Without the
+      // status guard, every one of those re-checks would drag endedAt forward.
+      const { count } = await this.prisma.session.updateMany({
         where: {
           cuid: sessionCuid,
+          status: { not: SessionStatus.COMPLETED },
         },
         data: {
           status: SessionStatus.COMPLETED,
+          endedAt,
         },
       });
+
+      if (count > 0) {
+        await this.sessionTiming.closeLastRun(sessionCuid, endedAt);
+        this.logger.log(`Session ${sessionCuid} marked as COMPLETED`);
+      }
+
       this.eventEmitter.emit('broadcast.session.completed', sessionCuid);
-      this.logger.log(`Session ${sessionCuid} marked as COMPLETED`);
       dev_SessionCompletionAlert(sessionCuid).then().catch();
       return true;
     }

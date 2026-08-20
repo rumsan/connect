@@ -7,6 +7,7 @@ import {
   TwilioBatchingService,
   TwilioBatchingWorker,
 } from '@rsconnect/transports';
+import { SessionTimingService } from '../session/session-timing.service';
 import { TemplateModule } from '../template/template.module';
 import { BroadcastValidationService } from './broadcast-validation.service';
 import { BroadcastController } from './broadcast.controller';
@@ -50,9 +51,11 @@ import { BroadcastPriceWorker } from './broadcast-price.worker';
     TwilioBatchingService,
     TwilioBatchingWorker,
     BroadcastPriceWorker,
+    SessionTimingService,
   ],
   exports: [
     BroadcastService,
+    SessionTimingService,
     BroadcastValidationService,
     RedisZsetSchedulerService,
     RedisZsetSchedulerWorker,
