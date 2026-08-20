@@ -186,6 +186,7 @@ model Broadcast {
   createdAt DateTime  @default(now())
   updatedAt DateTime? @updatedAt()
 
+  @@index([session, status])
   @@map("tbl_broadcasts")
 }
 

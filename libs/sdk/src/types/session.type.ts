@@ -1,3 +1,4 @@
+import type { BroadcastCount } from './broadcast.type';
 import { Transport } from './transport.type';
 
 export enum TriggerType {
@@ -32,4 +33,5 @@ export type Session = {
   updatedAt?: Date | null;
   deletedAt?: Date | null;
   Transport?: Transport | null;
+  broadcastCounts?: BroadcastCount;
 };

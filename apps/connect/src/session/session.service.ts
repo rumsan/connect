@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BroadcastLog, Session } from '@prisma/client';
+import { BroadcastLog, Prisma, Session } from '@prisma/client';
 import { BroadcastStatus, TransportType } from '@rumsan/connect/types';
 import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
 import { BroadcastService } from '../broadcast/broadcast.service';
@@ -61,15 +61,22 @@ export class SessionService {
     );
   }
 
-  findOne(cuid: string) {
-    return this.prisma.session.findUnique({
-      where: {
-        cuid,
-      },
-      include: {
-        Transport: true,
-      },
-    });
+  async findOne(cuid: string) {
+    const [session, broadcastCounts] = await Promise.all([
+      this.prisma.session.findUnique({
+        where: {
+          cuid,
+        },
+        include: {
+          Transport: true,
+        },
+      }),
+      this.countBroadcastsByStatus({ session: cuid }),
+    ]);
+
+    if (!session) return null;
+
+    return { ...session, broadcastCounts };
   }
 
   listBroadcasts(
@@ -169,11 +176,15 @@ export class SessionService {
     this.logger.log(
       `Getting broadcast counts for sessions: ${sessionCuids.join(', ')}`,
     );
+    return this.countBroadcastsByStatus({ session: { in: sessionCuids } });
+  }
+
+  private async countBroadcastsByStatus(
+    where: Prisma.BroadcastWhereInput,
+  ): Promise<Record<BroadcastStatus | 'TOTAL', number>> {
     const counts = await this.prisma.broadcast.groupBy({
       by: ['status'],
-      where: {
-        session: { in: sessionCuids },
-      },
+      where,
       _count: {
         status: true,
       },
