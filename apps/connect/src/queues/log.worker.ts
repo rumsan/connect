@@ -4,11 +4,13 @@ import {
   QueueBroadcastLog,
   QueueBroadcastLogDetails,
   QueueJobData,
+  QueueSessionTiming,
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
 import { BroadcastService } from '../broadcast/broadcast.service';
 import { BroadcastLogQueue } from '../broadcastLog/broadcast-log.queue';
+import { SessionTimingService } from '../session/session-timing.service';
 
 @Injectable()
 export class LogWorker implements OnModuleInit {
@@ -17,6 +19,7 @@ export class LogWorker implements OnModuleInit {
   constructor(
     private readonly broadcastLogService: BroadcastLogQueue,
     private readonly broadcastService: BroadcastService,
+    private readonly sessionTiming: SessionTimingService,
     @Inject('AMQP_CONNECTION')
     private readonly channel: ChannelWrapper,
   ) { }
@@ -67,9 +70,35 @@ export class LogWorker implements OnModuleInit {
       try {
         console.log("CONFIRMING READINESS")
         const data = job.data as { sessionCuid: string; maxBatchSize: number };
+        // Fallback start time for transports with no session gate of their own.
+        // No-op for VOICE, which already reported its (earlier, truer) start.
+        await this.sessionTiming.markStarted(data.sessionCuid, new Date());
         this.broadcastService
           .sendBroadcasts(data.sessionCuid, data.maxBatchSize)
-          .then();
+          .catch((err) =>
+            this.logger.error(
+              `sendBroadcasts failed for session ${data.sessionCuid}`,
+              err,
+            ),
+          );
+      } catch (error) {
+        console.log(error);
+      }
+    }
+
+    if (action === QUEUE_ACTIONS.SESSION_START) {
+      try {
+        const data = job.data as QueueSessionTiming;
+        await this.sessionTiming.markStarted(data.sessionCuid, new Date(data.at));
+      } catch (error) {
+        console.log(error);
+      }
+    }
+
+    if (action === QUEUE_ACTIONS.SESSION_END) {
+      try {
+        const data = job.data as QueueSessionTiming;
+        await this.sessionTiming.markEnded(data.sessionCuid, new Date(data.at));
       } catch (error) {
         console.log(error);
       }
