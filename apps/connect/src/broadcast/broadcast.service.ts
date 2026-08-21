@@ -348,6 +348,8 @@ export class BroadcastService {
           data: {
             status: BroadcastStatus.FAIL,
             isComplete: true,
+            attempts: { increment: 1 },
+            lastAttempt: new Date(),
             disposition: {
               error: 'Invalid phone number.',
               code: 'INVALID_PHONE',
@@ -554,6 +556,17 @@ export class BroadcastService {
 
     const broadcastIds = broadcastQueueData.map((b) => b.broadcastId);
 
+    await this.prisma.broadcast.updateMany({
+      where: {
+        cuid: { in: broadcastIds },
+      },
+      data: {
+        status: BroadcastStatus.PENDING,
+        attempts: { increment: 1 },
+        lastAttempt: new Date(),
+      },
+    });
+
     await this.prisma.broadcastLog.createMany({
       data: broadcastQueueData.map((broadcast) => {
         return {
@@ -565,20 +578,6 @@ export class BroadcastService {
           attempt: broadcast.attempt,
         };
       }),
-    });
-
-    await this.prisma.broadcast.updateMany({
-      where: {
-        cuid: {
-          in: broadcastIds,
-        },
-      },
-      data: {
-        status: BroadcastStatus.PENDING,
-        attempts: {
-          increment: 1,
-        },
-      },
     });
 
     await this.broadcastQueue.broadcast(queueTransport, {
