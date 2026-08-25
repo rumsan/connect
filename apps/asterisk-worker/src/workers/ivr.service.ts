@@ -12,6 +12,14 @@ import ari, { Channel, Client } from 'ari-client';
 import { randomBytes } from 'crypto';
 import { EventEmitter } from 'events';
 import { ChannelStateManager } from './channel-state.manager';
+import {
+  findOption,
+  getMenuOptions,
+  getPromptForPath,
+  hasChildren,
+  pathLabel,
+  toMedia,
+} from './ivr-dialplan.util';
 import { PlaybackService } from './playback.service';
 
 const MAX_RECONNECT_ATTEMPTS = 3;
@@ -261,13 +269,9 @@ export class IVRService implements OnModuleDestroy {
         );
 
         if (channelState.ivrDialPlan?.main?.prompt) {
-          const mainPrompt = channelState.ivrDialPlan.main.prompt.replace(
-            '.wav',
-            '',
-          );
           await this.playbackService.playPrompt(
             channelId,
-            mainPrompt,
+            toMedia(channelState.ivrDialPlan.main.prompt),
             incomingChannel,
           );
         } else {
@@ -287,8 +291,11 @@ export class IVRService implements OnModuleDestroy {
         if (!channelState?.ivrDialPlan) {
           return;
         }
-        this.channelStateManager.recordDtmf(channel.id, event.digit);
-        await this.handleDTMF(channel, event.digit);
+        // Serialized per channel so navigation state moves one keypress at a time.
+        await this.channelStateManager.enqueueDtmf(channel.id, async () => {
+          this.channelStateManager.recordDtmf(channel.id, event.digit);
+          await this.handleDTMF(channel, event.digit);
+        });
       } catch (error) {
         this.logger.error('Error in ChannelDtmfReceived handler:', error);
       }
@@ -354,44 +361,105 @@ export class IVRService implements OnModuleDestroy {
       return;
     }
 
+    const dialPlan = channelState.ivrDialPlan;
+    const fromPath = this.channelStateManager.getMenuPath(channelId);
+
     try {
-      this.logger.log(`DTMF received: ${digit} on channel: ${channelId}`);
+      this.logger.log(
+        `DTMF received: ${digit} on channel: ${channelId} (menu: ${
+          pathLabel(fromPath) || 'main'
+        })`,
+      );
       await this.channelStateManager.stopActivePlayback(channelId);
       this.channelStateManager.cancelScheduledHangup(channelId);
 
-      if (digit === '0') {
-        const mainPrompt = channelState.ivrDialPlan.main?.prompt;
-        if (mainPrompt) {
-          await this.playbackService.playPrompt(
-            channelId,
-            mainPrompt.replace('.wav', ''),
-            channel,
-          );
-        }
+      // '0' resets to the root menu, '*' steps one level back up. Both are
+      // handled before the numeric lookup — Number('*') is NaN.
+      if (digit === '0' || digit === '*') {
+        const toPath = digit === '0' ? [] : fromPath.slice(0, -1);
+        this.channelStateManager.setMenuPath(channelId, toPath);
+        this.logger.log(
+          `IVR ${digit === '0' ? 'reset' : 'back'} on channel ${channelId}: ${
+            pathLabel(fromPath) || 'main'
+          } -> ${pathLabel(toPath) || 'main'}`,
+        );
+        await this.playMenuPrompt(channelId, channel, toPath);
         return;
       }
 
-      const options = channelState.ivrDialPlan.main?.options || [];
-      const option = options.find((opt) => opt.digit === parseInt(digit));
+      const option = findOption(getMenuOptions(dialPlan, fromPath), digit);
 
-      if (option?.prompt) {
-        await this.playbackService.playPrompt(
-          channelId,
-          option.prompt.replace('.wav', ''),
-          channel,
-          option.hangup === true,
+      if (!option?.prompt) {
+        this.logger.log(
+          `IVR invalid digit ${digit} on channel ${channelId} (menu: ${
+            pathLabel(fromPath) || 'main'
+          })`,
         );
-      } else {
         await this.playbackService.playPrompt(
           channelId,
           'sound:option-is-invalid',
           channel,
         );
+        return;
       }
+
+      const selectedPath = [...fromPath, Number(option.digit)];
+      this.channelStateManager.recordSelection(
+        channelId,
+        pathLabel(selectedPath),
+      );
+
+      const hangup = option.hangup === true;
+      const descends = hasChildren(option) && !hangup;
+
+      if (descends) {
+        this.channelStateManager.setMenuPath(channelId, selectedPath);
+      } else if (hasChildren(option)) {
+        this.logger.warn(
+          `IVR option ${pathLabel(selectedPath)} has both hangup:true and sub-options — hanging up, sub-options unreachable`,
+        );
+      }
+
+      this.logger.log(
+        `IVR ${descends ? 'descend' : 'stay'} on channel ${channelId}: digit ${digit} -> ${pathLabel(
+          selectedPath,
+        )}, menu now ${
+          pathLabel(this.channelStateManager.getMenuPath(channelId)) || 'main'
+        }`,
+      );
+
+      await this.playbackService.playPrompt(
+        channelId,
+        toMedia(option.prompt),
+        channel,
+        hangup,
+      );
     } catch (err) {
       this.logger.error(
         `Error handling DTMF on channel ${channelId}: ${(err as Error).message}`,
       );
     }
+  }
+
+  /** Replays the prompt of the menu at `path`, falling back to the main prompt. */
+  private async playMenuPrompt(
+    channelId: string,
+    channel: Channel,
+    path: number[],
+  ) {
+    const channelState = this.channelStateManager.getState(channelId);
+    if (!channelState?.ivrDialPlan) return;
+
+    const prompt =
+      getPromptForPath(channelState.ivrDialPlan, path) ??
+      channelState.ivrDialPlan.main?.prompt;
+    if (!prompt) {
+      this.logger.warn(
+        `No prompt to replay for menu ${pathLabel(path) || 'main'} on channel ${channelId}`,
+      );
+      return;
+    }
+
+    await this.playbackService.playPrompt(channelId, toMedia(prompt), channel);
   }
 }
