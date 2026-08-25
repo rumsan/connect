@@ -34,10 +34,13 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
-  const port = 5653;
+  // Configurable so several workers can run on one host.
+  const port = Number(process.env.PORT) || 5653;
   await app.listen(port);
   Logger.log(
-    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`,
+    `🚀 Worker ${
+      process.env.WORKER_ID ?? '(unnamed)'
+    } running on: http://localhost:${port}/${globalPrefix}`,
   );
 }
 

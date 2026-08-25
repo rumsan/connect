@@ -47,6 +47,9 @@ Thumbs.db
 .env
 .env.*
 .env--*
+# Samples are documentation, not secrets.
+!.env.example
+!.env.worker.example
 dev.ts
 .npmrc
 .data

@@ -4,6 +4,8 @@
   "license": "MIT",
   "scripts": {
     "start:asterisk-worker": "nx serve asterisk-worker",
+    "start:asterisk-worker:w1": "set -a && . ./.env.worker1 && set +a && nx serve asterisk-worker",
+    "start:asterisk-worker:w2": "set -a && . ./.env.worker2 && set +a && nx serve asterisk-worker",
     "start:dev": "nx serve connect",
     "clean": "rm -rf dist node_modules",
     "build:all": "npx nx run-many --target=build --all",
