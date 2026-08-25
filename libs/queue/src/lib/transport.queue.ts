@@ -150,6 +150,7 @@ export class TransportQueue {
         }`,
       );
     }
+    return false;
   }
 
   async reportSessionTiming(
