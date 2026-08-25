@@ -9,6 +9,7 @@ import {
   QueueJobData,
   QueueReadinessConfirm,
   QueueSessionComplete,
+  QueueSessionTiming,
   QueueWorkerHeartbeat,
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
@@ -63,11 +64,7 @@ export class TransportQueue {
         data,
       };
 
-      return await this.publish(
-        data.transportToCheck,
-        data.workerId,
-        queueJob,
-      );
+      return await this.publish(data.transportToCheck, data.workerId, queueJob);
     } catch (error) {
       this.logger.error(
         `checkReadiness publish failed for session ${data.sessionCuid}${
@@ -94,11 +91,7 @@ export class TransportQueue {
           data.workerId ?? data.transportQueue
         }`,
       );
-      return await this.publish(
-        data.transportQueue,
-        data.workerId,
-        queueJob,
-      );
+      return await this.publish(data.transportQueue, data.workerId, queueJob);
     } catch (error) {
       this.logger.error(
         `notifySessionComplete publish failed for session ${data.sessionCuid}`,
@@ -155,6 +148,28 @@ export class TransportQueue {
         `heartbeat publish failed for worker ${data.workerId}: ${
           (error as Error).message
         }`,
+      );
+    }
+  }
+
+  async reportSessionTiming(
+    action: QUEUE_ACTIONS.SESSION_START | QUEUE_ACTIONS.SESSION_END,
+    data: QueueSessionTiming,
+  ) {
+    try {
+      const queueJob: QueueJobData<QueueSessionTiming> = { action, data };
+      return await this._channel.sendToQueue(
+        QUEUES.TO_CONNECT,
+        Buffer.from(JSON.stringify(queueJob)),
+        {
+          persistent: true,
+          timeout: 1000,
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `${action} publish failed for session ${data.sessionCuid}`,
+        error,
       );
     }
     return false;

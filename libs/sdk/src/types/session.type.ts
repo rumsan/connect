@@ -26,6 +26,8 @@ export type Session = {
   options?: Record<string, any> | null;
   xref?: string;
   status: SessionStatus;
+  startedAt?: Date | null;
+  endedAt?: Date | null;
   totalAddresses: number;
   stats?: Record<string, any> | null;
   createdAt?: Date;

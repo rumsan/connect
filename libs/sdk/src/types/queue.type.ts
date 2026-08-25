@@ -90,3 +90,8 @@ export type QueueWorkerHeartbeat = {
   /** Broadcasts currently in flight on this worker. */
   inFlight: number;
 };
+export interface QueueSessionTiming {
+  sessionCuid: string;
+  at: string; // ISO timestamp, stamped by the worker
+  workerId?: string;
+}

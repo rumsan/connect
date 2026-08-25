@@ -8,6 +8,7 @@ import {
 } from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
 import { BroadcastService } from '../broadcast/broadcast.service';
+import { SessionTimingService } from '../session/session-timing.service';
 import { dev_SessionCompletionAlert } from '../utils/dev.alert';
 
 @Injectable()
@@ -18,6 +19,7 @@ export class BroadcastLogQueue {
     private readonly prisma: PrismaService,
     private readonly broadcastService: BroadcastService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly sessionTiming: SessionTimingService,
   ) {}
 
   async update(data: QueueBroadcastLog) {
@@ -160,10 +162,18 @@ export class BroadcastLogQueue {
     });
 
     if (incompleteCount === 0) {
-      await tx.session.update({
-        where: { cuid: sessionId },
-        data: { status: SessionStatus.COMPLETED },
+      const endedAt = new Date();
+      // Edge-triggered so a re-check cannot drag endedAt forward. The run is
+      // closed on the same tx, which already holds this row's lock.
+      const { count } = await tx.session.updateMany({
+        where: { cuid: sessionId, status: { not: SessionStatus.COMPLETED } },
+        data: { status: SessionStatus.COMPLETED, endedAt },
       });
+
+      if (count > 0) {
+        await this.sessionTiming.closeLastRun(sessionId, endedAt, tx);
+      }
+
       dev_SessionCompletionAlert(sessionId).then().catch();
       return true;
     }

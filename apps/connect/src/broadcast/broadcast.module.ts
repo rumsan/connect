@@ -1,23 +1,24 @@
 import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
-import { QUEUES } from '@rumsan/connect';
 import {
   TWILIO_BATCHING_BROADCAST_PORT,
   TwilioBatchingService,
   TwilioBatchingWorker,
 } from '@rsconnect/transports';
+import { QUEUES } from '@rumsan/connect';
+import { SessionTimingService } from '../session/session-timing.service';
 import { TemplateModule } from '../template/template.module';
+import { WorkerRegistryModule } from '../workers/worker-registry.module';
+import { BroadcastPriceWorker } from './broadcast-price.worker';
+import { BroadcastReclaimWorker } from './broadcast-reclaim.worker';
 import { BroadcastValidationService } from './broadcast-validation.service';
 import { BroadcastController } from './broadcast.controller';
 import { BroadcastService } from './broadcast.service';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
 import { RedisZsetSchedulerWorker } from './redis-zset-scheduler.worker';
 import { ScheduledWindowWorker } from './scheduled-window.worker';
-import { BroadcastPriceWorker } from './broadcast-price.worker';
-import { BroadcastReclaimWorker } from './broadcast-reclaim.worker';
 import { SessionAssignmentService } from './session-assignment.service';
-import { WorkerRegistryModule } from '../workers/worker-registry.module';
 
 @Module({
   imports: [
@@ -56,10 +57,12 @@ import { WorkerRegistryModule } from '../workers/worker-registry.module';
     TwilioBatchingService,
     TwilioBatchingWorker,
     BroadcastPriceWorker,
+    SessionTimingService,
   ],
   exports: [
     BroadcastService,
     SessionAssignmentService,
+    SessionTimingService,
     BroadcastValidationService,
     RedisZsetSchedulerService,
     RedisZsetSchedulerWorker,
