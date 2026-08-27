@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import {
   BatchManger as BatchManager,
   BroadcastLogQueue,
@@ -60,20 +56,28 @@ export class IVRService implements OnModuleDestroy {
 
   callEndpoint = (broadcastAddress: string) => {
     if (broadcastAddress.startsWith('+977')) {
-      this.logger.log(`Stripping '+977' prefix from broadcast address: ${broadcastAddress}`);
+      this.logger.log(
+        `Stripping '+977' prefix from broadcast address: ${broadcastAddress}`,
+      );
       broadcastAddress = broadcastAddress.slice(4);
     }
     if (broadcastAddress.startsWith('977')) {
-      this.logger.log(`Stripping '977' prefix from broadcast address: ${broadcastAddress}`);
+      this.logger.log(
+        `Stripping '977' prefix from broadcast address: ${broadcastAddress}`,
+      );
       broadcastAddress = broadcastAddress.slice(3);
     }
 
     if (this.broadcastAddressPrefix) {
-      this.logger.log(`Applying broadcast address prefix: ${this.broadcastAddressPrefix} to ${broadcastAddress}`);
+      this.logger.log(
+        `Applying broadcast address prefix: ${this.broadcastAddressPrefix} to ${broadcastAddress}`,
+      );
       broadcastAddress = `${this.broadcastAddressPrefix}${broadcastAddress}`;
     }
 
-    this.logger.log(`Constructed call endpoint for broadcast address: ${broadcastAddress}`);
+    this.logger.log(
+      `Constructed call endpoint for broadcast address: ${broadcastAddress}`,
+    );
     return `${this.config.trunk}/${broadcastAddress}`;
   };
 
@@ -90,7 +94,11 @@ export class IVRService implements OnModuleDestroy {
     if (this.client) {
       this.logger.log('Disconnecting ARI for session');
       (this.client as unknown as EventEmitter).removeAllListeners();
-      try { this.client.stop(); } catch (_) { /* ignore */ }
+      try {
+        this.client.stop();
+      } catch (_) {
+        /* ignore */
+      }
       this.client = null;
     }
     this.isConnected = false;
@@ -108,7 +116,9 @@ export class IVRService implements OnModuleDestroy {
     }
 
     this.logger.log(
-      `ARI connection state: isConnected=${this.isConnected}, clientId=${(this.client as any)?._id?.() ?? 'unset'}`,
+      `ARI connection state: isConnected=${this.isConnected}, clientId=${
+        (this.client as any)?._id?.() ?? 'unset'
+      }`,
     );
 
     const ivrDialPlan = ivrJSON ? JSON.parse(ivrJSON) : null;
@@ -168,16 +178,21 @@ export class IVRService implements OnModuleDestroy {
   private async connect() {
     try {
       const { appName, server, user, password } = this.config;
-      this.logger.log('Initiating ARI connection');
+      this.logger.log(
+        `Initiating ARI connection to ${server} as ${user}, app: ${appName}`,
+      );
 
       this.client = await ari.connect(server, user, password);
       await this.client.start(appName);
+      this.logger.log(`ARI connected to ${server} as ${user}, app: ${appName}`);
 
       try {
         await this.client.applications.get({ applicationName: appName });
       } catch (err) {
         throw new Error(
-          `Stasis app '${appName}' did not register with Asterisk: ${(err as Error).message}`,
+          `Stasis app '${appName}' did not register with Asterisk: ${
+            (err as Error).message
+          }`,
         );
       }
 
@@ -188,7 +203,9 @@ export class IVRService implements OnModuleDestroy {
         if (this.isShuttingDown) return;
         this.isConnected = false;
         this.logger.warn(
-          `ARI WebSocket dropped (${err?.message ?? 'unknown'}) — attempting mid-session reconnect`,
+          `ARI WebSocket dropped (${
+            err?.message ?? 'unknown'
+          }) — attempting mid-session reconnect`,
         );
         this.midSessionReconnect(1);
       });
@@ -222,13 +239,22 @@ export class IVRService implements OnModuleDestroy {
     try {
       if (this.client) {
         (this.client as unknown as EventEmitter).removeAllListeners();
-        try { this.client.stop(); } catch (_) { /* ignore */ }
+        try {
+          this.client.stop();
+        } catch (_) {
+          /* ignore */
+        }
       }
       await this.connect();
       this.setupEventHandlers();
-      this.logger.log(`ARI mid-session reconnect succeeded on attempt ${attempt}`);
+      this.logger.log(
+        `ARI mid-session reconnect succeeded on attempt ${attempt}`,
+      );
     } catch (error) {
-      this.logger.error(`ARI mid-session reconnect attempt ${attempt} failed:`, error);
+      this.logger.error(
+        `ARI mid-session reconnect attempt ${attempt} failed:`,
+        error,
+      );
       this.midSessionReconnect(attempt + 1);
     }
   }
@@ -416,12 +442,16 @@ export class IVRService implements OnModuleDestroy {
         this.channelStateManager.setMenuPath(channelId, selectedPath);
       } else if (hasChildren(option)) {
         this.logger.warn(
-          `IVR option ${pathLabel(selectedPath)} has both hangup:true and sub-options — hanging up, sub-options unreachable`,
+          `IVR option ${pathLabel(
+            selectedPath,
+          )} has both hangup:true and sub-options — hanging up, sub-options unreachable`,
         );
       }
 
       this.logger.log(
-        `IVR ${descends ? 'descend' : 'stay'} on channel ${channelId}: digit ${digit} -> ${pathLabel(
+        `IVR ${
+          descends ? 'descend' : 'stay'
+        } on channel ${channelId}: digit ${digit} -> ${pathLabel(
           selectedPath,
         )}, menu now ${
           pathLabel(this.channelStateManager.getMenuPath(channelId)) || 'main'
@@ -436,7 +466,9 @@ export class IVRService implements OnModuleDestroy {
       );
     } catch (err) {
       this.logger.error(
-        `Error handling DTMF on channel ${channelId}: ${(err as Error).message}`,
+        `Error handling DTMF on channel ${channelId}: ${
+          (err as Error).message
+        }`,
       );
     }
   }
@@ -455,7 +487,9 @@ export class IVRService implements OnModuleDestroy {
       channelState.ivrDialPlan.main?.prompt;
     if (!prompt) {
       this.logger.warn(
-        `No prompt to replay for menu ${pathLabel(path) || 'main'} on channel ${channelId}`,
+        `No prompt to replay for menu ${
+          pathLabel(path) || 'main'
+        } on channel ${channelId}`,
       );
       return;
     }

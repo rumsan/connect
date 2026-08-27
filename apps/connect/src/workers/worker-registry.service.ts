@@ -24,7 +24,8 @@ export class WorkerRegistry {
   private readonly heartbeatMs =
     +(process.env['WORKER_HEARTBEAT_MS'] as string) || 15_000;
 
-  private get staleAfterMs() {
+  /** How long a worker may go silent before it drops off the roster. */
+  get staleAfterMs() {
     return this.heartbeatMs * BROADCAST_CONSTANTS.WORKER_STALE_HEARTBEATS;
   }
 

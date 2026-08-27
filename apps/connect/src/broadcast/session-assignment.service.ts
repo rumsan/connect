@@ -11,6 +11,13 @@ const MULTI_WORKER_TRANSPORTS: Partial<Record<TransportType, TRANSPORT_SLUG>> = 
   [TransportType.VOICE]: TRANSPORT_SLUG.VOICE,
 };
 
+/** Why one live worker was or was not put on a session — for logging only. */
+export type SelectionTrace = {
+  workerId: string;
+  chosen: boolean;
+  reason: string;
+};
+
 const QUEUE_BY_SLUG: Record<string, QUEUES> = {
   [TRANSPORT_SLUG.VOICE]: QUEUES.TRANSPORT_VOICE,
   [TRANSPORT_SLUG.API]: QUEUES.TRANSPORT_API,
@@ -69,16 +76,46 @@ export class SessionAssignmentService {
    * Walk candidates in priority order, taking each until the accumulated
    * capacity covers what is waiting. Pure and side-effect free so the policy
    * can be tested directly.
+   *
+   * Pass `trace` to collect a per-candidate reason. Once either guard trips it
+   * can never untrip — `capacity` only grows and `remaining` is fixed — so
+   * continuing rather than breaking records a reason for every candidate
+   * without changing which ones are chosen.
    */
-  selectWorkers(remaining: number, candidates: WorkerState[]): WorkerState[] {
+  selectWorkers(
+    remaining: number,
+    candidates: WorkerState[],
+    trace?: SelectionTrace[],
+  ): WorkerState[] {
     const chosen: WorkerState[] = [];
     let capacity = 0;
 
     for (const worker of candidates) {
-      if (capacity >= remaining) break;
-      if (remaining - capacity < this.spilloverMin) break;
+      if (capacity >= remaining) {
+        trace?.push({
+          workerId: worker.workerId,
+          chosen: false,
+          reason: `capacity already covered (${capacity} >= ${remaining} remaining)`,
+        });
+        continue;
+      }
+      if (remaining - capacity < this.spilloverMin) {
+        trace?.push({
+          workerId: worker.workerId,
+          chosen: false,
+          reason: `overflow ${
+            remaining - capacity
+          } < BROADCAST_SPILLOVER_MIN ${this.spilloverMin}`,
+        });
+        continue;
+      }
       chosen.push(worker);
       capacity += worker.capacity;
+      trace?.push({
+        workerId: worker.workerId,
+        chosen: true,
+        reason: `chosen (capacity ${capacity}/${remaining})`,
+      });
     }
 
     return chosen;
@@ -94,7 +131,12 @@ export class SessionAssignmentService {
     if (!slug) return [];
 
     const remaining = await this.countRemaining(sessionCuid);
-    if (remaining === 0) return [];
+    if (remaining === 0) {
+      this.logger.debug(
+        `session ${sessionCuid}: nothing scheduled left to assign`,
+      );
+      return [];
+    }
 
     const assigned = await this.assignedWorkers(sessionCuid);
     const headroom = await this.headroom(slug, assigned);
@@ -102,12 +144,53 @@ export class SessionAssignmentService {
 
     if (assigned.size > 0 && shortfall < this.spilloverMin) {
       // Whoever is already on the session can absorb the rest.
+      this.logger.debug(
+        `session ${sessionCuid}: ${remaining} remaining absorbed by [${[
+          ...assigned,
+        ].join(', ')}] (headroom=${headroom}) — no new worker needed`,
+      );
       return [];
     }
 
-    const candidates = this.registry
-      .idle(slug)
-      .filter((w) => !assigned.has(w.workerId));
+    // One live() pass: it prunes stale entries as it iterates, and idle() would
+    // just call it again.
+    const live = this.registry.live(slug);
+    const candidates = live.filter(
+      (w) => !w.activeSessionCuid && !assigned.has(w.workerId),
+    );
+
+    const trace: SelectionTrace[] = [];
+    const chosen = candidates.length
+      ? this.selectWorkers(
+          assigned.size === 0 ? remaining : shortfall,
+          candidates,
+          trace,
+        )
+      : [];
+
+    for (const w of live) {
+      if (assigned.has(w.workerId)) {
+        trace.push({
+          workerId: w.workerId,
+          chosen: false,
+          reason: 'already on this session',
+        });
+      } else if (w.activeSessionCuid) {
+        trace.push({
+          workerId: w.workerId,
+          chosen: false,
+          reason: `busy with session ${w.activeSessionCuid}`,
+        });
+      }
+    }
+
+    this.logSelection(sessionCuid, {
+      remaining,
+      headroom,
+      shortfall,
+      live,
+      trace,
+    });
 
     if (candidates.length === 0) {
       if (assigned.size === 0) {
@@ -118,10 +201,6 @@ export class SessionAssignmentService {
       return [];
     }
 
-    const chosen = this.selectWorkers(
-      assigned.size === 0 ? remaining : shortfall,
-      candidates,
-    );
     if (chosen.length === 0) return [];
 
     const queue = QUEUE_BY_SLUG[slug];
@@ -152,6 +231,52 @@ export class SessionAssignmentService {
     }
 
     return newlyAssigned;
+  }
+
+  /**
+   * Explains an assignment decision. Promoted to `log` only when a live worker
+   * was passed over — that is the case worth reading. Otherwise `debug`, since
+   * this also runs after every batch handout.
+   */
+  private logSelection(
+    sessionCuid: string,
+    ctx: {
+      remaining: number;
+      headroom: number;
+      shortfall: number;
+      live: WorkerState[];
+      trace: SelectionTrace[];
+    },
+  ) {
+    const { remaining, headroom, shortfall, live, trace } = ctx;
+
+    if (live.length === 0) {
+      this.logger.warn(
+        `session ${sessionCuid}: ${remaining} scheduled but the roster is empty — no worker has heartbeated within ${
+          this.registry.staleAfterMs / 1000
+        }s`,
+      );
+      return;
+    }
+
+    const byId = new Map(live.map((w) => [w.workerId, w]));
+    const lines = trace.map((t) => {
+      const w = byId.get(t.workerId);
+      return `  ${t.workerId} p=${w?.priority} cap=${w?.capacity} -> ${
+        t.chosen ? 'CHOSEN' : 'skipped'
+      }: ${t.reason}`;
+    });
+
+    const message = [
+      `session ${sessionCuid}: ${remaining} scheduled, headroom=${headroom}, shortfall=${shortfall}, spilloverMin=${this.spilloverMin}, ${live.length} live`,
+      ...lines,
+    ].join('\n');
+
+    if (trace.some((t) => !t.chosen)) {
+      this.logger.log(message);
+    } else {
+      this.logger.debug(message);
+    }
   }
 
   /**
