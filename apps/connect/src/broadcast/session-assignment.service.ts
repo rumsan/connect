@@ -3,13 +3,17 @@ import { TransportQueue } from '@rsconnect/queue';
 import { QUEUES, TRANSPORT_SLUG } from '@rumsan/connect';
 import { BroadcastStatus, TransportType } from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
-import { WorkerRegistry, WorkerState } from '../workers/worker-registry.service';
+import {
+  WorkerRegistry,
+  WorkerState,
+} from '../workers/worker-registry.service';
 import { BROADCAST_CONSTANTS } from './broadcast.constants';
 
 /** Transports whose workers take part in multi-worker assignment. */
-const MULTI_WORKER_TRANSPORTS: Partial<Record<TransportType, TRANSPORT_SLUG>> = {
-  [TransportType.VOICE]: TRANSPORT_SLUG.VOICE,
-};
+const MULTI_WORKER_TRANSPORTS: Partial<Record<TransportType, TRANSPORT_SLUG>> =
+  {
+    [TransportType.VOICE]: TRANSPORT_SLUG.VOICE,
+  };
 
 /** Why one live worker was or was not put on a session — for logging only. */
 export type SelectionTrace = {
@@ -103,9 +107,9 @@ export class SessionAssignmentService {
         trace?.push({
           workerId: worker.workerId,
           chosen: false,
-          reason: `overflow ${
-            remaining - capacity
-          } < BROADCAST_SPILLOVER_MIN ${this.spilloverMin}`,
+          reason: `overflow ${remaining - capacity} < BROADCAST_SPILLOVER_MIN ${
+            this.spilloverMin
+          }`,
         });
         continue;
       }
@@ -304,10 +308,7 @@ export class SessionAssignmentService {
    * contributes nothing, so its share of the session shows up as shortfall and
    * gets covered by someone else.
    */
-  private async headroom(
-    slug: string,
-    assigned: Set<string>,
-  ): Promise<number> {
+  private async headroom(slug: string, assigned: Set<string>): Promise<number> {
     if (assigned.size === 0) return 0;
 
     const live = new Map(this.registry.live(slug).map((w) => [w.workerId, w]));
