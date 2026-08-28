@@ -194,6 +194,17 @@ the backstop for any session that loses all its workers — without it a session
 would sit at `PENDING` forever, because the pull loop only advances when a
 worker asks for more.
 
+That sweep is age-limited by `BROADCAST_MAX_SESSION_AGE_MS` (default 24h):
+past it, a session is skipped rather than re-assigned, so nobody is dialled
+about a broadcast that went stale days ago. Skipped sessions are **never
+modified** — they keep their `PENDING` status and `SCHEDULED` rows, and an
+explicit `GET /sessions/:cuid/trigger` still assigns and dials them at any age,
+because `retryBroadcasts` calls `ensureAssignment` directly instead of waiting
+for the sweep. The trade-off is that such sessions accumulate in `PENDING`
+indefinitely; the sweep logs a per-tick count so the backlog stays visible.
+Closing them out for good should be an explicit operator action, never
+automatic.
+
 **Worker never gets `SESSION_COMPLETE`.** Its `SessionGate` force-completes after
 `SESSION_GATE_TIMEOUT_MS` (10 min) and moves on. Since assignment is per worker,
 this only costs that one worker.
@@ -230,6 +241,7 @@ scratch directory.
 | --- | --- |
 | `BROADCAST_CLAIM_TTL_MS` | Stale-claim window (default 600000). Keep above `BATCH_TTL_MS`. |
 | `BROADCAST_SPILLOVER_MIN` | Minimum overflow before waking another worker (default 1). |
+| `BROADCAST_MAX_SESSION_AGE_MS` | How old a session may get before the automatic sweep stops assigning it (default 86400000). Explicit retry ignores it. |
 | `WORKER_HEARTBEAT_MS` | Must match the workers'; three misses drops a worker. |
 
 ### Adding, removing, demoting

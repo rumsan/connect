@@ -38,6 +38,9 @@ describe('BroadcastReclaimWorker', () => {
           Transport: { type: TransportType.VOICE },
         }),
         findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       $transaction: jest.fn().mockResolvedValue([]),
     };
@@ -62,6 +65,7 @@ describe('BroadcastReclaimWorker', () => {
 
   afterEach(() => {
     delete process.env.BROADCAST_CLAIM_TTL_MS;
+    delete process.env.BROADCAST_MAX_SESSION_AGE_MS;
   });
 
   describe('reclaimStaleClaims', () => {
@@ -205,6 +209,58 @@ describe('BroadcastReclaimWorker', () => {
       await worker.assignStalledSessions();
 
       expect(sessionAssignment.ensureAssignment).toHaveBeenCalledTimes(2);
+    });
+
+    describe('age limit', () => {
+      const cutoffOf = (call: any) => call.where.createdAt.gte.getTime();
+
+      it('only considers sessions newer than the 24h default', async () => {
+        const before = Date.now();
+
+        await worker.assignStalledSessions();
+
+        const cutoff = cutoffOf(prisma.session.findMany.mock.calls[0][0]);
+        expect(cutoff).toBeGreaterThanOrEqual(before - 86_400_000);
+        expect(cutoff).toBeLessThanOrEqual(Date.now() - 86_400_000 + 1000);
+      });
+
+      it('honours BROADCAST_MAX_SESSION_AGE_MS', async () => {
+        process.env.BROADCAST_MAX_SESSION_AGE_MS = '3600000';
+        const before = Date.now();
+
+        await worker.assignStalledSessions();
+
+        const cutoff = cutoffOf(prisma.session.findMany.mock.calls[0][0]);
+        expect(cutoff).toBeGreaterThanOrEqual(before - 3_600_000);
+        expect(cutoff).toBeLessThanOrEqual(Date.now() - 3_600_000 + 1000);
+      });
+
+      it('counts the skipped backlog with the mirrored cutoff', async () => {
+        process.env.BROADCAST_MAX_SESSION_AGE_MS = '3600000';
+
+        await worker.assignStalledSessions();
+
+        const countArgs = prisma.session.count.mock.calls[0][0];
+        expect(countArgs.where.createdAt.lt).toBeInstanceOf(Date);
+        // Same window, opposite side — nothing falls through both.
+        expect(countArgs.where.createdAt.lt.getTime()).toBeCloseTo(
+          cutoffOf(prisma.session.findMany.mock.calls[0][0]),
+          -3,
+        );
+      });
+
+      it('never writes to an aged-out session, so retry still works', async () => {
+        prisma.session.count.mockResolvedValue(11);
+        prisma.session.findMany.mockResolvedValue([]);
+
+        await worker.assignStalledSessions();
+
+        expect(prisma.broadcast.updateMany).not.toHaveBeenCalled();
+        expect(prisma.session.update).not.toHaveBeenCalled();
+        expect(prisma.session.updateMany).not.toHaveBeenCalled();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(sessionAssignment.ensureAssignment).not.toHaveBeenCalled();
+      });
     });
   });
 });
