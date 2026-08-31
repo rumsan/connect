@@ -45,7 +45,7 @@ jobs:
           url: ${{ secrets.VAULT_URL }}
           token: ${{ secrets.VAULT_TOKEN }}
           secrets: |
-            github/data/general/docker/rumsan username |   ;
+            github/data/general/docker/rumsan username | DOCKERHUB_USERNAME ;
             github/data/general/docker/rumsan password | DOCKERHUB_TOKEN ;
 
       - name: docker login
