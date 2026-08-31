@@ -45,6 +45,7 @@ async function proxy(req: NextRequest, path: string[]) {
       headers,
       body: hasBody ? await req.arrayBuffer() : undefined,
       cache: 'no-store',
+      signal: req.signal,
     });
   } catch (err) {
     return Response.json(
@@ -58,6 +59,20 @@ async function proxy(req: NextRequest, path: string[]) {
     );
   }
 
+  const upstreamType = upstream.headers.get('content-type') ?? '';
+
+  if (upstreamType.includes('text/event-stream') && upstream.body) {
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: {
+        'content-type': upstreamType,
+        'cache-control': 'no-cache, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      },
+    });
+  }
+
   const body = await upstream.arrayBuffer();
   const resHeaders = new Headers();
   for (const key of ['content-type', 'content-disposition']) {
@@ -69,8 +84,13 @@ async function proxy(req: NextRequest, path: string[]) {
 
 type Ctx = { params: { path: string[] } };
 
-export const GET = (req: NextRequest, { params }: Ctx) => proxy(req, params.path);
-export const POST = (req: NextRequest, { params }: Ctx) => proxy(req, params.path);
-export const PATCH = (req: NextRequest, { params }: Ctx) => proxy(req, params.path);
-export const PUT = (req: NextRequest, { params }: Ctx) => proxy(req, params.path);
-export const DELETE = (req: NextRequest, { params }: Ctx) => proxy(req, params.path);
+export const GET = (req: NextRequest, { params }: Ctx) =>
+  proxy(req, params.path);
+export const POST = (req: NextRequest, { params }: Ctx) =>
+  proxy(req, params.path);
+export const PATCH = (req: NextRequest, { params }: Ctx) =>
+  proxy(req, params.path);
+export const PUT = (req: NextRequest, { params }: Ctx) =>
+  proxy(req, params.path);
+export const DELETE = (req: NextRequest, { params }: Ctx) =>
+  proxy(req, params.path);

@@ -2,6 +2,28 @@ import { ConsoleLogger, Injectable, LoggerService } from '@nestjs/common';
 import { from, merge, Observable, Subject } from 'rxjs';
 import { LogEntry } from './log-entry.interface';
 
+const MAX_MESSAGE_CHARS = 4000;
+
+/** Never throws: this runs inside the logging path, where a throw is fatal. */
+function toMessage(message: any): string {
+  let text: string;
+  if (typeof message === 'string') {
+    text = message;
+  } else {
+    try {
+      text = JSON.stringify(message) ?? String(message);
+    } catch {
+      text = String(message);
+    }
+  }
+
+  return text.length > MAX_MESSAGE_CHARS
+    ? `${text.slice(0, MAX_MESSAGE_CHARS)}… [truncated ${
+        text.length - MAX_MESSAGE_CHARS
+      } chars]`
+    : text;
+}
+
 @Injectable()
 export class LogStreamService extends ConsoleLogger implements LoggerService {
   private readonly subject = new Subject<LogEntry>();
@@ -47,12 +69,16 @@ export class LogStreamService extends ConsoleLogger implements LoggerService {
     this._push(level, message, context);
   }
 
-  private _push(level: LogEntry['level'], message: any, context?: string): void {
+  private _push(
+    level: LogEntry['level'],
+    message: any,
+    context?: string,
+  ): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
       context: context ?? 'App',
-      message: typeof message === 'string' ? message : JSON.stringify(message),
+      message: toMessage(message),
     };
     this.buffer.push(entry);
     if (this.buffer.length > this.maxBuffer) {

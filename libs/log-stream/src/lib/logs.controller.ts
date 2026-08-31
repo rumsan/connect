@@ -1,6 +1,12 @@
-import { Controller, Header, MessageEvent, Sse } from '@nestjs/common';
-import { map, Observable } from 'rxjs';
+import { Controller, MessageEvent, Sse } from '@nestjs/common';
+import { interval, map, merge, Observable } from 'rxjs';
 import { LogStreamService } from './log-stream.service';
+
+/**
+ * Idle connections are dropped by most proxies after ~60s, and each reconnect
+ * costs the client a full replay of the buffer, so keep the socket busy.
+ */
+const HEARTBEAT_MS = 15_000;
 
 /**
  * Registered automatically when LogStreamModule is imported.
@@ -15,11 +21,15 @@ export class LogsController {
   constructor(private readonly logStream: LogStreamService) {}
 
   @Sse('stream')
-  @Header('Cache-Control', 'no-cache')
-  @Header('X-Accel-Buffering', 'no')
   stream(): Observable<MessageEvent> {
-    return this.logStream.getStream().pipe(
-      map((entry) => ({ data: entry }) as MessageEvent),
+    const entries = this.logStream
+      .getStream()
+      .pipe(map((entry) => ({ data: entry } as MessageEvent)));
+
+    const heartbeat = interval(HEARTBEAT_MS).pipe(
+      map(() => ({ type: 'ping', data: '' } as MessageEvent)),
     );
+
+    return merge(entries, heartbeat);
   }
 }
