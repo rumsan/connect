@@ -1,6 +1,7 @@
 {
   "name": "@rsconnect/source",
   "version": "1.0.0",
+  "packageManager": "pnpm@10.12.1",
   "license": "MIT",
   "scripts": {
     "start:asterisk-worker": "nx serve asterisk-worker",
@@ -95,6 +96,24 @@
     "typescript": "~5.5.2",
     "verdaccio": "^5.0.4",
     "webpack-cli": "^5.1.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@parcel/watcher",
+      "@prisma/client",
+      "@prisma/engines",
+      "@swc/core",
+      "bufferutil",
+      "core-js",
+      "cpu-features",
+      "msgpackr-extract",
+      "nx",
+      "prisma",
+      "sqlite3",
+      "ssh2",
+      "utf-8-validate"
+    ]
   },
   "nx": {
     "includedScripts": []

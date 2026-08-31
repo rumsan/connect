@@ -20,11 +20,11 @@ try {
   packageData.dependencies = {
     ...packageData.dependencies,
     prisma: '5.17.0',
-    'ts-node': '^10.9.1',
+    'ts-node': '10.9.1',
     '@prisma/client': '5.17.0',
     dotenv: '16.4.5',
     readline: '1.3.0',
-    viem: '^2.18.1',
+    viem: '2.38.5',
 
   };
 
