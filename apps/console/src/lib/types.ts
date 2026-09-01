@@ -300,3 +300,11 @@ export type CreditsEntry = {
   broadcasts: number;
   sessionCuids: string[];
 };
+
+/** One line of runtime output, as served by the Connect log stream. */
+export type LogEntry = {
+  timestamp: string;
+  level: 'log' | 'warn' | 'error' | 'debug' | 'verbose';
+  context: string;
+  message: string;
+};

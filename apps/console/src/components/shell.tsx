@@ -10,6 +10,7 @@ import {
   Boxes,
   ListOrdered,
   LogOut,
+  ScrollText,
   Radio,
   Wallet,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ import { Button } from './ui/button';
 const GLOBAL_NAV = [
   { href: '/', Icon: LayoutDashboard, title: 'Dashboard' },
   { href: '/apps', Icon: LayoutGrid, title: 'Applications' },
+  { href: '/logs', Icon: ScrollText, title: 'System logs' },
 ];
 
 /** Shown while inside `/apps/[cuid]/…` — scoped to that one application. */
@@ -135,9 +137,12 @@ function Breadcrumb() {
   const app = data?.data?.find((a) => a.cuid === appId);
 
   if (!appId) {
+    const global = GLOBAL_NAV.find((item) =>
+      item.href === '/' ? pathname === '/' : pathname.startsWith(item.href),
+    );
     return (
       <span className="text-sm text-muted-foreground">
-        {pathname === '/' ? 'Dashboard' : 'Applications'}
+        {global?.title ?? 'Applications'}
       </span>
     );
   }
