@@ -46,7 +46,7 @@ export class ApiWorker extends TransportWorker {
     const bulkDataTpl = extractBulkDataTemplate(session.Transport?.config);
 
     if (bulkDataTpl) {
-      this.sendBulkBroadcast(session, jobData);
+      await this.sendBulkBroadcast(session, jobData);
     } else {
       for (const job of jobData.broadcasts) {
         const broadcastLog: QueueBroadcastLog = {
