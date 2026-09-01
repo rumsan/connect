@@ -50,25 +50,25 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # # Connect Image
-      # - name: build && push connect
-      #   id: build-push-connect
-      #   uses: docker/build-push-action@v5
-      #   with:
-      #     context: .
-      #     file: Dockerfile.connect
-      #     push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-      #     tags: rumsan/connect:dev
+      # Connect Image
+      - name: build && push connect
+        id: build-push-connect
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.connect
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          tags: rumsan/connect:dev
 
-      # # Asterisk Worker Image
-      # - name: build && push asterisk-worker
-      #   id: build-push-asterisk-worker
-      #   uses: docker/build-push-action@v3
-      #   with:
-      #     context: .
-      #     file: Dockerfile.asterisk-worker
-      #     push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-      #     tags: rumsan/asterisk-worker:dev
+      # Asterisk Worker Image
+      - name: build && push asterisk-worker
+        id: build-push-asterisk-worker
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: Dockerfile.asterisk-worker
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          tags: rumsan/asterisk-worker:dev
 
       - name: build && push connect-ui
         id: build-push-connect-ui
