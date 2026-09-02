@@ -275,9 +275,14 @@ export class BroadcastService {
         // The session is under way even if every worker happened to be busy;
         // BroadcastReclaimWorker retries assignment until one frees up. Leaving
         // it NEW would strand it, since nothing else revisits a NEW session.
+        //
+        // An empty result is not necessarily "no worker free" — it also covers
+        // nothing left to schedule, existing workers having enough headroom,
+        // and spillover-min declining to wake another box. SessionAssignment
+        // logs the actual reason, so don't guess at one here.
         if (assigned.length === 0) {
-          this.logger.warn(
-            `No worker free for session ${sessionCuid} yet; it will be assigned when one frees up`,
+          this.logger.debug(
+            `No new worker assigned to session ${sessionCuid}; see SessionAssignment for why`,
           );
         }
         ok = true;

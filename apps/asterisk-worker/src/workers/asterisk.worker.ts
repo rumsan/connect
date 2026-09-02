@@ -129,6 +129,10 @@ export class AsteriskWorker extends TransportWorker {
           this.queueTransport
         } (priority=${WORKER_PRIORITY}, capacity=${this.batchManager.batchSize})`,
       );
+
+      // Queue + bindings are asserted and the channel is connected by now, so
+      // the publish won't hit sendHeartbeat's 1s timeout.
+      await this.announceOnStartup();
     } catch (err) {
       this.logger.error('Error starting the consumer:', err);
     }
@@ -172,8 +176,8 @@ export class AsteriskWorker extends TransportWorker {
    */
   @Interval(WORKER_HEARTBEAT_MS)
   async sendHeartbeat() {
-    if (!WORKER_ID) return;
-    await this.transportQueue.sendHeartbeat({
+    if (!WORKER_ID) return false;
+    return await this.transportQueue.sendHeartbeat({
       workerId: WORKER_ID,
       transport: TRANSPORT_SLUG.VOICE,
       priority: WORKER_PRIORITY,
@@ -181,6 +185,35 @@ export class AsteriskWorker extends TransportWorker {
       activeSessionCuid: this.sessionGate.activeSession,
       inFlight: this.batchManager.processingBroadcasts.size,
     });
+  }
+
+  /**
+   * Announce once at boot. @Interval does not fire until a full period has
+   * elapsed, so without this a fresh worker is missing from connect's roster —
+   * and therefore unassignable — for WORKER_HEARTBEAT_MS. Retries briefly
+   * because a heartbeat publish carries a 1s timeout and the broker may still
+   * be settling.
+   */
+  private async announceOnStartup(attempt = 1): Promise<void> {
+    const MAX_ATTEMPTS = 3;
+    if (!WORKER_ID) return;
+
+    if (await this.sendHeartbeat()) {
+      this.logger.log(
+        `Registered with connect: ${WORKER_ID} (priority=${WORKER_PRIORITY}, capacity=${this.batchManager.batchSize})`,
+      );
+      return;
+    }
+
+    if (attempt >= MAX_ATTEMPTS) {
+      this.logger.warn(
+        `Startup heartbeat failed after ${MAX_ATTEMPTS} attempts — registering on the next interval (${WORKER_HEARTBEAT_MS}ms)`,
+      );
+      return;
+    }
+
+    await wait(1000);
+    return this.announceOnStartup(attempt + 1);
   }
 
   /** Snapshot for the health endpoint. */

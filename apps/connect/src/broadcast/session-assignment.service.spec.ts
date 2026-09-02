@@ -3,7 +3,10 @@ import { TransportQueue } from '@rsconnect/queue';
 import { TransportType } from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
 import { WorkerRegistry, WorkerState } from '../workers/worker-registry.service';
-import { SessionAssignmentService } from './session-assignment.service';
+import {
+  SelectionTrace,
+  SessionAssignmentService,
+} from './session-assignment.service';
 
 const worker = (
   workerId: string,
@@ -29,7 +32,12 @@ describe('SessionAssignmentService', () => {
     };
   };
   let transportQueue: { checkReadiness: jest.Mock };
-  let registry: { idle: jest.Mock; live: jest.Mock; get: jest.Mock };
+  let registry: {
+    idle: jest.Mock;
+    live: jest.Mock;
+    get: jest.Mock;
+    staleAfterMs: number;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -43,6 +51,7 @@ describe('SessionAssignmentService', () => {
       idle: jest.fn().mockReturnValue([]),
       live: jest.fn().mockReturnValue([]),
       get: jest.fn(),
+      staleAfterMs: 45_000,
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -112,6 +121,51 @@ describe('SessionAssignmentService', () => {
       const chosen = service.selectWorkers(100, fleet);
       expect(chosen).toHaveLength(2);
     });
+
+    describe('trace', () => {
+      it('records why a worker was passed over for capacity', () => {
+        const trace: SelectionTrace[] = [];
+        service.selectWorkers(8, fleet, trace);
+
+        expect(trace).toEqual([
+          { workerId: 'w1', chosen: true, reason: expect.any(String) },
+          {
+            workerId: 'w2',
+            chosen: false,
+            reason: 'capacity already covered (10 >= 8 remaining)',
+          },
+        ]);
+      });
+
+      it('records why a worker was passed over for spillover-min', () => {
+        process.env.BROADCAST_SPILLOVER_MIN = '5';
+        const trace: SelectionTrace[] = [];
+        service.selectWorkers(12, fleet, trace);
+
+        expect(trace[1]).toEqual({
+          workerId: 'w2',
+          chosen: false,
+          reason: 'overflow 2 < BROADCAST_SPILLOVER_MIN 5',
+        });
+      });
+
+      it('traces every candidate even once selection has stopped', () => {
+        const trace: SelectionTrace[] = [];
+        const big = [worker('w1', 1, 10), worker('w2', 2, 5), worker('w3', 3, 5)];
+        service.selectWorkers(2, big, trace);
+
+        expect(trace).toHaveLength(3);
+        expect(trace.filter((t) => t.chosen).map((t) => t.workerId)).toEqual([
+          'w1',
+        ]);
+      });
+
+      it('selects identically whether or not a trace is passed', () => {
+        const withTrace = service.selectWorkers(11, fleet, []);
+        const without = service.selectWorkers(11, fleet);
+        expect(withTrace).toEqual(without);
+      });
+    });
   });
 
   describe('ensureAssignment', () => {
@@ -133,7 +187,7 @@ describe('SessionAssignmentService', () => {
 
     it('assigns only the primary when it can hold the session', async () => {
       prisma.broadcast.count.mockResolvedValue(8);
-      registry.idle.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
+      registry.live.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
 
       const assigned = await service.ensureAssignment('s1', TransportType.VOICE);
 
@@ -146,7 +200,7 @@ describe('SessionAssignmentService', () => {
 
     it('assigns both when the primary cannot hold the session', async () => {
       prisma.broadcast.count.mockResolvedValue(100);
-      registry.idle.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
+      registry.live.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
 
       const assigned = await service.ensureAssignment('s1', TransportType.VOICE);
 
@@ -159,8 +213,8 @@ describe('SessionAssignmentService', () => {
         args?.where?.workerId ? 0 : 5,
       );
       prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
-      registry.live.mockReturnValue([worker('w1', 1, 10)]);
-      registry.idle.mockReturnValue([worker('w2', 2, 5)]);
+      // w2 is live and idle — the point is that it is still not woken.
+      registry.live.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
 
       expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual(
         [],
@@ -174,8 +228,10 @@ describe('SessionAssignmentService', () => {
         args?.where?.workerId ? 10 : 40,
       );
       prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
-      registry.live.mockReturnValue([worker('w1', 1, 10, 's1')]);
-      registry.idle.mockReturnValue([worker('w2', 2, 5)]);
+      registry.live.mockReturnValue([
+        worker('w1', 1, 10, 's1'),
+        worker('w2', 2, 5),
+      ]);
 
       expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual([
         'w2',
@@ -188,8 +244,8 @@ describe('SessionAssignmentService', () => {
         args?.where?.workerId ? 0 : 30,
       );
       prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
-      registry.live.mockReturnValue([]);
-      registry.idle.mockReturnValue([worker('w2', 2, 5)]);
+      // w1 is absent from the roster entirely — only w2 is live.
+      registry.live.mockReturnValue([worker('w2', 2, 5)]);
 
       expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual([
         'w2',
@@ -202,7 +258,6 @@ describe('SessionAssignmentService', () => {
       );
       prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
       registry.live.mockReturnValue([worker('w1', 1, 10, 's1')]);
-      registry.idle.mockReturnValue([worker('w1', 1, 10)]);
 
       expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual(
         [],
@@ -211,7 +266,7 @@ describe('SessionAssignmentService', () => {
 
     it('reports nothing assigned when the readiness publish fails', async () => {
       prisma.broadcast.count.mockResolvedValue(8);
-      registry.idle.mockReturnValue([worker('w1', 1, 10)]);
+      registry.live.mockReturnValue([worker('w1', 1, 10)]);
       transportQueue.checkReadiness.mockResolvedValue(false);
 
       expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual(
@@ -221,15 +276,38 @@ describe('SessionAssignmentService', () => {
 
     it('counts a woken worker as assigned before it has claimed anything', async () => {
       prisma.broadcast.count.mockResolvedValue(8);
-      registry.idle.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
+      registry.live.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
 
       await service.ensureAssignment('s1', TransportType.VOICE);
       expect(await service.assignedWorkers('s1')).toEqual(new Set(['w1']));
     });
 
+    it('does not wake a worker that is busy with another session', async () => {
+      prisma.broadcast.count.mockResolvedValue(4);
+      registry.live.mockReturnValue([
+        worker('w1', 1, 10, 'other-session'),
+        worker('w2', 2, 5, 'other-session'),
+      ]);
+
+      expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual(
+        [],
+      );
+      expect(transportQueue.checkReadiness).not.toHaveBeenCalled();
+    });
+
+    it('assigns nothing when the roster is empty', async () => {
+      prisma.broadcast.count.mockResolvedValue(4);
+      registry.live.mockReturnValue([]);
+
+      expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual(
+        [],
+      );
+      expect(transportQueue.checkReadiness).not.toHaveBeenCalled();
+    });
+
     it('forgets a pending assignment once cleared', async () => {
       prisma.broadcast.count.mockResolvedValue(8);
-      registry.idle.mockReturnValue([worker('w1', 1, 10)]);
+      registry.live.mockReturnValue([worker('w1', 1, 10)]);
 
       await service.ensureAssignment('s1', TransportType.VOICE);
       service.clearPending('s1', 'w1');

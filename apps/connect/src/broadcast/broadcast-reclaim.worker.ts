@@ -40,6 +40,13 @@ export class BroadcastReclaimWorker {
     );
   }
 
+  private get maxSessionAgeMs(): number {
+    return (
+      Number(process.env.BROADCAST_MAX_SESSION_AGE_MS) ||
+      BROADCAST_CONSTANTS.DEFAULT_MAX_SESSION_AGE_MS
+    );
+  }
+
   /**
    * Assign workers to in-progress sessions that do not have enough of them.
    *
@@ -48,19 +55,42 @@ export class BroadcastReclaimWorker {
    * nobody working it, because the pull loop only advances when a worker asks
    * for more. `ensureAssignment` is a no-op when the assigned workers already
    * have the headroom, so this is safe to run on every session every tick.
+   *
+   * Age-limited by `maxSessionAgeMs`: dialling someone about a day-old
+   * broadcast is worse than not dialling at all. Older sessions are skipped,
+   * never modified — an explicit `GET /sessions/:cuid/trigger` still assigns
+   * and dials them at any age, because retryBroadcasts calls ensureAssignment
+   * directly instead of waiting for this sweep.
    */
   @Interval(BROADCAST_CONSTANTS.RECLAIM_WORKER_INTERVAL_MS)
   async assignStalledSessions() {
     try {
+      const cutoff = new Date(Date.now() - this.maxSessionAgeMs);
+      const stalled = {
+        status: SessionStatus.PENDING,
+        Broadcasts: {
+          some: {
+            status: BroadcastStatus.SCHEDULED,
+            isComplete: false,
+          },
+        },
+      };
+
+      // Skipped sessions stay PENDING with work outstanding, so surface the
+      // backlog once per tick rather than leaving it invisible.
+      const skipped = await this.prisma.session.count({
+        where: { ...stalled, createdAt: { lt: cutoff } },
+      });
+      if (skipped > 0) {
+        this.logger.debug(
+          `assignment sweep skipped ${skipped} session(s) older than ${this.maxSessionAgeMs}ms (explicit retry still works)`,
+        );
+      }
+
       const sessions = await this.prisma.session.findMany({
         where: {
-          status: SessionStatus.PENDING,
-          Broadcasts: {
-            some: {
-              status: BroadcastStatus.SCHEDULED,
-              isComplete: false,
-            },
-          },
+          ...stalled,
+          createdAt: { gte: cutoff },
         },
         include: { Transport: true },
         orderBy: { createdAt: 'asc' },

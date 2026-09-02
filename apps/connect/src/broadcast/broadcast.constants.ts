@@ -54,6 +54,21 @@ export const BROADCAST_CONSTANTS = {
    */
   DEFAULT_CLAIM_TTL_MS: 600000, // 10 minutes
 
+  /**
+   * How old an in-progress session may get before the automatic assignment
+   * sweep stops picking it up. Dialling someone about a long-stale broadcast is
+   * worse than not dialling at all.
+   *
+   * This gates the 60s sweep ONLY. An explicit retry via
+   * `GET /sessions/:cuid/trigger` still assigns and dials at any age, because
+   * it calls ensureAssignment directly rather than waiting for the sweep.
+   *
+   * The sweep is also the only thing that revives a session after every worker
+   * was busy or the fleet went down, so keep this comfortably above the longest
+   * outage you expect to recover from.
+   */
+  DEFAULT_MAX_SESSION_AGE_MS: 86400000, // 24 hours
+
   /** How often the reclaim sweeper scans for stale claims and stalled sessions. */
   RECLAIM_WORKER_INTERVAL_MS: 60000, // 60 seconds
 
