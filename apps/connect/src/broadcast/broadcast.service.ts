@@ -133,6 +133,8 @@ export class BroadcastService {
         dto.maxAttempts,
       );
 
+      sessionData.webhook = this._resolveWebhook(transport, dto.webhook);
+
       sessionData.options = this.twilioBatchingService.enrichSessionOptions(
         (sessionData.options as Record<string, any>) ?? {},
         transport,
@@ -348,6 +350,8 @@ export class BroadcastService {
           data: {
             status: BroadcastStatus.FAIL,
             isComplete: true,
+            attempts: { increment: 1 },
+            lastAttempt: new Date(),
             disposition: {
               error: 'Invalid phone number.',
               code: 'INVALID_PHONE',
@@ -391,6 +395,8 @@ export class BroadcastService {
         transportQueue,
         sessionCuid,
       });
+
+      this.eventEmitter.emit('broadcast.session.executed', sessionCuid);
     }
   }
 
@@ -506,6 +512,12 @@ export class BroadcastService {
     return false;
   }
 
+  private _resolveWebhook(transport: Transport, dtoWebhook?: string) {
+    const configured = (transport?.config as any)?.meta?.webhook;
+    const resolved = dtoWebhook?.trim() || configured?.trim?.();
+    return resolved || null;
+  }
+
   private _enforceMaxAttempts(transportType, dtoMaxAttempts) {
     switch (transportType) {
       case TransportType.ECHO:
@@ -554,6 +566,17 @@ export class BroadcastService {
 
     const broadcastIds = broadcastQueueData.map((b) => b.broadcastId);
 
+    await this.prisma.broadcast.updateMany({
+      where: {
+        cuid: { in: broadcastIds },
+      },
+      data: {
+        status: BroadcastStatus.PENDING,
+        attempts: { increment: 1 },
+        lastAttempt: new Date(),
+      },
+    });
+
     await this.prisma.broadcastLog.createMany({
       data: broadcastQueueData.map((broadcast) => {
         return {
@@ -565,20 +588,6 @@ export class BroadcastService {
           attempt: broadcast.attempt,
         };
       }),
-    });
-
-    await this.prisma.broadcast.updateMany({
-      where: {
-        cuid: {
-          in: broadcastIds,
-        },
-      },
-      data: {
-        status: BroadcastStatus.PENDING,
-        attempts: {
-          increment: 1,
-        },
-      },
     });
 
     await this.broadcastQueue.broadcast(queueTransport, {

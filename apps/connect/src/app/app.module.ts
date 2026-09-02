@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { LogStreamModule } from '@rsconnect/log-stream';
 import { QueueModule } from '@rsconnect/queue';
 import {
   AmqpModule,
@@ -31,6 +32,7 @@ import { WebhookModule } from '../webhook/webhook.module';
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot(),
     RumsanAppModule,
+    LogStreamModule,
     PrismaModule,
     SessionModule,
     TransportModule,
