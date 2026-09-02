@@ -12,7 +12,6 @@ bruno
 docs
 apps
 libs
-prisma/migrations
 .env
 .env.*
 !.env.example
