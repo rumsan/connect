@@ -43,6 +43,49 @@ export const BROADCAST_CONSTANTS = {
   DEFAULT_SCHEDULER_PROCESSING_KEY: 'connect:broadcast:schedule:processing',
 
   DEFAULT_BROADCAST_PRICE_UPDATE_WINDOW_MILLISECONDS: 3600000, // 1 hour
+
+  /**
+   * How long a broadcast may sit claimed by a worker before the reclaim sweeper
+   * assumes the worker died and hands it back.
+   *
+   * Must stay well above the worker-side BATCH_TTL_MS (120s) so a live worker's
+   * own reaper gets the first chance to report a real call failure — this only
+   * exists for workers that are gone and can no longer report anything.
+   */
+  DEFAULT_CLAIM_TTL_MS: 600000, // 10 minutes
+
+  /**
+   * How old an in-progress session may get before the automatic assignment
+   * sweep stops picking it up. Dialling someone about a long-stale broadcast is
+   * worse than not dialling at all.
+   *
+   * This gates the 60s sweep ONLY. An explicit retry via
+   * `GET /sessions/:cuid/trigger` still assigns and dials at any age, because
+   * it calls ensureAssignment directly rather than waiting for the sweep.
+   *
+   * The sweep is also the only thing that revives a session after every worker
+   * was busy or the fleet went down, so keep this comfortably above the longest
+   * outage you expect to recover from.
+   */
+  DEFAULT_MAX_SESSION_AGE_MS: 86400000, // 24 hours
+
+  /** How often the reclaim sweeper scans for stale claims and stalled sessions. */
+  RECLAIM_WORKER_INTERVAL_MS: 60000, // 60 seconds
+
+  /** Max in-progress sessions examined per assignment sweep. */
+  RECLAIM_SESSION_SCAN_LIMIT: 100,
+
+  /**
+   * Minimum overflow before a further worker is woken for a session. Preparing
+   * a worker costs an audio upload plus its readiness wait, so it is not worth
+   * doing for a couple of addresses.
+   */
+  DEFAULT_SPILLOVER_MIN: 1,
+
+  /**
+   * A worker is considered gone after this many missed heartbeats.
+   */
+  WORKER_STALE_HEARTBEATS: 3,
 } as const;
 
 /**
