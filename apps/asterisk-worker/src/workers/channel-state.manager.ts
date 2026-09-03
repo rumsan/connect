@@ -21,9 +21,17 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
   // still read them.
   private playbackSnapshots = new Map<
     string,
-    PlaybackStatus & { dtmfSequence: string[]; isIvr: boolean; snapshotAt: number }
+    PlaybackStatus & {
+      dtmfSequence: string[];
+      ivrSelections: string[];
+      isIvr: boolean;
+      snapshotAt: number;
+    }
   >();
   private readonly snapshotRetentionMs = 60_000;
+  // Serializes DTMF handling per channel. Two keypresses arriving back to back
+  // would otherwise both read the same menuPath and descend from it twice.
+  private dtmfChains = new Map<string, Promise<void>>();
   private drainCallback: (() => void) | null = null;
   private reaperTimer: NodeJS.Timeout | null = null;
   private readonly channelTtlMs =
@@ -91,6 +99,8 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       playbackFailed: false,
       playbackError: undefined,
       dtmfSequence: [],
+      menuPath: [],
+      ivrSelections: [],
       createdAt: now,
       lastActivityAt: now,
     };
@@ -152,6 +162,50 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `DTMF '${digit}' recorded for channel ${channelId} (sequence: [${s.dtmfSequence.join(',')}])`,
     );
+  }
+
+  /** Menu the caller is currently on. `[]` = main. */
+  getMenuPath(channelId: string): number[] {
+    const s = this.channelStates.get(channelId);
+    return s ? [...s.menuPath] : [];
+  }
+
+  setMenuPath(channelId: string, path: number[]) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.menuPath = [...path];
+    s.lastActivityAt = Date.now();
+  }
+
+  /** Records the dotted label of a node the caller selected, e.g. '1.2'. */
+  recordSelection(channelId: string, label: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.ivrSelections.push(label);
+    s.lastActivityAt = Date.now();
+  }
+
+  getIvrSelections(channelId: string): string[] {
+    const s = this.channelStates.get(channelId);
+    if (s) return [...s.ivrSelections];
+    const snap = this.playbackSnapshots.get(channelId);
+    if (snap) return [...snap.ivrSelections];
+    return [];
+  }
+
+  /**
+   * Runs `fn` after any DTMF handling already in flight for this channel, so
+   * navigation state is read and written in keypress order.
+   */
+  enqueueDtmf(channelId: string, fn: () => Promise<void>): Promise<void> {
+    const previous = this.dtmfChains.get(channelId) ?? Promise.resolve();
+    const next = previous.then(fn).catch((err) => {
+      this.logger.error(
+        `DTMF handling failed for channel ${channelId}: ${(err as Error).message}`,
+      );
+    });
+    this.dtmfChains.set(channelId, next);
+    return next;
   }
 
   isIvrChannel(channelId: string): boolean {
@@ -305,9 +359,12 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       playbackFailed: channelState.playbackFailed,
       playbackError: channelState.playbackError,
       dtmfSequence: [...channelState.dtmfSequence],
+      ivrSelections: [...channelState.ivrSelections],
       isIvr: !!channelState.ivrDialPlan,
       snapshotAt: Date.now(),
     });
+
+    this.dtmfChains.delete(channelId);
 
     // Mark inactive first to prevent new operations
     channelState.isActive = false;
