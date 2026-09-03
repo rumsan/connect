@@ -16,6 +16,7 @@
     "strictPropertyInitialization": false,
     "baseUrl": ".",
     "paths": {
+      "@rsconnect/log-stream": ["libs/log-stream/src/index.ts"],
       "@rsconnect/queue": ["libs/queue/src/index.ts"],
       "@rsconnect/templates": ["libs/templates/src/index.ts"],
       "@rsconnect/templates/*": ["libs/templates/src/*"],

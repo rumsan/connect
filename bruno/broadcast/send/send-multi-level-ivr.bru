@@ -1,0 +1,55 @@
+meta {
+  name: send-multi-level-ivr
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-voice}}",
+    "message": {
+    // "content": "https://lime-voluntary-lizard-659.mypinata.cloud/ipfs/bafybeiaay3cpmbomiskvooz4mtwlbs2o55hvyyc6h5pbsij4nj3nlaentq",
+      "content":"https://silver-effective-earwig-845.mypinata.cloud/ipfs/bafkreiepgber4kj4qzyvkhqqxcyiqe44rofp6egcqr4cdkai7tszeptpti",
+      "meta": {
+        "type": "new-ivr"
+      }
+    },
+    // "9801298036",
+    // "9807249428"
+    // 
+    // "9841602388",
+    // "9746472527",
+    // "9707803471"
+    "addresses": [
+  "9841602388"
+    ],
+    "maxAttempts": 2,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "xref":"test-1",
+    "options": {
+      "scheduledTime": "2h",
+      "allowedTimeFrame": "09:00-18:00",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setEnvVar("session-id", data.cuid);
+    bru.setEnvVar("xref",data.xref);
+  }
+}

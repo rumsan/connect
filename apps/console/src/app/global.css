@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Data-Dense Dashboard theme.
+ * Primary #2563EB, success #059669 — expressed as HSL channels so Tailwind's
+ * `hsl(var(--x))` colour functions and opacity modifiers work.
+ */
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 214 32% 95%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 214 32% 95%;
+    --muted-foreground: 215 19% 42%;
+
+    --accent: 214 32% 95%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 160 94% 30%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 32 95% 44%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 88%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.625rem;
+
+    /*
+     * Chart tokens. Categorical slots 1–2 validated against this surface
+     * (#ffffff) with scripts/validate_palette.js — all six checks pass in both
+     * modes. Green/red was rejected for outcome series: deutan ΔE 4.1.
+     */
+    --viz-surface: #ffffff;
+    --viz-grid: #e1e0d9;
+    --viz-axis: #c3c2b7;
+    --viz-muted: #898781;
+    --viz-1: #2a78d6;
+    --viz-2: #eb6834;
+  }
+
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 213 31% 94%;
+
+    --card: 222 40% 10%;
+    --card-foreground: 213 31% 94%;
+
+    --popover: 222 40% 10%;
+    --popover-foreground: 213 31% 94%;
+
+    /* Lighter tonal variant rather than an inversion — checked for contrast
+       against the dark surface separately. */
+    --primary: 213 94% 68%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 213 31% 94%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 68%;
+
+    --accent: 217 33% 17%;
+    --accent-foreground: 213 31% 94%;
+
+    --destructive: 0 84% 70%;
+    --destructive-foreground: 222 47% 11%;
+
+    --success: 158 64% 52%;
+    --success-foreground: 222 47% 11%;
+
+    --warning: 38 92% 56%;
+    --warning-foreground: 222 47% 11%;
+
+    --border: 217 33% 20%;
+    --input: 217 33% 24%;
+    --ring: 213 94% 68%;
+
+    /* Same hues re-stepped for the dark surface (#0f1524), re-validated —
+       not an automatic flip of the light values. */
+    --viz-surface: #0f1524;
+    --viz-grid: #2c2c2a;
+    --viz-axis: #383835;
+    --viz-muted: #898781;
+    --viz-1: #3987e5;
+    --viz-2: #d95926;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  /* Metrics align digit-for-digit so table columns don't jitter as data loads. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Honour the OS "reduce motion" setting: keep state changes, drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

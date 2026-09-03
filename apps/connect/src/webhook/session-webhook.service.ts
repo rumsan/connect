@@ -28,7 +28,10 @@ export class SessionWebhookService {
     private readonly queue: Queue<SessionWebhookJobData>,
   ) {}
 
-  @OnEvent('broadcast.session.executed')
+  // Fires when every broadcast has reached a terminal state, not when the last
+  // batch was handed out. Under multi-worker voice the hand-out point is
+  // per-worker, so it would POST while other workers were still dialling.
+  @OnEvent('broadcast.session.completed')
   async handleSessionExecuted(sessionCuid: string) {
     await this.enqueue(sessionCuid, 'executed');
   }
