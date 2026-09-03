@@ -54,3 +54,6 @@ dev.ts
 .npmrc
 .data
 
+# Next.js
+.next
+out
