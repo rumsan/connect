@@ -9,6 +9,7 @@ import {
   SESSION_WEBHOOK_JOB,
   SESSION_WEBHOOK_QUEUE,
   SessionWebhookJobData,
+  SessionWebhookPhase,
 } from './session-webhook.queue';
 
 // Thrown when retrying cannot possibly help — a bad URL, or a 4xx saying the
@@ -32,6 +33,15 @@ export class SessionWebhookService {
   // per-worker, so it would POST while other workers were still dialling.
   @OnEvent('broadcast.session.completed')
   async handleSessionExecuted(sessionCuid: string) {
+    await this.enqueue(sessionCuid, 'executed');
+  }
+
+  @OnEvent('broadcast.session.completed')
+  async handleSessionSettled(sessionCuid: string) {
+    await this.enqueue(sessionCuid, 'settled');
+  }
+
+  private async enqueue(sessionCuid: string, phase: SessionWebhookPhase) {
     // Opt-out switch — no redeploy needed to stop calling out.
     if (process.env['SESSION_WEBHOOK_ENABLED'] === 'false') return;
 
@@ -46,11 +56,12 @@ export class SessionWebhookService {
 
       await this.queue.add(
         SESSION_WEBHOOK_JOB,
-        { sessionCuid },
+        { sessionCuid, phase },
         {
           // Bull refuses a second job with an id it already holds, so a
-          // duplicate event cannot become a duplicate POST.
-          jobId: sessionCuid,
+          // duplicate event cannot become a duplicate POST. The phase belongs
+          // in the id: the two phases are two deliveries, not a repeat of one.
+          jobId: `${sessionCuid}:${phase}`,
           attempts: 3,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: 100,
@@ -58,15 +69,15 @@ export class SessionWebhookService {
         },
       );
 
-      this.logger.log(`Queued completion webhook for session ${sessionCuid}`);
+      this.logger.log(`Queued ${phase} webhook for session ${sessionCuid}`);
     } catch (error) {
       this.logger.error(
-        `Failed to queue completion webhook for session ${sessionCuid}: ${error.message}`,
+        `Failed to queue ${phase} webhook for session ${sessionCuid}: ${error.message}`,
       );
     }
   }
 
-  async deliver(sessionCuid: string) {
+  async deliver(sessionCuid: string, phase: SessionWebhookPhase = 'executed') {
     const session = await this.prisma.session.findUnique({
       where: { cuid: sessionCuid },
       include: {
@@ -81,7 +92,7 @@ export class SessionWebhookService {
     }
 
     const url = this.parseSafeWebhookUrl(session.webhook);
-    const payload = await this.buildPayload(session);
+    const payload = await this.buildPayload(session, phase);
     const body = JSON.stringify(payload);
     const timestamp = Date.now().toString();
 
@@ -110,9 +121,9 @@ export class SessionWebhookService {
 
     if (status >= 200 && status < 300) {
       this.logger.log(
-        `Completion webhook for session ${sessionCuid} accepted (${status})`,
+        `${phase} webhook for session ${sessionCuid} accepted (${status})`,
       );
-      return { sessionCuid, status };
+      return { sessionCuid, phase, status };
     }
 
     // 408 and 429 are the receiver asking us to come back; every other 4xx is
@@ -126,15 +137,18 @@ export class SessionWebhookService {
     throw new Error(`Webhook for session ${sessionCuid} failed with ${status}`);
   }
 
-  private async buildPayload(session: {
-    cuid: string;
-    app: string;
-    xref: string | null;
-    status: string;
-    totalAddresses: number;
-    updatedAt: Date | null;
-    Transport: { cuid: string; name: string; type: string };
-  }) {
+  private async buildPayload(
+    session: {
+      cuid: string;
+      app: string;
+      xref: string | null;
+      status: string;
+      totalAddresses: number;
+      updatedAt: Date | null;
+      Transport: { cuid: string; name: string; type: string };
+    },
+    phase: SessionWebhookPhase,
+  ) {
     const grouped = await this.prisma.broadcast.groupBy({
       by: ['status'],
       where: { session: session.cuid },
@@ -148,6 +162,7 @@ export class SessionWebhookService {
 
     return {
       event: 'session.completed',
+      phase,
       sessionCuid: session.cuid,
       app: session.app,
       xref: session.xref,

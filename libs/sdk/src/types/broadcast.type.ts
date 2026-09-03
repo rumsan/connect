@@ -79,5 +79,7 @@ export type BroadcastCountsResponse = {
   };
 };
 
-export type BroadcastCount = Record<BroadcastStatus | 'TOTAL', number>;
-
+export type BroadcastCount = Record<
+  BroadcastStatus | 'TOTAL' | 'TOTAL_PRICE',
+  number
+>;
