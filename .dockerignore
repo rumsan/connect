@@ -10,8 +10,6 @@ logs
 play
 bruno
 docs
-# apps
-# libs
 .env
 .env.*
 !.env.example
