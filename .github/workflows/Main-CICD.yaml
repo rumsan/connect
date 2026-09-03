@@ -30,11 +30,13 @@ jobs:
           node-version: 20.10.0
 
       - name: install dependencies and build apps
+        env:
+          NX_NO_CLOUD: true
         run: |
           npm install -g pnpm@10.12.1
           pnpm install --frozen-lockfile
           pnpm prisma:generate
-          pnpm build:all --nx-cloud=false
+          pnpm build:all
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

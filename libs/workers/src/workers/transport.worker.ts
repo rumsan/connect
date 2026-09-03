@@ -1,6 +1,7 @@
 import { Inject, OnModuleInit, Optional } from '@nestjs/common';
 import { BatchManger, BroadcastLogQueue, TransportQueue } from '@rsconnect/queue';
 import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
+import { ISessionGate, SessionGate } from './session-gate';
 import {
   Broadcast,
   BroadcastJobData,
@@ -18,6 +19,7 @@ export abstract class TransportWorker implements OnModuleInit {
   /** Queue this instance consumes. May be worker-specific. */
   abstract queueTransport: QUEUES;
   protected batchManager: BatchManger;
+  protected sessionGate: ISessionGate = new SessionGate();
 
   /**
    * Transport identity recorded on broadcast logs. Workers that consume a
@@ -69,9 +71,20 @@ export abstract class TransportWorker implements OnModuleInit {
 
               if (job.action === QUEUE_ACTIONS.BROADCAST) {
                 console.log('Received broadcast job:', job);
-                this._sendBroadcast(job.data as QueueBroadcastJobData).catch(
-                  (err) => console.error('_sendBroadcast failed:', err),
+                const broadcastData = job.data as QueueBroadcastJobData;
+                this.sessionGate
+                  .enqueue(broadcastData.sessionId, () =>
+                    this._sendBroadcast(broadcastData),
+                  )
+                  .catch((err) => console.error('_sendBroadcast failed:', err));
+              }
+
+              if (job.action === QUEUE_ACTIONS.SESSION_COMPLETE) {
+                const data = job.data as { sessionCuid: string };
+                console.log(
+                  `Received SESSION_COMPLETE for session: ${data.sessionCuid}`,
                 );
+                this.sessionGate.completeSession(data.sessionCuid);
               }
 
               channel.ack(message);
