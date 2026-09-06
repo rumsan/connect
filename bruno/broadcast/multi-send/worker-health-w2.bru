@@ -1,0 +1,20 @@
+meta {
+  name: worker-health-w2
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{worker2-url}}/health
+  body: none
+  auth: none
+}
+
+docs {
+  # Worker 2 health
+
+  Same shape as worker 1. During the no-split test this worker's
+  `activeSession` must stay null — proof it was never woken.
+
+  Set `worker2-url` in the environment, e.g. http://localhost:5654/api
+}

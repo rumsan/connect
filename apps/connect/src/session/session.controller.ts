@@ -86,10 +86,18 @@ export class SessionController {
     summary:
       'Get the count of broadcasts grouped by status for multiple sessions',
   })
-  async getBroadcastCountByStatuses(@Body('sessions') sessions: string[]) {
+  async getBroadcastCountByStatuses(
+    @Body()
+    body: { sessions: string[]; startDate?: string; endDate?: string },
+  ) {
+    const { sessions, startDate, endDate } = body ?? {};
     if (!Array.isArray(sessions)) {
       throw new Error('sessionCuids must be an array of strings');
     }
-    return this.sessionService.getBroadcastCountByStatuses(sessions);
+    return this.sessionService.getBroadcastCountByStatuses(
+      sessions,
+      startDate,
+      endDate,
+    );
   }
 }

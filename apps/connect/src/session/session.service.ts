@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BroadcastLog, Session } from '@prisma/client';
+import { BroadcastLog, Prisma, Session } from '@prisma/client';
 import { BroadcastStatus, TransportType } from '@rumsan/connect/types';
 import { paginator, PaginatorTypes, PrismaService } from '@rumsan/prisma';
 import { BroadcastService } from '../broadcast/broadcast.service';
@@ -132,6 +132,22 @@ export class SessionService {
           app: appId,
           session: { in: sessionCuids },
           ...(dto.status ? { status: dto.status } : {}),
+          ...(dto.address
+            ? {
+                address: {
+                  contains: dto.address,
+                  mode: 'insensitive',
+                },
+              }
+            : {}),
+          ...(dto.startDate && dto.endDate
+            ? {
+                createdAt: {
+                  gte: new Date(dto.startDate),
+                  lte: new Date(dto.endDate),
+                },
+              }
+            : {}),
         },
         orderBy,
       },
@@ -165,7 +181,9 @@ export class SessionService {
 
   async getBroadcastCountByStatuses(
     sessionCuids: string[],
-  ): Promise<Record<BroadcastStatus | 'TOTAL', number>> {
+    startDate?: string,
+    endDate?: string,
+  ): Promise<Record<BroadcastStatus | 'TOTAL' | 'TOTAL_PRICE', number>> {
     this.logger.log(
       `Getting broadcast counts for sessions: ${sessionCuids.join(', ')}`,
     );
@@ -173,18 +191,27 @@ export class SessionService {
       by: ['status'],
       where: {
         session: { in: sessionCuids },
+        ...(startDate && endDate
+          ? {
+              createdAt: {
+                gte: new Date(startDate),
+                lte: new Date(endDate),
+              },
+            }
+          : {}),
       },
       _count: {
         status: true,
       },
     });
 
-    const result: Record<BroadcastStatus | 'TOTAL', number> = {
+    const result: Record<BroadcastStatus | 'TOTAL' | 'TOTAL_PRICE', number> = {
       SCHEDULED: 0,
       PENDING: 0,
       SUCCESS: 0,
       FAIL: 0,
       TOTAL: 0,
+      TOTAL_PRICE: 0,
     };
 
     // Update counts with actual data from database
@@ -193,6 +220,39 @@ export class SessionService {
       result['TOTAL'] += item._count.status;
     });
 
+    result['TOTAL_PRICE'] = await this.getBroadcastPriceSum(
+      sessionCuids,
+      startDate,
+      endDate,
+    );
+
     return result;
+  }
+
+  private async getBroadcastPriceSum(
+    sessionCuids: string[],
+    startDate?: string,
+    endDate?: string,
+  ): Promise<number> {
+    if (!sessionCuids.length) return 0;
+
+    const dateFilter =
+      startDate && endDate
+        ? Prisma.sql`AND b."createdAt" >= ${new Date(
+            startDate,
+          )} AND b."createdAt" <= ${new Date(endDate)}`
+        : Prisma.empty;
+
+    const rows = await this.prisma.$queryRaw<{ total: number | null }[]>(
+      Prisma.sql`
+        SELECT COALESCE(SUM(ABS((b.disposition->>'price')::numeric)), 0)::float8 AS total
+        FROM "tbl_broadcasts" b
+        WHERE b.session IN (${Prisma.join(sessionCuids)})
+          AND b.disposition->>'price' ~ '^-?[0-9]+([.][0-9]+)?$'
+          ${dateFilter}
+      `,
+    );
+
+    return Number(rows?.[0]?.total ?? 0);
   }
 }

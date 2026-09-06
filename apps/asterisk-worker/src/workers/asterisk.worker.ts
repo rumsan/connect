@@ -1,12 +1,24 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/sequelize';
 import {
   BatchManger,
   BroadcastLogQueue,
   TransportQueue,
+  WORKER_HEARTBEAT_MS,
+  WORKER_ID,
+  WORKER_PRIORITY,
 } from '@rsconnect/queue';
 import { IDataProvider, TransportWorker } from '@rsconnect/workers';
-import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
+import {
+  controlRoutingKey,
+  EXCHANGES,
+  QUEUE_ACTIONS,
+  QUEUES,
+  TRANSPORT_SLUG,
+  workerQueueName,
+  workerRoutingKey,
+} from '@rumsan/connect';
 import {
   Broadcast,
   BroadcastJobData,
@@ -26,9 +38,29 @@ import { AudioService } from './audio.service';
 import { IVRService } from './ivr.service';
 import { SessionGate } from './session-gate';
 
+/**
+ * Queue this instance consumes. With WORKER_ID set each worker owns a private
+ * queue bound to the transport exchange, so connect can address a batch to one
+ * specific Asterisk box. Without it we fall back to the shared voice queue,
+ * which keeps a single-worker deployment (and a rolling upgrade) working.
+ */
+const VOICE_QUEUE = WORKER_ID
+  ? (workerQueueName(TRANSPORT_SLUG.VOICE, WORKER_ID) as QUEUES)
+  : QUEUES.TRANSPORT_VOICE;
+
+// A decommissioned worker's queue would otherwise accumulate messages forever.
+// Only applies while nothing is consuming, so a live worker is never affected.
+const QUEUE_IDLE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class AsteriskWorker extends TransportWorker {
-  queueTransport: QUEUES = QUEUES.TRANSPORT_VOICE;
+  queueTransport: QUEUES = VOICE_QUEUE;
+
+  /** Logs name the transport, not this instance's private queue. */
+  protected override get transportQueueId(): QUEUES {
+    return QUEUES.TRANSPORT_VOICE;
+  }
+
   private readonly logger = new Logger(AsteriskWorker.name);
 
   constructor(
@@ -45,9 +77,9 @@ export class AsteriskWorker extends TransportWorker {
     private readonly broadcastLogQueue: BroadcastLogQueue,
     override readonly batchManager: BatchManger,
     private readonly ivrService: IVRService,
-    private readonly sessionGate: SessionGate,
+    override readonly sessionGate: SessionGate,
   ) {
-    super(dataProvider, channel, transportQueue);
+    super(dataProvider, channel, transportQueue, batchManager, broadcastLogQueue);
   }
 
   public override async onModuleInit() {
@@ -92,9 +124,109 @@ export class AsteriskWorker extends TransportWorker {
           {},
         );
       });
+      this.logger.log(
+        `Voice worker ${WORKER_ID ?? '(shared queue)'} consuming ${
+          this.queueTransport
+        } (priority=${WORKER_PRIORITY}, capacity=${this.batchManager.batchSize})`,
+      );
+
+      // Queue + bindings are asserted and the channel is connected by now, so
+      // the publish won't hit sendHeartbeat's 1s timeout.
+      await this.announceOnStartup();
     } catch (err) {
       this.logger.error('Error starting the consumer:', err);
     }
+  }
+
+  /**
+   * Declares this worker's private queue and binds it to the transport
+   * exchange: one key for batches addressed to us, one for fleet-wide control
+   * messages.
+   */
+  override async assertQueue(channel: ConfirmChannel) {
+    await channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
+
+    if (!WORKER_ID) {
+      await channel.assertQueue(this.queueTransport, { durable: true });
+      return;
+    }
+
+    await channel.assertExchange(EXCHANGES.TRANSPORT, 'topic', {
+      durable: true,
+    });
+    await channel.assertQueue(this.queueTransport, {
+      durable: true,
+      arguments: { 'x-expires': QUEUE_IDLE_EXPIRY_MS },
+    });
+    await channel.bindQueue(
+      this.queueTransport,
+      EXCHANGES.TRANSPORT,
+      workerRoutingKey(TRANSPORT_SLUG.VOICE, WORKER_ID),
+    );
+    await channel.bindQueue(
+      this.queueTransport,
+      EXCHANGES.TRANSPORT,
+      controlRoutingKey(TRANSPORT_SLUG.VOICE),
+    );
+  }
+
+  /**
+   * Connect builds its worker roster from these — there is no registration
+   * step, so a worker that stops heartbeating simply stops being assigned work.
+   */
+  @Interval(WORKER_HEARTBEAT_MS)
+  async sendHeartbeat() {
+    if (!WORKER_ID) return false;
+    return await this.transportQueue.sendHeartbeat({
+      workerId: WORKER_ID,
+      transport: TRANSPORT_SLUG.VOICE,
+      priority: WORKER_PRIORITY,
+      capacity: this.batchManager.batchSize,
+      activeSessionCuid: this.sessionGate.activeSession,
+      inFlight: this.batchManager.processingBroadcasts.size,
+    });
+  }
+
+  /**
+   * Announce once at boot. @Interval does not fire until a full period has
+   * elapsed, so without this a fresh worker is missing from connect's roster —
+   * and therefore unassignable — for WORKER_HEARTBEAT_MS. Retries briefly
+   * because a heartbeat publish carries a 1s timeout and the broker may still
+   * be settling.
+   */
+  private async announceOnStartup(attempt = 1): Promise<void> {
+    const MAX_ATTEMPTS = 3;
+    if (!WORKER_ID) return;
+
+    if (await this.sendHeartbeat()) {
+      this.logger.log(
+        `Registered with connect: ${WORKER_ID} (priority=${WORKER_PRIORITY}, capacity=${this.batchManager.batchSize})`,
+      );
+      return;
+    }
+
+    if (attempt >= MAX_ATTEMPTS) {
+      this.logger.warn(
+        `Startup heartbeat failed after ${MAX_ATTEMPTS} attempts — registering on the next interval (${WORKER_HEARTBEAT_MS}ms)`,
+      );
+      return;
+    }
+
+    await wait(1000);
+    return this.announceOnStartup(attempt + 1);
+  }
+
+  /** Snapshot for the health endpoint. */
+  get status() {
+    return {
+      workerId: WORKER_ID ?? null,
+      priority: WORKER_PRIORITY,
+      capacity: this.batchManager.batchSize,
+      queue: this.queueTransport,
+      activeSession: this.sessionGate.activeSession,
+      pendingSessions: this.sessionGate.pendingCount,
+      inFlight: this.batchManager.processingBroadcasts.size,
+    };
   }
 
   async sendBroadcast(data: {

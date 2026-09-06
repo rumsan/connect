@@ -24,20 +24,30 @@ import { InjectQueue } from '@nestjs/bull';
 import { TwilioBatchingService } from '@rsconnect/transports';
 import { PaginatorTypes, PrismaService, paginator } from '@rumsan/prisma';
 import { Queue } from 'bull';
+import { SessionTimingService } from '../session/session-timing.service';
 import {
   dev_NewBatchAlert,
   dev_SessionAttemptComplete,
   dev_SessionCompletionAlert,
 } from '../utils/dev.alert';
-import { SessionTimingService } from '../session/session-timing.service';
 import { TransportStatsRaw } from '../utils/types/report';
 import { BroadcastValidationService } from './broadcast-validation.service';
 import { BROADCAST_CONSTANTS } from './broadcast.constants';
 import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
 import { ReportWhereClause } from './dto/report.dto';
 import { RedisZsetSchedulerService } from './redis-zset-scheduler.service';
+import { SessionAssignmentService } from './session-assignment.service';
 
 const paginate: PaginatorTypes.PaginateFunction = paginator({ perPage: 20 });
+
+/**
+ * Cap on consecutive re-claims when every claimed row turns out to be invalid,
+ * so a session of nothing but bad addresses cannot spin.
+ */
+const MAX_SEND_RECURSION = 5;
+
+/** What the claim statement returns — everything needed to dispatch a batch. */
+type ClaimedBroadcast = Pick<Broadcast, 'cuid' | 'address' | 'attempts'>;
 
 @Injectable()
 export class BroadcastService {
@@ -52,6 +62,7 @@ export class BroadcastService {
     private readonly broadcastValidationService: BroadcastValidationService,
     private readonly eventEmitter: EventEmitter2,
     private readonly twilioBatchingService: TwilioBatchingService,
+    private readonly sessionAssignment: SessionAssignmentService,
     private readonly sessionTiming: SessionTimingService,
   ) {}
 
@@ -132,6 +143,8 @@ export class BroadcastService {
         transport.type,
         dto.maxAttempts,
       );
+
+      sessionData.webhook = this._resolveWebhook(transport, dto.webhook);
 
       sessionData.options = this.twilioBatchingService.enrichSessionOptions(
         (sessionData.options as Record<string, any>) ?? {},
@@ -252,10 +265,36 @@ export class BroadcastService {
     transportType: TransportType,
   ) {
     try {
-      const ok = await this.transportQueue.checkReadiness({
-        transportToCheck: this._getQueueName(transportType),
-        sessionCuid: sessionCuid,
-      });
+      // Multi-worker transports pick their workers by capacity and address the
+      // readiness check to each; only those workers prepare audio. Everything
+      // else keeps the single shared queue.
+      let ok: boolean;
+      if (this.sessionAssignment.isMultiWorker(transportType)) {
+        const assigned = await this.sessionAssignment.ensureAssignment(
+          sessionCuid,
+          transportType,
+        );
+        // The session is under way even if every worker happened to be busy;
+        // BroadcastReclaimWorker retries assignment until one frees up. Leaving
+        // it NEW would strand it, since nothing else revisits a NEW session.
+        //
+        // An empty result is not necessarily "no worker free" — it also covers
+        // nothing left to schedule, existing workers having enough headroom,
+        // and spillover-min declining to wake another box. SessionAssignment
+        // logs the actual reason, so don't guess at one here.
+        if (assigned.length === 0) {
+          this.logger.debug(
+            `No new worker assigned to session ${sessionCuid}; see SessionAssignment for why`,
+          );
+        }
+        ok = true;
+      } else {
+        ok = !!(await this.transportQueue.checkReadiness({
+          transportToCheck: this._getQueueName(transportType),
+          sessionCuid: sessionCuid,
+        }));
+      }
+
       if (ok) {
         await this.prisma.session.update({
           where: { cuid: sessionCuid },
@@ -270,8 +309,62 @@ export class BroadcastService {
     }
   }
 
-  async sendBroadcasts(sessionCuid: string, batchSize = 0) {
-    this.logger.log('Sending broadcasts for session:', sessionCuid);
+  /**
+   * Take ownership of up to `batchSize` scheduled broadcasts for one worker.
+   *
+   * SKIP LOCKED is the safety boundary of the whole multi-worker design: two
+   * workers confirming readiness at the same moment run this concurrently and
+   * are guaranteed disjoint rows, so an address can never be dialled twice.
+   * Selecting and then updating in separate statements — as this used to —
+   * hands both workers the same rows.
+   */
+  private async _claimBroadcasts(
+    sessionCuid: string,
+    workerId: string | null,
+    batchSize: number,
+  ): Promise<ClaimedBroadcast[]> {
+    const limit = batchSize > 0 ? Prisma.sql`LIMIT ${batchSize}` : Prisma.empty;
+
+    return this.prisma.$queryRaw<ClaimedBroadcast[]>`
+      UPDATE "tbl_broadcasts" b
+         SET "status"      = ${BroadcastStatus.PENDING}::"BroadcastStatus",
+             "attempts"    = b."attempts" + 1,
+             "workerId"    = ${workerId},
+             "claimedAt"   = now(),
+             "lastAttempt" = now(),
+             "updatedAt"   = now()
+       WHERE b."cuid" IN (
+         SELECT "cuid" FROM "tbl_broadcasts"
+          WHERE "session" = ${sessionCuid}
+            AND "status" = ${BroadcastStatus.SCHEDULED}::"BroadcastStatus"
+            AND "isComplete" = false
+          ORDER BY "createdAt" ASC
+          ${limit}
+          FOR UPDATE SKIP LOCKED
+       )
+      RETURNING b."cuid", b."address", b."attempts";
+    `;
+  }
+
+  /**
+   * Hand the next batch of a session to one worker.
+   *
+   * `workerId` identifies the worker that asked for work (it rides along on
+   * READINESS_CONFIRM). When absent — every non-voice transport, and a
+   * pre-upgrade voice worker — the batch goes to the shared transport queue
+   * exactly as before.
+   */
+  async sendBroadcasts(
+    sessionCuid: string,
+    batchSize = 0,
+    workerId?: string,
+    depth = 0,
+  ) {
+    this.logger.log(
+      `Sending broadcasts for session ${sessionCuid}${
+        workerId ? ` to worker ${workerId}` : ''
+      }`,
+    );
     const session = await this.prisma.session.findUnique({
       where: {
         cuid: sessionCuid,
@@ -282,6 +375,8 @@ export class BroadcastService {
     });
     if (!session) return;
 
+    const transportType = session.Transport.type as TransportType;
+
     const batchGuard = await this.twilioBatchingService.applySendGuard(
       sessionCuid,
       (session.options as Record<string, any>) ?? {},
@@ -291,45 +386,43 @@ export class BroadcastService {
     if (batchGuard.halt) return;
     batchSize = batchGuard.batchSize;
 
-    let broadcasts: Broadcast[] = [];
-    if (batchSize > 0) {
-      broadcasts = await this.prisma.broadcast.findMany({
-        where: {
-          status: {
-            in: [BroadcastStatus.SCHEDULED],
-          },
-          session: sessionCuid,
-          isComplete: false,
-        },
-        orderBy: [
-          {
-            status: 'asc',
-          },
-          {
-            createdAt: 'asc',
-          },
-        ],
-        take: batchSize,
-      });
-    } else {
-      broadcasts = await this.prisma.broadcast.findMany({
-        where: {
-          status: {
-            in: [BroadcastStatus.SCHEDULED],
-          },
-          session: sessionCuid,
-          isComplete: false,
-        },
-      });
+    // Claim before validating: ownership has to be settled in one statement,
+    // so anything we then discard is discarded from rows we already own.
+    const claimed = await this._claimBroadcasts(
+      sessionCuid,
+      workerId ?? null,
+      batchSize,
+    );
+
+    if (workerId) {
+      this.sessionAssignment.clearPending(sessionCuid, workerId);
+      this.logger.log(
+        `Worker ${workerId} claimed ${claimed.length} broadcast(s) for session ${sessionCuid}`,
+      );
     }
+
+    if (claimed.length === 0) {
+      // Nothing left for this worker. Other workers may still be finishing
+      // their own claims, so this releases one worker, not the session.
+      dev_SessionAttemptComplete(session.cuid).then().catch();
+
+      await this.transportQueue.notifySessionComplete({
+        transportQueue: this._getQueueName(transportType),
+        sessionCuid,
+        workerId,
+      });
+      return;
+    }
+
+    let broadcasts: ClaimedBroadcast[] = claimed;
 
     const transportCapabilities =
       (session.Transport.config as any)?.meta?.capabilities ?? [];
     // Validate phone numbers for API transport and mark invalids as failed
     if (transportCapabilities.includes('PHONE_NUMBER_VALIDATION')) {
-      const validBroadcasts: Broadcast[] = [];
+      const validBroadcasts: ClaimedBroadcast[] = [];
       const invalidBroadcastIds: string[] = [];
-      const invalidBroadcasts: Broadcast[] = [];
+      const invalidBroadcasts: ClaimedBroadcast[] = [];
       for (const b of broadcasts) {
         // Remove whatsapp: prefix if present
         const phone = b.address.startsWith('whatsapp:')
@@ -348,6 +441,10 @@ export class BroadcastService {
           data: {
             status: BroadcastStatus.FAIL,
             isComplete: true,
+            // attempts/lastAttempt are already set by _claimBroadcasts, which
+            // owns them for the rows it claims. Incrementing again here would
+            // double-count and disagree with the log row written below.
+            lastAttempt: new Date(),
             disposition: {
               error: 'Invalid phone number.',
               code: 'INVALID_PHONE',
@@ -361,7 +458,7 @@ export class BroadcastService {
             session: session.cuid,
             app: session.Transport.app,
             status: BroadcastStatus.FAIL,
-            attempt: b.attempts + 1,
+            attempt: b.attempts,
             details: {
               error: 'Invalid phone number.',
               code: 'INVALID_PHONE',
@@ -372,25 +469,44 @@ export class BroadcastService {
       broadcasts = validBroadcasts;
     }
 
-    if (broadcasts.length > 0) {
-      await this._addToQueue(session as Session, session.Transport, broadcasts);
-      await this.twilioBatchingService.recordQueuedBatch(
-        sessionCuid,
-        (session.options as Record<string, any>) ?? {},
-        broadcasts.length,
-        session.Transport.cuid,
-      );
-      dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
-    } else {
-      dev_SessionAttemptComplete(session.cuid).then().catch();
+    if (broadcasts.length === 0) {
+      // Every row we claimed was unusable. The worker is still free, so go
+      // round again rather than leaving it idle — bounded so a session full of
+      // invalid addresses cannot spin.
+      if (depth >= MAX_SEND_RECURSION) {
+        this.logger.warn(
+          `Stopping after ${depth} consecutive all-invalid batches for session ${sessionCuid}`,
+        );
+        return;
+      }
+      return this.sendBroadcasts(sessionCuid, batchSize, workerId, depth + 1);
+    }
 
-      const transportQueue = this._getQueueName(
-        session.Transport.type as TransportType,
-      );
-      await this.transportQueue.notifySessionComplete({
-        transportQueue,
-        sessionCuid,
-      });
+    await this._addToQueue(
+      session as Session,
+      session.Transport,
+      broadcasts,
+      workerId,
+    );
+    await this.twilioBatchingService.recordQueuedBatch(
+      sessionCuid,
+      (session.options as Record<string, any>) ?? {},
+      broadcasts.length,
+      session.Transport.cuid,
+    );
+    dev_NewBatchAlert(broadcasts.length, session.cuid).then().catch();
+
+    // Handing out work may have exhausted the assigned workers' capacity; if
+    // more is still waiting, bring in the next free worker.
+    if (this.sessionAssignment.isMultiWorker(transportType)) {
+      await this.sessionAssignment
+        .ensureAssignment(sessionCuid, transportType)
+        .catch((err) =>
+          this.logger.error(
+            `ensureAssignment failed for session ${sessionCuid}`,
+            err,
+          ),
+        );
     }
   }
 
@@ -430,6 +546,9 @@ export class BroadcastService {
       },
       data: {
         status: BroadcastStatus.SCHEDULED,
+        // Release ownership so any worker can pick these up again.
+        workerId: null,
+        claimedAt: null,
       },
     });
 
@@ -506,6 +625,12 @@ export class BroadcastService {
     return false;
   }
 
+  private _resolveWebhook(transport: Transport, dtoWebhook?: string) {
+    const configured = (transport?.config as any)?.meta?.webhook;
+    const resolved = dtoWebhook?.trim() || configured?.trim?.();
+    return resolved || null;
+  }
+
   private _enforceMaxAttempts(transportType, dtoMaxAttempts) {
     switch (transportType) {
       case TransportType.ECHO:
@@ -538,7 +663,8 @@ export class BroadcastService {
   private async _addToQueue(
     session: Session,
     transport: Transport,
-    broadcasts: Broadcast[],
+    broadcasts: ClaimedBroadcast[],
+    workerId?: string,
   ) {
     this.logger.log(`Adding broadcasts to queue: sessionId: ${session.cuid}`);
     const queueTransport = this._getQueueName(transport.type as TransportType);
@@ -548,11 +674,10 @@ export class BroadcastService {
         address: broadcast.address,
         broadcastLogId: createId(),
         broadcastId: broadcast.cuid,
-        attempt: broadcast.attempts + 1,
+        // Already incremented by the claim, which owns status and attempts.
+        attempt: broadcast.attempts,
       };
     });
-
-    const broadcastIds = broadcastQueueData.map((b) => b.broadcastId);
 
     await this.prisma.broadcastLog.createMany({
       data: broadcastQueueData.map((broadcast) => {
@@ -567,25 +692,24 @@ export class BroadcastService {
       }),
     });
 
-    await this.prisma.broadcast.updateMany({
-      where: {
-        cuid: {
-          in: broadcastIds,
-        },
-      },
-      data: {
-        status: BroadcastStatus.PENDING,
-        attempts: {
-          increment: 1,
-        },
-      },
-    });
-
-    await this.broadcastQueue.broadcast(queueTransport, {
+    const payload = {
       sessionId: session.cuid,
       transportId: transport.cuid,
       broadcasts: broadcastQueueData,
-    });
+    };
+
+    // These rows are owned by one worker in the DB, so the message must reach
+    // that worker and no other.
+    if (workerId) {
+      await this.broadcastQueue.broadcastToWorker(
+        queueTransport,
+        workerId,
+        payload,
+      );
+      return;
+    }
+
+    await this.broadcastQueue.broadcast(queueTransport, payload);
   }
 
   findAll(

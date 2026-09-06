@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bull';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { LogStreamModule } from '@rsconnect/log-stream';
 import { QueueModule } from '@rsconnect/queue';
 import {
   AmqpModule,
@@ -11,7 +12,7 @@ import {
   SmtpWorkerModule,
 } from '@rsconnect/workers';
 import { RumsanAppModule } from '@rumsan/app';
-import { QUEUES } from '@rumsan/connect';
+import { EXCHANGES, QUEUES } from '@rumsan/connect';
 import { PrismaModule } from '@rumsan/prisma';
 import amqp from 'amqp-connection-manager';
 import { Channel } from 'amqplib';
@@ -31,6 +32,7 @@ import { WebhookModule } from '../webhook/webhook.module';
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot(),
     RumsanAppModule,
+    LogStreamModule,
     PrismaModule,
     SessionModule,
     TransportModule,
@@ -66,11 +68,18 @@ import { WebhookModule } from '../webhook/webhook.module';
       useFactory: (configService: ConfigService) => {
         const connection = amqp.connect(configService.get('AMQP_URL'));
         return connection.createChannel({
-          setup: (channel: Channel) => {
-            channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
-            channel.assertQueue(QUEUES.TRANSPORT_SMTP, { durable: true });
-            channel.assertQueue(QUEUES.TRANSPORT_VOICE, { durable: true });
-            channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
+          setup: async (channel: Channel) => {
+            // Routes batches to one specific worker; workers declare and bind
+            // their own queues to it.
+            await channel.assertExchange(EXCHANGES.TRANSPORT, 'topic', {
+              durable: true,
+            });
+            await channel.assertQueue(QUEUES.TRANSPORT_API, { durable: true });
+            await channel.assertQueue(QUEUES.TRANSPORT_SMTP, { durable: true });
+            await channel.assertQueue(QUEUES.TRANSPORT_VOICE, {
+              durable: true,
+            });
+            await channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
           },
         });
       },

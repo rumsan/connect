@@ -1,0 +1,65 @@
+meta {
+  name: send-voice-nosplit
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+docs {
+  # No-split case
+
+  8 addresses against a primary worker with BATCH_SIZE=10.
+
+  Expected: worker 1 handles the whole session on its own. Worker 2 must log
+  NOTHING — no READINESS_CHECK, no audio download, no SFTP upload.
+
+  Verify with `session-workers.bru`: only one workerId, and it is the priority-1
+  worker.
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-voice}}",
+    "message": {
+      "content":"https://rahat-rumsan.s3.us-east-1.amazonaws.com/aa/dev/QmSukMcbeT2DmVCpFMYgWgfBKKqddfEADuxfKPvHbU1gSC",
+      "meta": {}
+    },
+    "addresses": [
+      "9800000001",
+      "9800000002",
+      "9800000003",
+      "9800000004",
+      "9800000005",
+      "9800000006",
+      "9800000007",
+      "9800000008"
+    ],
+    "maxAttempts": 1,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "xref":"multiworker-nosplit",
+    "options": {}
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+
+  if(data){
+    bru.setEnvVar("session-id", data.cuid);
+    bru.setEnvVar("xref", data.xref);
+  }
+
+  test("session created with 8 addresses", function() {
+    expect(data.totalAddresses).to.equal(8);
+  });
+}

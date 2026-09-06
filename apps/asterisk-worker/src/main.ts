@@ -7,6 +7,7 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app/app.module';
+import { LogStreamService } from '@rsconnect/log-stream';
 
 // swagger-client (used by ari-client) synchronously `throw`s a plain string
 // from inside its HTTP callback when ARI is unreachable, escaping the Promise
@@ -32,12 +33,24 @@ process.on('unhandledRejection', (reason) => {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Wire the custom logger so every Logger call across the worker
+  // flows through LogStreamService → terminal output (unchanged) + SSE stream
+  const logStream = app.get(LogStreamService);
+  app.useLogger(logStream);
+
+  // Allow browser EventSource connections from any frontend origin
+  app.enableCors();
+
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
-  const port = 5653;
+  // Configurable so several workers can run on one host.
+  const port = Number(process.env.PORT) || 5653;
   await app.listen(port);
   Logger.log(
-    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`,
+    `🚀 Worker ${
+      process.env.WORKER_ID ?? '(unnamed)'
+    } running on: http://localhost:${port}/${globalPrefix}`,
   );
 }
 
