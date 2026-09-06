@@ -28,6 +28,15 @@ export class SessionGate implements OnModuleDestroy {
     this.clearSessionTimeout();
   }
 
+  /** Session this worker is currently committed to, for heartbeats and health. */
+  get activeSession(): string | null {
+    return this.activeSessionCuid;
+  }
+
+  get pendingCount(): number {
+    return this.pendingQueue.length;
+  }
+
   async enqueue(sessionCuid: string, work: () => Promise<void>) {
     if (!this.activeSessionCuid) {
       this.logger.log(`Session ${sessionCuid} is now active`);

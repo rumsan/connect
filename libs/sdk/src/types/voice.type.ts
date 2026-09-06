@@ -7,6 +7,8 @@ export type CallDetails = {
   hangupDetails?: Record<string, string>;
   cdr?: Record<string, string>;
   ivrSequence?: string[];
+  /** Dotted paths of the IVR nodes selected, e.g. ['1', '1.2'] — disambiguates ivrSequence in a nested dialplan. */
+  ivrPath?: string[];
   playbackOk?: boolean;
   playbackStarted?: boolean;
   playbackFailed?: boolean;

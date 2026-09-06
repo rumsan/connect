@@ -125,8 +125,10 @@ export class AMIService implements OnModuleDestroy {
         if (broadcastLog) {
           const isIvr = this.channelStateManager.isIvrChannel(evt.uniqueid);
           let ivrSequence: string[] = [];
+          let ivrPath: string[] = [];
 
           if (isIvr) {
+            ivrPath = this.channelStateManager.getIvrSelections(evt.uniqueid);
             const ariSequence = this.channelStateManager.getDtmfSequence(
               evt.uniqueid,
             );
@@ -175,12 +177,13 @@ export class AMIService implements OnModuleDestroy {
             errorTag,
             hangupDetails: evt,
             ivrSequence: [...ivrSequence],
+            ivrPath: [...ivrPath],
           };
           await this.broadcastLogQueue.addVoice(broadcastLog);
           await this.batchManager.endMonitoring(evt.uniqueid);
           this.channelStateManager.consumePlaybackSnapshot(evt.uniqueid);
           this.logger.log(
-            `Call Hangup: ${evt.uniqueid}, status=${status}${errorTag ? ` (${errorTag})` : ''}, DTMF: [${ivrSequence.join(',')}]`,
+            `Call Hangup: ${evt.uniqueid}, status=${status}${errorTag ? ` (${errorTag})` : ''}, DTMF: [${ivrSequence.join(',')}], IVR path: [${ivrPath.join(',')}]`,
           );
         } else {
           this.ivrSequences.delete(evt.uniqueid);

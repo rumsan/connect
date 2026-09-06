@@ -9,12 +9,18 @@ import {
 import { BroadcastStatus, QueueBroadcastLog } from '@rumsan/connect/types';
 import { BroadcastLogQueue } from './broadcast-log.queue';
 import { TransportQueue } from './transport.queue';
+import { WORKER_ID, WORKER_PRIORITY } from './worker-identity';
 
 @Global()
 @Injectable()
 export class BatchManger implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BatchManger.name);
 
+  /** Identity echoed on every READINESS_CONFIRM so connect can address the batch back. */
+  public readonly workerId = WORKER_ID;
+  public readonly priority = WORKER_PRIORITY;
+
+  /** Max concurrent broadcasts this worker accepts — its capacity for assignment. */
   public batchSize = +(process.env['BATCH_SIZE'] as string) || 20;
   public batchDelay = +(process.env['BATCH_DELAY'] as string) || 2000;
   public ttlMs = +(process.env['BATCH_TTL_MS'] as string) || 120_000;
@@ -29,6 +35,13 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
     }
   >();
   private reaperTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * True while a batch is still being handed to the transport. Suppresses the
+   * "batch drained" confirm so an early failure (or a very fast hangup) can't
+   * make us ask for more work before the current batch is even dispatched.
+   */
+  private dispatching = false;
 
   constructor(
     private readonly transportQueue: TransportQueue,
@@ -62,6 +75,23 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Call before dispatching a batch to the transport. */
+  public beginBatch() {
+    this.dispatching = true;
+  }
+
+  /**
+   * Call once the whole batch has been handed to the transport. If nothing is
+   * left in flight (every broadcast failed fast, or all calls already ended)
+   * this is what asks connect for the next batch.
+   */
+  public finishBatch(sessionCuid: string) {
+    this.dispatching = false;
+    if (this.processingBroadcasts.size === 0) {
+      this.scheduleReadinessConfirm(sessionCuid);
+    }
+  }
+
   public startMonitoring(uniqueId: string, log: QueueBroadcastLog) {
     const now = Date.now();
     this.processingBroadcasts.set(uniqueId, {
@@ -89,31 +119,41 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
     broadcast.lastActivityAt = Date.now();
   }
 
+  /**
+   * Release a broadcast slot. `fallback` lets a caller drain a broadcast that
+   * was never monitored — a transport failing before it produced a channel, for
+   * instance — so an all-failed batch still asks for the next one instead of
+   * leaving this worker idle for the rest of the session.
+   */
   public async endMonitoring(
     broadcastLogId: string,
-    //details?: Record<string, string>,
+    fallback?: { sessionCuid: string; batchSize?: number },
   ) {
     const broadcast = this.processingBroadcasts.get(broadcastLogId);
-    if (!broadcast) {
+    if (!broadcast && !fallback) {
       return;
     }
-    //console.log('BroadcastProcessing:', this.processingBroadcasts.size);
     this.processingBroadcasts.delete(broadcastLogId);
 
-    if (this.processingBroadcasts.size === 0) {
-      console.log('End Monitoring');
-      setTimeout(async () => {
-        await this.transportQueue.confirmReadiness({
-          sessionCuid: broadcast.log.sessionId,
-          maxBatchSize: this.batchSize,
-        });
-      }, this.batchDelay);
-    }
+    const sessionCuid = broadcast?.log.sessionId ?? fallback?.sessionCuid;
+    if (!sessionCuid) return;
 
-    // broadcast.isComplete = isComplete;
-    // if (details) {
-    //   broadcast.details = details;
-    // }
+    // Drained our share of the batch — ask connect for more work. With several
+    // workers on a session this is what makes it free-worker-pull: whoever
+    // empties first claims next, so throughput follows real capacity.
+    if (!this.dispatching && this.processingBroadcasts.size === 0) {
+      this.scheduleReadinessConfirm(sessionCuid);
+    }
+  }
+
+  private scheduleReadinessConfirm(sessionCuid: string) {
+    setTimeout(async () => {
+      await this.transportQueue.confirmReadiness({
+        sessionCuid,
+        maxBatchSize: this.batchSize,
+        workerId: this.workerId,
+      });
+    }, this.batchDelay);
   }
 
   private async reap() {

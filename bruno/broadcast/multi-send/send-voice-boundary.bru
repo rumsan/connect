@@ -1,0 +1,66 @@
+meta {
+  name: send-voice-boundary
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+docs {
+  # Boundary case
+
+  Exactly 10 addresses against a primary with BATCH_SIZE=10 — the fill loop
+  stops as soon as accumulated capacity covers what is waiting, so this must
+  still stay on worker 1 alone.
+
+  One more address (11) would spill. This is the request to run after touching
+  `selectWorkers`.
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-voice}}",
+    "message": {
+      "content":"https://rahat-rumsan.s3.us-east-1.amazonaws.com/aa/dev/QmSukMcbeT2DmVCpFMYgWgfBKKqddfEADuxfKPvHbU1gSC",
+      "meta": {}
+    },
+    "addresses": [
+      "9800000001",
+      "9800000002",
+      "9800000003",
+      "9800000004",
+      "9800000005",
+      "9800000006",
+      "9800000007",
+      "9800000008",
+      "9800000009",
+      "9800000010"
+    ],
+    "maxAttempts": 1,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "xref":"multiworker-boundary",
+    "options": {}
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+
+  if(data){
+    bru.setEnvVar("session-id", data.cuid);
+    bru.setEnvVar("xref", data.xref);
+  }
+
+  test("session created with 10 addresses", function() {
+    expect(data.totalAddresses).to.equal(10);
+  });
+}

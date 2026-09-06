@@ -1,0 +1,16 @@
+{
+  "name": "@rsconnect/log-stream",
+  "version": "0.0.1",
+  "description": "NestJS LoggerService that intercepts all Logger output and exposes it as an RxJS Observable stream for SSE or WebSocket endpoints.",
+  "keywords": ["nestjs", "logger", "sse", "log-stream", "rxjs"],
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "peerDependencies": {
+    "@nestjs/common": ">=9",
+    "rxjs": ">=7"
+  },
+  "type": "commonjs",
+  "main": "./src/index.js",
+  "typings": "./src/index.d.ts"
+}

@@ -1,8 +1,10 @@
 import { Body, Controller, Get, Param, Post, Query, Res } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AppId } from '@rumsan/app';
+import { WorkerRegistry } from '../workers/worker-registry.service';
 import { BroadcastService } from './broadcast.service';
 import { BroadcastDto, ListBroadcastDto } from './dto/broadcast.dto';
+import { SessionAssignmentService } from './session-assignment.service';
 
 type CsvReply = {
   type: (contentType: string) => CsvReply;
@@ -13,7 +15,27 @@ type CsvReply = {
 @Controller('broadcasts')
 @ApiTags('Broadcasts')
 export class BroadcastController {
-  constructor(private readonly broadcastService: BroadcastService) { }
+  constructor(
+    private readonly broadcastService: BroadcastService,
+    private readonly sessionAssignment: SessionAssignmentService,
+    private readonly workerRegistry: WorkerRegistry,
+  ) { }
+
+  @Get('workers')
+  @ApiOperation({
+    summary: 'List transport workers currently reporting in',
+  })
+  listWorkers() {
+    return this.workerRegistry.all();
+  }
+
+  @Get(':sessionCuid/workers')
+  @ApiOperation({
+    summary: 'Show how a session\'s broadcasts are split across workers',
+  })
+  sessionWorkers(@Param('sessionCuid') sessionCuid: string) {
+    return this.sessionAssignment.sessionWorkerBreakdown(sessionCuid);
+  }
 
   @Post()
   @ApiOperation({

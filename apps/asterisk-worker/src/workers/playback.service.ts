@@ -7,6 +7,9 @@ export class PlaybackService {
   private readonly logger = new Logger(PlaybackService.name);
   private client: Client;
   private audioPath: string;
+  // How long a caller has to press the next digit before the call is dropped.
+  private readonly inputTimeoutMs =
+    +(process.env['IVR_INPUT_TIMEOUT_MS'] as string) || 10_000;
 
   constructor(private readonly channelStateManager: ChannelStateManager) {
     this.audioPath = process.env.ASTERISK_AUDIO_PATH || '';
@@ -177,7 +180,7 @@ export class PlaybackService {
           }
           // Cleanup will be triggered by StasisEnd event
         } else if (channelState.isActive) {
-          this.channelStateManager.scheduleHangup(channelId, 10000);
+          this.channelStateManager.scheduleHangup(channelId, this.inputTimeoutMs);
         }
       });
 
