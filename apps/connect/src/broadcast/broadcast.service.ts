@@ -937,6 +937,7 @@ export class BroadcastService {
         { id: 'disposition', title: 'disposition' },
         { id: 'duration', title: 'duration' },
         { id: 'ivrSequence', title: 'ivrSequence' },
+        { id: 'voiceResponseUrls', title: 'voiceResponseUrls' },
         { id: 'trunk', title: 'trunk' },
         { id: 'answerTime', title: 'answerTime' },
         { id: 'endTime', title: 'endTime' },
@@ -964,6 +965,14 @@ export class BroadcastService {
         disposition: disp.disposition ?? '',
         duration: disp.duration ?? '',
         ivrSequence: disp.ivrSequence ? JSON.stringify(disp.ivrSequence) : '[]',
+        // One column of links beats digging the URLs out of fullDisposition.
+        // A response with no URL yet is shown by IVR path, so the row still
+        // says a message was left.
+        voiceResponseUrls: Array.isArray(disp.voiceResponses)
+          ? (disp.voiceResponses as { path?: string; url?: string }[])
+              .map((v) => v.url ?? `(${v.path || 'main'}: no url)`)
+              .join(' ')
+          : '',
         trunk: disp.trunk ?? '',
         answerTime: disp.answerTime ?? '',
         endTime: disp.endTime ?? '',

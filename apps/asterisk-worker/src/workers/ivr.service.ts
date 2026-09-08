@@ -12,11 +12,14 @@ import {
   findOption,
   getMenuOptions,
   getPromptForPath,
+  getRecordSpec,
   hasChildren,
   pathLabel,
   toMedia,
 } from './ivr-dialplan.util';
 import { PlaybackService } from './playback.service';
+import { RecordingService } from './recording.service';
+import { IVRMenuOption } from './types/ivr.types';
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 2_000;
@@ -35,6 +38,7 @@ export class IVRService implements OnModuleDestroy {
     private readonly broadcastLogQueue: BroadcastLogQueue,
     private readonly channelStateManager: ChannelStateManager,
     private readonly playbackService: PlaybackService,
+    private readonly recordingService: RecordingService,
   ) {
     this.config = {
       appName: 'rs-connect',
@@ -104,6 +108,7 @@ export class IVRService implements OnModuleDestroy {
     this.isConnected = false;
     this.channelStateManager.clearClient();
     this.playbackService.clearClient();
+    this.recordingService.clearClient();
   }
 
   async sendBroadcast(
@@ -216,6 +221,7 @@ export class IVRService implements OnModuleDestroy {
 
       this.channelStateManager.setClient(client);
       this.playbackService.setClient(client);
+      this.recordingService.setClient(client);
 
       this.logger.log('ARI connected');
     } catch (error) {
@@ -387,6 +393,16 @@ export class IVRService implements OnModuleDestroy {
       return;
     }
 
+    // Mid-recording, keypresses belong to the recording (the terminator digit,
+    // typically '#'), not to menu navigation. Falling through would stop the
+    // recording's playback and announce "invalid option" over the caller.
+    if (this.channelStateManager.isRecording(channelId)) {
+      this.logger.log(
+        `DTMF '${digit}' ignored on channel ${channelId} — recording in progress`,
+      );
+      return;
+    }
+
     const dialPlan = channelState.ivrDialPlan;
     const fromPath = this.channelStateManager.getMenuPath(channelId);
 
@@ -414,8 +430,11 @@ export class IVRService implements OnModuleDestroy {
       }
 
       const option = findOption(getMenuOptions(dialPlan, fromPath), digit);
+      const recordSpec = getRecordSpec(option, this.recordingService.defaults);
 
-      if (!option?.prompt) {
+      // A record node is allowed to have no prompt of its own — it just starts
+      // recording. Every other option needs one to be playable.
+      if (!option || (!option.prompt && !recordSpec)) {
         this.logger.log(
           `IVR invalid digit ${digit} on channel ${channelId} (menu: ${
             pathLabel(fromPath) || 'main'
@@ -434,6 +453,34 @@ export class IVRService implements OnModuleDestroy {
         channelId,
         pathLabel(selectedPath),
       );
+
+      if (recordSpec) {
+        const beginRecording = async () => {
+          await this.recordingService.start(
+            channel,
+            channelId,
+            recordSpec,
+            pathLabel(selectedPath),
+            digit,
+            (outcome) =>
+              this.afterRecording(channelId, channel, option, recordSpec, outcome),
+          );
+        };
+
+        if (option.prompt) {
+          // onFinished replaces the input timeout — recording starts the
+          // moment the "leave a message" prompt stops playing.
+          await this.playbackService.playPrompt(
+            channelId,
+            toMedia(option.prompt),
+            channel,
+            { onFinished: beginRecording },
+          );
+        } else {
+          await beginRecording();
+        }
+        return;
+      }
 
       const hangup = option.hangup === true;
       const descends = hasChildren(option) && !hangup;
@@ -462,7 +509,7 @@ export class IVRService implements OnModuleDestroy {
         channelId,
         toMedia(option.prompt),
         channel,
-        hangup,
+        { immediateHangup: hangup },
       );
     } catch (err) {
       this.logger.error(
@@ -471,6 +518,54 @@ export class IVRService implements OnModuleDestroy {
         }`,
       );
     }
+  }
+
+  /**
+   * What happens once the caller stops speaking. Honours the record node's
+   * existing `hangup` flag: true ends the call (after an optional thank-you),
+   * false puts the caller back on the menu they came from.
+   */
+  private async afterRecording(
+    channelId: string,
+    channel: Channel,
+    option: IVRMenuOption,
+    recordSpec: { thanksMedia?: string },
+    outcome: 'finished' | 'failed',
+  ) {
+    const channelState = this.channelStateManager.getState(channelId);
+    if (!channelState?.isActive) return;
+
+    const hangup = option.hangup === true;
+    const thanks = outcome === 'finished' ? recordSpec.thanksMedia : undefined;
+
+    if (hangup) {
+      if (thanks) {
+        await this.playbackService.playPrompt(channelId, thanks, channel, {
+          immediateHangup: true,
+        });
+        return;
+      }
+      try {
+        await this.client?.channels.hangup({ channelId });
+      } catch (err) {
+        this.logger.debug(
+          `Hangup after recording failed for channel ${channelId} (likely already gone): ${(err as Error).message}`,
+        );
+      }
+      return;
+    }
+
+    // Stay on the menu the record node hung off — handleDTMF never descends
+    // into a leaf, so the caller's menuPath is already the right one.
+    if (thanks) {
+      await this.playbackService.playPrompt(channelId, thanks, channel);
+      return;
+    }
+    await this.playMenuPrompt(
+      channelId,
+      channel,
+      this.channelStateManager.getMenuPath(channelId),
+    );
   }
 
   /** Replays the prompt of the menu at `path`, falling back to the main prompt. */

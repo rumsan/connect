@@ -1,0 +1,554 @@
+# IVR Voice Responses
+
+How to let a caller record a spoken reply inside an IVR, and where the audio
+ends up.
+
+## Why
+
+Until now an IVR was playback plus DTMF: the caller navigated a tree of prompts
+and every keypress landed on the call report as `ivrSequence` (the raw digits)
+and `ivrPath` (the dotted node labels). There was no way for the caller to _say_
+anything.
+
+A **record node** adds that. After its prompt finishes, Asterisk records the
+caller, the worker publishes the audio to object storage, and the report gains a
+`voiceResponses` entry carrying the link **and** the DTMF path that led to it —
+so a report reads "the caller pressed 1 then 3, and here is the 22-second
+message they left."
+
+## Authoring a record node
+
+A record node is an ordinary option with a `record` object on it. Everything
+else about the dialplan is unchanged, and a plan with no `record` key anywhere
+behaves exactly as it did before.
+
+### Minimal
+
+`enabled: true` and nothing else — every setting comes from the worker's env
+defaults.
+
+```json
+{
+  "digit": 3,
+  "destination": "",
+  "prompt": "https://cdn.example.org/leave-a-message.mp3",
+  "hangup": true,
+  "options": [],
+  "record": { "enabled": true }
+}
+```
+
+The caller presses `3`, hears "leave a message after the beep", hears the beep,
+speaks, presses `#`, and the call ends.
+
+### Every knob
+
+| Field                | Type    | Default                         | Env override                      | Effect                                                                                      |
+| -------------------- | ------- | ------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `enabled`            | boolean | `true` when `record` is present | —                                 | `false` turns the node back into a plain option                                             |
+| `maxDurationSeconds` | number  | `60`                            | `IVR_RECORD_MAX_DURATION_SECONDS` | Hard cap on the message. `0` means "no limit" to ARI, which we treat as the ceiling instead |
+| `maxSilenceSeconds`  | number  | `4`                             | `IVR_RECORD_MAX_SILENCE_SECONDS`  | Stop after this much silence. `0` disables silence detection                                |
+| `beep`               | boolean | `true`                          | `IVR_RECORD_BEEP`                 | Asterisk plays the beep itself                                                              |
+| `terminateOn`        | string  | `"#"`                           | `IVR_RECORD_TERMINATE_ON`         | One DTMF character, or `"none"` / `"any"`                                                   |
+| `prompt`             | url     | none                            | —                                 | Played **after** the recording. See the naming warning below                                |
+
+```json
+{
+  "digit": 3,
+  "prompt": "https://cdn.example.org/leave-a-message.mp3",
+  "hangup": true,
+  "options": [],
+  "record": {
+    "enabled": true,
+    "maxDurationSeconds": 90,
+    "maxSilenceSeconds": 3,
+    "beep": true,
+    "terminateOn": "#",
+    "prompt": "https://cdn.example.org/thank-you.mp3"
+  }
+}
+```
+
+`maxDurationSeconds` is clamped to `IVR_RECORD_MAX_DURATION_CEILING_SECONDS`
+(120 by default). The ceiling exists because the channel reaper hangs up
+channels idle for `CHANNEL_TTL_MS` (180s), and a caller speaking quietly
+generates no events — a node asking for 600 seconds would be cut off mid-message
+with no explanation.
+
+### The two prompts
+
+A record node has two distinct prompts and they are easy to confuse:
+
+- `option.prompt` — played **before** recording. This is the "please leave a
+  message" instruction. Optional: a node with no prompt starts recording the
+  moment the caller presses its digit.
+- `record.prompt` — played **after** recording. The thank-you.
+
+> **The nested key must be named `prompt`.**
+>
+> Prompt preparation ([`audio.service.ts`](../apps/asterisk-worker/src/workers/audio.service.ts))
+> walks the dialplan, downloads every URL it finds, converts it to 8kHz mono wav,
+> uploads it to the Asterisk box, and rewrites the JSON to point at the uploaded
+> file. But the rewrite only touches keys **literally named `prompt`**.
+>
+> Name it `thanksPrompt` and the audio is still uploaded — the URL scrape is not
+> key-sensitive — but the raw `https://…` survives in the dialplan, so ARI is
+> handed `sound:https://…`, the playback silently fails, and the call is tagged
+> `ANSWERED_NO_PLAYBACK`. There is a test pinning this
+> ([`audio.service.spec.ts`](../apps/asterisk-worker/src/workers/audio.service.spec.ts));
+> if you change the key name, change that test deliberately and update the
+> rewrite too.
+
+### `hangup: true` vs `hangup: false`
+
+The record node reuses the flag the option already has.
+
+**`hangup: true`** — the record node ends the call:
+
+```
+caller presses 3
+  -> "Please leave a message after the beep"   (option.prompt)
+  -> beep
+  -> caller speaks, presses #
+  -> "Thank you, we have your message"         (record.prompt)
+  -> call ends
+```
+
+**`hangup: false`** — the caller carries on:
+
+```
+caller presses 3
+  -> "Please leave a message after the beep"   (option.prompt)
+  -> beep
+  -> caller speaks, presses #
+  -> "Thank you, we have your message"         (record.prompt)
+  -> back on the menu they came from; they can press another digit
+```
+
+With `hangup: false` and no `record.prompt`, the parent menu's own prompt is
+replayed instead, so the caller is never left in silence. Either way the input
+timeout (`IVR_INPUT_TIMEOUT_MS`) resumes once the recording is done, so a caller
+who then does nothing is eventually hung up on.
+
+### Nested under a submenu
+
+This is where `voiceResponses` earns its keep — the report can say _which_
+branch of the tree the message answers.
+
+```json
+{
+  "main": {
+    "prompt": "https://cdn.example.org/main.mp3",
+    "options": [
+      {
+        "digit": 1,
+        "prompt": "https://cdn.example.org/complaints.mp3",
+        "hangup": false,
+        "options": [
+          {
+            "digit": 3,
+            "prompt": "https://cdn.example.org/describe-the-problem.mp3",
+            "hangup": true,
+            "options": [],
+            "record": { "enabled": true, "maxDurationSeconds": 90 }
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+A caller pressing `1` then `3` produces:
+
+```json
+{
+  "path": "1.3",
+  "digit": "3",
+  "dtmfBefore": ["1", "3"],
+  "url": "https://cdn.example.org/voice-responses/…"
+}
+```
+
+`path` uses the same dotted convention as `ivrPath`, so it lines up with the
+rest of the report.
+
+### The `action` shorthand
+
+`action: "record"` is equivalent to `record: { enabled: true }` — every setting
+from env defaults. Useful for a quick one-off; prefer the object once you want
+to set anything.
+
+```json
+{
+  "digit": 3,
+  "prompt": "https://cdn.example.org/speak.mp3",
+  "action": "record",
+  "hangup": true
+}
+```
+
+`record` wins if both are present. `record: { enabled: false }` always disables,
+whatever `action` says.
+
+### Migrating an existing dialplan
+
+Turning option `3` of a flat three-option plan into a record node is a two-line
+change:
+
+```diff
+       {
+         "digit": 3,
+         "destination": "",
+         "prompt": "https://cdn.example.org/three.mp3",
+         "hangup": true,
+-        "options": []
++        "options": [],
++        "record": { "enabled": true, "maxDurationSeconds": 60 }
+       }
+```
+
+Options `1` and `2` are untouched and behave exactly as before.
+
+## What the caller hears
+
+```
+option.prompt  ->  beep  ->  [caller speaks]  ->  record.prompt  ->  hangup or menu
+                              ends on:
+                                - the terminateOn digit ('#')
+                                - maxSilenceSeconds of silence
+                                - maxDurationSeconds elapsed
+                                - the caller hanging up
+```
+
+DTMF pressed while recording is deliberately ignored for navigation — the `#`
+that ends the message would otherwise be read as a menu choice and the caller
+would hear "invalid option" over the tail of their own recording. The digits are
+still captured into `ivrSequence`, so nothing is lost from the report.
+
+## Reading the report
+
+`voiceResponses` sits alongside `ivrSequence` and `ivrPath` in
+`tbl_broadcast_logs.details` and `tbl_broadcasts.disposition`.
+
+A successful response:
+
+```json
+{
+  "path": "1.3",
+  "digit": "3",
+  "dtmfBefore": ["1", "3"],
+  "recordingName": "vr-f8a8d2de85d95563dd7fea31-1_3-1",
+  "status": "uploaded",
+  "startedAt": "2026-08-26T11:40:41.204Z",
+  "durationSeconds": 22,
+  "sizeBytes": 352844,
+  "url": "https://media.example.org/voice-responses/w1/sess-abc/log-xyz/vr-f8a8…-1_3-1.wav",
+  "objectKey": "voice-responses/w1/sess-abc/log-xyz/vr-f8a8…-1_3-1.wav",
+  "format": "wav",
+  "workerId": "w1",
+  "ariRecordingUrl": "http://10.0.0.11:8088/ari/recordings/stored/vr-f8a8…-1_3-1/file",
+  "asteriskFile": "/var/spool/asterisk/recording/vr-f8a8…-1_3-1.wav",
+  "retainedOnBox": false
+}
+```
+
+The same response when the upload failed:
+
+```json
+{
+  "path": "1.3",
+  "digit": "3",
+  "dtmfBefore": ["1", "3"],
+  "recordingName": "vr-f8a8d2de85d95563dd7fea31-1_3-1",
+  "status": "failed",
+  "startedAt": "2026-08-26T11:40:41.204Z",
+  "error": "UPLOAD_FAILED: getaddrinfo ENOTFOUND acct123.r2.cloudflarestorage.com",
+  "format": "wav",
+  "workerId": "w1",
+  "ariRecordingUrl": "http://10.0.0.11:8088/ari/recordings/stored/vr-f8a8…-1_3-1/file",
+  "asteriskFile": "/var/spool/asterisk/recording/vr-f8a8…-1_3-1.wav",
+  "retainedOnBox": true
+}
+```
+
+No `url`, but the audio is not lost — `retainedOnBox: true` and the two Asterisk
+locations tell you exactly where to find it. See the runbook below.
+
+| Field             | Meaning                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| `path`            | Dotted IVR path of the record node, e.g. `"1.3"`. `""` for a node on the main menu |
+| `digit`           | The digit that selected the record node                                            |
+| `dtmfBefore`      | Every digit pressed up to the moment recording started                             |
+| `recordingName`   | Asterisk's name for the file. Unique per recording                                 |
+| `status`          | See below                                                                          |
+| `startedAt`       | ISO timestamp of when recording began                                              |
+| `durationSeconds` | From Asterisk, present once the recording finished cleanly                         |
+| `sizeBytes`       | Size of the uploaded object                                                        |
+| `url`             | Public object URL. Present only when `status` is `uploaded`                        |
+| `objectKey`       | Bucket key, for re-fetching without parsing the URL                                |
+| `format`          | `wav` unless `IVR_RECORD_FORMAT` says otherwise                                    |
+| `workerId`        | Which worker's Asterisk box holds (or held) the file                               |
+| `ariRecordingUrl` | ARI stored-recording endpoint. Needs ARI basic auth                                |
+| `asteriskFile`    | On-box path, for an operator with shell access                                     |
+| `retainedOnBox`   | Whether the file is still on the box                                               |
+| `error`           | Why it failed, truncated to 200 chars                                              |
+
+Statuses:
+
+| Status       | Terminal | Meaning                                                              |
+| ------------ | -------- | -------------------------------------------------------------------- |
+| `recording`  | no       | The caller is speaking right now                                     |
+| `finalizing` | no       | The call ended mid-recording; waiting for Asterisk to store the file |
+| `recorded`   | no       | On the box, not yet uploaded                                         |
+| `uploading`  | no       | Upload in progress                                                   |
+| `uploaded`   | **yes**  | In object storage; `url` is set                                      |
+| `failed`     | **yes**  | Not in object storage; `error` says why, file kept on the box        |
+
+### The report arrives in two phases
+
+Uploads take seconds and the disposition report must not wait for them, so:
+
+1. **At hangup**, the disposition report goes out immediately with
+   `voiceResponses` in whatever state they are — usually `recording` or
+   `finalizing`. The Asterisk-side location is already populated.
+2. **Once every recording on the call is terminal**, a second message replaces
+   the whole `voiceResponses` array with the final one, URLs included.
+
+So a consumer polling the report may briefly see `recording` before `uploaded`.
+Treat non-terminal statuses as "not settled yet", and note that the array is
+replaced wholesale rather than merged entry by entry.
+
+The CSV export (`GET /broadcasts/download`) has a `voiceResponseUrls` column
+with the links space-separated; the full entries are inside `fullDisposition`.
+
+## How it works
+
+```
+DTMF '3'
+  └─ IVRService.handleDTMF
+       ├─ getRecordSpec(option)  -> not null, so this is a record node
+       ├─ recordSelection('1.3')
+       └─ playPrompt(option.prompt, { onFinished: beginRecording })
+             │   (onFinished replaces the input timeout — a 10s timeout would
+             │    otherwise cut a 60s message short)
+             └─ RecordingService.start
+                  ├─ entry { status: 'recording', workerId, ariRecordingUrl, asteriskFile }
+                  └─ channel.record({ name, format, maxDurationSeconds, … }, live)
+
+                        ┌──────────────────────────────────────────────┐
+                        │ whichever happens first                      │
+                        ├──────────────────────────────────────────────┤
+   RecordingFinished ───┤ -> status 'recorded', duration recorded      │
+   RecordingFailed   ───┤ -> status 'failed'                           │
+   channel cleanup   ───┤ -> status 'finalizing', poll the box for the │
+   (caller hung up)     │    partial file (~12s of backoff)            │
+                        └──────────────────────────────────────────────┘
+                                        │
+                          GET  /ari/recordings/stored/<name>/file
+                          PUT  r2://<bucket>/<prefix>/<worker>/<session>/<log>/<name>.wav
+                          DEL  /ari/recordings/stored/<name>        (on success only)
+                                        │
+                          status 'uploaded' (or 'failed')
+                                        │
+                          all responses terminal -> follow-up report
+```
+
+Notes on the mechanism:
+
+- **Hangup mid-recording is the common path**, and it is handled without relying
+  on the `RecordingFinished` event. Asterisk keeps the partial file, but the
+  event ordering relative to `StasisEnd` is version-dependent and the websocket
+  may already be gone. Channel cleanup therefore polls
+  `GET /ari/recordings/stored/<name>` with bounded backoff instead. An in-flight
+  guard makes sure a late event and the poller cannot both upload.
+- **The file comes back over ARI HTTP**, not SSH — so there is no assumption
+  about the spool directory, and no dependency on the SSH credentials that
+  prompt upload uses. `axios` rather than the ARI client, because the client is
+  torn down 15 seconds after the last channel drains and an upload can outlive
+  that.
+- **The recording is never deleted from the box unless the upload succeeded.**
+- Uploads are capped at `IVR_RECORD_MAX_CONCURRENT_UPLOADS` so a full batch of
+  channels hanging up together cannot flood one Asterisk box with downloads.
+
+### The report is never blocked by storage
+
+This is a deliberate invariant, not a side effect:
+
+- The disposition report is published before `RecordingService` is even told the
+  call ended. A dead R2, missing credentials or a hung download cannot delay or
+  suppress it.
+- That first report already carries `recordingName`, `workerId`,
+  `ariRecordingUrl` and `asteriskFile`, so even if the follow-up never arrives
+  the report says where the audio is.
+- The follow-up is sent on **every** terminal outcome, failures included.
+- A watchdog force-fails anything still pending after
+  `IVR_RECORD_UPLOAD_TTL_MS` and sends the follow-up anyway.
+- Unconfigured storage is a non-event: entries go straight to
+  `failed / STORAGE_NOT_CONFIGURED`, the files stay on the box, and the call is
+  still reported SUCCESS.
+- The follow-up deliberately omits `status`, so it can never overwrite the
+  SUCCESS/FAIL decision made at hangup.
+
+## Configuration
+
+All per-worker (`.env.worker1`, `.env.worker2`, …) — see
+[`.env.worker.example`](../.env.worker.example).
+
+| Var                                         | Default                         | Notes                                                         |
+| ------------------------------------------- | ------------------------------- | ------------------------------------------------------------- |
+| `IVR_RECORD_FORMAT`                         | `wav`                           | `gsm` is much smaller if bandwidth matters                    |
+| `IVR_RECORD_MAX_DURATION_SECONDS`           | `60`                            | Default cap; a node can override                              |
+| `IVR_RECORD_MAX_SILENCE_SECONDS`            | `4`                             | `0` disables silence detection                                |
+| `IVR_RECORD_TERMINATE_ON`                   | `#`                             |                                                               |
+| `IVR_RECORD_BEEP`                           | `true`                          |                                                               |
+| `IVR_RECORD_MAX_DURATION_CEILING_SECONDS`   | `120`                           | Keep below `CHANNEL_TTL_MS` (180s)                            |
+| `IVR_RECORD_DELETE_AFTER_UPLOAD`            | `true`                          | Only ever applies after a confirmed upload                    |
+| `IVR_RECORD_UPLOAD_TTL_MS`                  | `120000`                        | Watchdog for a stalled upload                                 |
+| `IVR_RECORD_MAX_CONCURRENT_UPLOADS`         | `4`                             | Per worker                                                    |
+| `ASTERISK_RECORDING_PATH`                   | `/var/spool/asterisk/recording` | Only used to render `asteriskFile` in the report              |
+| `R2_ACCOUNT_ID`                             | —                               | Cloudflare account id; the endpoint is built from it           |
+| `R2_BUCKET`                                 | —                               | Unset disables uploads entirely                               |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | —                               | An **R2** API token, not a general Cloudflare one             |
+| `R2_PUBLIC_BASE_URL`                        | —                               | The bucket's public hostname. **Required** — see below        |
+| `R2_RECORDING_PREFIX`                       | `voice-responses`               |                                                               |
+
+Objects are laid out as
+`<prefix>/<workerId>/<sessionId>/<broadcastLogId>/<recordingName>.<format>`, so
+one box's recordings stay together in the bucket.
+
+The worker segment is `WORKER_ID` when set, otherwise the machine hostname
+(sanitised — anything outside `a-z A-Z 0-9 . _ -` becomes `-`, capped at 64
+characters). If neither yields anything usable the segment is dropped entirely
+rather than left as a placeholder, so a single-worker deployment that never set
+`WORKER_ID` simply gets `<prefix>/<sessionId>/<broadcastLogId>/…`. It matches
+the `workerId` on the report entry, so a link and its entry always agree on
+which box produced the audio.
+
+Leaving `R2_BUCKET` unset is a supported configuration: recordings still happen,
+they just stay on the Asterisk box and every entry reports
+`STORAGE_NOT_CONFIGURED`.
+
+## Bucket setup
+
+Storage is Cloudflare R2. It speaks the S3 API — which is why `@aws-sdk/client-s3`
+is still the client — but two differences drive the configuration:
+
+- **R2 has no ACLs.** There is no per-object `public-read`. A bucket is either
+  exposed publicly or it isn't, and that is a bucket setting in Cloudflare.
+- **The public URL cannot be derived** from the bucket name. It comes from a
+  custom domain or the bucket's `r2.dev` subdomain, which is why
+  `R2_PUBLIC_BASE_URL` has to be set explicitly.
+
+> Objects under a public bucket are **world-readable to anyone who has the URL**.
+> That is the point — the link is meant to be shareable — but anyone who obtains
+> a link can hear the recording. Don't enable this for content where that is
+> unacceptable without putting an access-controlled layer in front of it.
+
+### 1. Create the bucket and a token
+
+Cloudflare dashboard > R2 > Create bucket. Then **R2 > API > Manage API tokens >
+Create API token**, permission **Object Read & Write**, scoped to that bucket.
+That yields an Access Key ID and Secret Access Key.
+
+These are R2 tokens, not general Cloudflare API tokens — the ones on the main
+API Tokens page will not authenticate against the S3 endpoint.
+
+`R2_ACCOUNT_ID` is your Cloudflare account id; the worker builds the endpoint
+`https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` from it.
+
+### 2. Make the bucket public
+
+**R2 > your bucket > Settings > Public access.** Two options:
+
+| | URL | Use |
+| --- | --- | --- |
+| **Custom domain** | `https://media.example.org` | Production. Full CDN, no rate limit, your own hostname |
+| **r2.dev subdomain** | `https://pub-<hash>.r2.dev` | Development only. Cloudflare rate-limits it and advises against production traffic |
+
+Set `R2_PUBLIC_BASE_URL` to whichever you enabled. The worker joins it to the
+object key, so `https://media.example.org` + `voice-responses/w1/…wav` is the
+link that lands on the report.
+
+### `R2_PUBLIC_BASE_URL` is required, deliberately
+
+Without it the worker treats storage as unconfigured and leaves recordings on
+the Asterisk box, rather than uploading.
+
+That is not pedantry. On a successful upload the box copy is **deleted**, so
+uploading into a bucket with no known public hostname would leave a report full
+of links that 403 and no second copy anywhere. Refusing to upload keeps the
+audio recoverable. Startup logs name exactly which variables are missing.
+
+### Checking it works
+
+```bash
+curl -I https://media.example.org/voice-responses/some-key.wav   # expect 200
+```
+
+Anonymously — no credentials. That is how the workers fetch, and how anyone you
+share a link with will fetch.
+
+## Runbook
+
+### Finding recordings that never uploaded
+
+```sql
+SELECT b.cuid, b.address, r->>'recordingName', r->>'workerId',
+       r->>'error', r->>'ariRecordingUrl'
+FROM tbl_broadcasts b,
+     jsonb_array_elements(b.disposition->'voiceResponses') r
+WHERE r->>'status' = 'failed';
+```
+
+### Recovering one by hand
+
+The entry tells you which worker's box holds it (`workerId`) and where:
+
+```bash
+curl -u "$ASTERISK_ARI_USER:$ASTERISK_ARI_PASS" \
+  "http://10.0.0.11:8088/ari/recordings/stored/<recordingName>/file" \
+  -o response.wav
+
+# Re-upload to R2. The key is the entry's objectKey; if the upload never got
+# that far, rebuild it as <prefix>/<workerId>/<session>/<log>/<recordingName>.wav
+# (omit the worker segment if the entry has none).
+npx wrangler r2 object put \
+  "$R2_BUCKET/voice-responses/<workerId>/<session>/<log>/<recordingName>.wav" \
+  --file response.wav --content-type audio/wav
+```
+
+Or straight off the box at the `asteriskFile` path.
+
+### Live diagnosis
+
+```bash
+# what the worker sees
+curl -u user:pass http://10.0.0.11:8088/ari/recordings/stored | jq
+curl -s http://worker:5653/api/health | jq
+
+# on the Asterisk box
+asterisk -rx "ari show apps"
+asterisk -rx "core show channels"
+ls -la /var/spool/asterisk/recording/
+```
+
+### Disk growth
+
+Failed uploads are kept on the box forever by design — they are the only copy.
+An 8kHz mono wav is roughly 16 KB/s, so a 60-second message is about 1 MB.
+Monitor `/var/spool/asterisk/recording/` and clear recovered files, or the disk
+fills quietly.
+
+### Symptoms
+
+| Symptom                                                                | Likely cause                                                                                                      |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Every response `failed / STORAGE_NOT_CONFIGURED`                       | An `R2_*` var is unset on that worker — the startup log names which                                              |
+| Uploads work but every link 403s                                       | The bucket is not publicly exposed, or `R2_PUBLIC_BASE_URL` does not match the domain that is                    |
+| Every response `failed / UPLOAD_FAILED: InvalidAccessKeyId`            | Not an R2 token (R2 > API > Manage API tokens), or `R2_ACCOUNT_ID` is the wrong account                           |
+| Response `failed / RECORDING_NOT_STORED`                               | Caller hung up before Asterisk wrote anything, or the recording directory is not writable                         |
+| Caller hears "invalid option" over their own message                   | A `handleDTMF` recording guard regression — DTMF should be ignored while recording                                |
+| Message cut off after ~10 seconds                                      | The input timeout is being armed during recording; `playPrompt` must be called with `onFinished`, not the default |
+| Message cut off around 3 minutes                                       | `maxDurationSeconds` above the reaper's `CHANNEL_TTL_MS`; lower it or raise the TTL                               |
+| Call answered but no prompt, tagged `ANSWERED_NO_PLAYBACK`             | A prompt URL is not under a key named `prompt`, so it was never rewritten to a `sound:` path                      |
