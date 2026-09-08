@@ -23,4 +23,5 @@ export enum CallDisposition {
   BUSY = 'BUSY', //cause 17, channel 0
   CONGESION = 'CONGESION', //cause 34, channel 0
   FAILED = 'FAILED',
+  INVALID_PHONE = 'INVALID PHONE', //rejected before dialing, never sent to Asterisk
 }
