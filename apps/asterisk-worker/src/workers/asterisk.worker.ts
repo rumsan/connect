@@ -11,13 +11,17 @@ import {
   Broadcast,
   BroadcastJobData,
   BroadcastStatus,
+  CallDetails,
+  CallDisposition,
   QueueBroadcastJobData,
   QueueBroadcastLog,
+  QueueBroadcastLogVoice,
   QueueJobData,
   Session,
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import { ConfirmChannel } from 'amqplib';
+import { isValidPhoneNumber } from 'libphonenumber-js';
 import { IvrModel } from '../entities/ivr.entity';
 import { SessionModel } from '../entities/session.entity';
 
@@ -97,6 +101,29 @@ export class AsteriskWorker extends TransportWorker {
     }
   }
 
+  /**
+   * Calls actually handed to Asterisk in the batch being processed. A broadcast
+   * that never reaches `originateCall` is never registered with the BatchManager,
+   * so nothing will call `endMonitoring()` for it — if a whole batch is rejected
+   * before dialing, the next batch has to be requested explicitly.
+   */
+  private callsPlacedInBatch = 0;
+
+  override async _sendBroadcast(jobData: QueueBroadcastJobData) {
+    this.callsPlacedInBatch = 0;
+    await super._sendBroadcast(jobData);
+
+    if (this.callsPlacedInBatch === 0) {
+      this.logger.warn(
+        `No call placed for session ${jobData.sessionId} — requesting next batch`,
+      );
+      await this.transportQueue.confirmReadiness({
+        sessionCuid: jobData.sessionId,
+        maxBatchSize: this.batchManager.batchSize,
+      });
+    }
+  }
+
   async sendBroadcast(data: {
     session: Session;
     broadcast: Broadcast;
@@ -106,6 +133,20 @@ export class AsteriskWorker extends TransportWorker {
     const { session, broadcast, broadcastLog } = data;
     broadcastLog.status = BroadcastStatus.PENDING;
     this.logger.log('Sending broadcast for session:', session.cuid);
+
+    if (!isValidPhoneNumber(broadcast.address, 'NP')) {
+      this.logger.warn(
+        `Invalid phone number for broadcast ${broadcast.cuid}: ${broadcast.address}`,
+      );
+      await this.reportFailure(
+        broadcastLog,
+        CallDisposition.INVALID_PHONE,
+        'INVALID_PHONE',
+        'Invalid phone number',
+      );
+      return broadcastLog;
+    }
+
     try {
       if (session?.message?.meta?.type === 'new-ivr') {
         const { jsonData } = await this.ivrCache.findOne({
@@ -115,12 +156,49 @@ export class AsteriskWorker extends TransportWorker {
       } else {
         await this.ivrService.sendBroadcast(broadcast, broadcastLog);
       }
+      this.callsPlacedInBatch += 1;
     } catch (e: any) {
       console.log(e);
-      broadcastLog.status = BroadcastStatus.FAIL;
-      broadcastLog.details = { error: e.message };
+      // The call never reached Asterisk, so no Hangup event will ever report
+      // this broadcast — its disposition has to be published from here.
+      await this.reportFailure(
+        broadcastLog,
+        CallDisposition.FAILED,
+        'ORIGINATE_FAILED',
+        e.message,
+      );
     }
     return broadcastLog;
+  }
+
+  /**
+   * Reports a broadcast that failed before Asterisk ever saw it. Mirrors the
+   * disposition shape AMIService publishes on Hangup so the broadcast report
+   * looks the same whether the call failed here or on the wire.
+   */
+  private async reportFailure(
+    broadcastLog: QueueBroadcastLog,
+    disposition: CallDisposition,
+    errorTag: string,
+    notes?: string,
+  ) {
+    const details: CallDetails = {
+      trunk: process.env.ASTERISK_TRUNK,
+      disposition,
+      errorTag,
+      playbackOk: false,
+      playbackStarted: false,
+      playbackFailed: false,
+      ivrSequence: [],
+    };
+
+    broadcastLog.status = BroadcastStatus.FAIL;
+    broadcastLog.details = details;
+    broadcastLog.notes = notes;
+
+    await this.broadcastLogQueue.addVoice(
+      broadcastLog as QueueBroadcastLogVoice,
+    );
   }
   async makeTransportReady(sessionCuid: string) {
     try {
