@@ -193,7 +193,7 @@ export class AsteriskWorker extends TransportWorker {
     };
 
     broadcastLog.status = BroadcastStatus.FAIL;
-    broadcastLog.details = { disposition: details, status: 'FAIL' };
+    broadcastLog.details = details;
     broadcastLog.notes = notes;
 
     await this.broadcastLogQueue.addVoice(
