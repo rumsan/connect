@@ -323,10 +323,15 @@ export class IVRService implements OnModuleDestroy {
         if (!channelState?.ivrDialPlan) {
           return;
         }
+        // Captured here rather than inside the queued callback: enqueueDtmf
+        // defers to a microtask, and RecordingFinished — delivered in the same
+        // websocket chunk, since Asterisk raises both from the one DTMF event —
+        // clears the recording flag before that microtask drains.
+        const wasRecording = this.channelStateManager.isRecording(channel.id);
         // Serialized per channel so navigation state moves one keypress at a time.
         await this.channelStateManager.enqueueDtmf(channel.id, async () => {
           this.channelStateManager.recordDtmf(channel.id, event.digit);
-          await this.handleDTMF(channel, event.digit);
+          await this.handleDTMF(channel, event.digit, wasRecording);
         });
       } catch (error) {
         this.logger.error('Error in ChannelDtmfReceived handler:', error);
@@ -368,7 +373,12 @@ export class IVRService implements OnModuleDestroy {
     this.disconnectForSession();
   }
 
-  async handleDTMF(channel: Channel, digit: string) {
+  /**
+   * @param wasRecording whether a recording was in flight when Asterisk
+   * reported the keypress. Read at event-receipt time by the caller, because
+   * the flag is cleared before queued handling runs.
+   */
+  async handleDTMF(channel: Channel, digit: string, wasRecording?: boolean) {
     const channelId = channel.id;
     const channelState = this.channelStateManager.getState(channelId);
 
@@ -396,9 +406,21 @@ export class IVRService implements OnModuleDestroy {
     // Mid-recording, keypresses belong to the recording (the terminator digit,
     // typically '#'), not to menu navigation. Falling through would stop the
     // recording's playback and announce "invalid option" over the caller.
-    if (this.channelStateManager.isRecording(channelId)) {
+    if (wasRecording ?? this.channelStateManager.isRecording(channelId)) {
       this.logger.log(
         `DTMF '${digit}' ignored on channel ${channelId} — recording in progress`,
+      );
+      return;
+    }
+
+    // '#' (and A–D) can never match a menu option — Number('#') is NaN — so
+    // answering them with "invalid option" is never right. The recording
+    // terminator is the common case: it arrives as ordinary DTMF, and the
+    // recording it ended has by then already cleared the guard above. Checked
+    // before stopActivePlayback below, so a post-record prompt is left alone.
+    if (digit !== '*' && Number.isNaN(Number(digit))) {
+      this.logger.log(
+        `DTMF '${digit}' ignored on channel ${channelId} — not a menu digit`,
       );
       return;
     }
