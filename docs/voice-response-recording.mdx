@@ -221,10 +221,23 @@ option.prompt  ->  beep  ->  [caller speaks]  ->  record.prompt  ->  hangup or m
                                 - the caller hanging up
 ```
 
-DTMF pressed while recording is deliberately ignored for navigation — the `#`
-that ends the message would otherwise be read as a menu choice and the caller
-would hear "invalid option" over the tail of their own recording. The digits are
-still captured into `ivrSequence`, so nothing is lost from the report.
+`#` is never a menu digit. `findOption` matches numerically, so `Number('#')` is
+`NaN` and no option can ever match it — `handleDTMF` therefore ignores it (and
+`A`–`D`) outright rather than answering "invalid option". Without that, the `#`
+that ends a message would be read as a wrong menu choice and announced over the
+tail of the caller's own recording. `*` is exempt: it means "step back".
+
+Relying on the mid-recording guard alone is not enough here, because the `#`
+usually arrives *after* the recording it ended has already cleared that guard —
+either because `RecordingFinished` beat the keypress through the queue, or
+because `maxSilenceSeconds` had ended the recording before the caller pressed
+anything. The guard is the second line of defence, and matters for
+`terminateOn: "any"`, where the terminator *is* a digit that would otherwise
+navigate; it reads a flag captured when Asterisk reported the keypress, not when
+the queued handler eventually runs.
+
+Digits are still captured into `ivrSequence` on every ignored path, so nothing is
+lost from the report.
 
 ## Reading the report
 
@@ -548,7 +561,7 @@ fills quietly.
 | Uploads work but every link 403s                                       | The bucket is not publicly exposed, or `R2_PUBLIC_BASE_URL` does not match the domain that is                    |
 | Every response `failed / UPLOAD_FAILED: InvalidAccessKeyId`            | Not an R2 token (R2 > API > Manage API tokens), or `R2_ACCOUNT_ID` is the wrong account                           |
 | Response `failed / RECORDING_NOT_STORED`                               | Caller hung up before Asterisk wrote anything, or the recording directory is not writable                         |
-| Caller hears "invalid option" over their own message                   | A `handleDTMF` recording guard regression — DTMF should be ignored while recording                                |
+| Caller hears "invalid option" after their message                      | `handleDTMF` is answering a non-menu digit — `#` (and `A`–`D`) must return before the option lookup, not fall into it |
 | Message cut off after ~10 seconds                                      | The input timeout is being armed during recording; `playPrompt` must be called with `onFinished`, not the default |
 | Message cut off around 3 minutes                                       | `maxDurationSeconds` above the reaper's `CHANNEL_TTL_MS`; lower it or raise the TTL                               |
 | Call answered but no prompt, tagged `ANSWERED_NO_PLAYBACK`             | A prompt URL is not under a key named `prompt`, so it was never rewritten to a `sound:` path                      |
