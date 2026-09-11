@@ -1,4 +1,9 @@
-import { IVRDialPlan, IVRMenuOption } from './types/ivr.types';
+import {
+  IVRDialPlan,
+  IVRMenuOption,
+  RecordDefaults,
+  ResolvedRecordSpec,
+} from './types/ivr.types';
 
 /**
  * Pure helpers for walking a (possibly nested) IVR dialplan.
@@ -65,4 +70,66 @@ export function pathLabel(path: number[]): string {
  */
 export function toMedia(prompt: string): string {
   return prompt.replace(/\.wav$/i, '');
+}
+
+/**
+ * Resolve an option's record settings, or `null` if it isn't a record node.
+ *
+ * A node records when it carries `record: { … }` (unless `enabled` is
+ * explicitly false) or the shorthand `action: 'record'`. Everything the
+ * dialplan leaves out comes from the env defaults, and `maxDurationSeconds` is
+ * clamped so a long message can't outlive the channel reaper's TTL.
+ */
+export function getRecordSpec(
+  option: IVRMenuOption | undefined,
+  defaults: RecordDefaults,
+): ResolvedRecordSpec | null {
+  if (!option) return null;
+
+  const record = option.record;
+  const enabledByShorthand = option.action?.toLowerCase() === 'record';
+
+  if (!record && !enabledByShorthand) return null;
+  if (record?.enabled === false) return null;
+
+  const requested = record?.maxDurationSeconds ?? defaults.maxDurationSeconds;
+  const maxDurationSeconds = clampDuration(
+    requested,
+    defaults.maxDurationSeconds,
+    defaults.maxDurationCeilingSeconds,
+  );
+
+  const maxSilenceSeconds = nonNegative(
+    record?.maxSilenceSeconds,
+    defaults.maxSilenceSeconds,
+  );
+
+  return {
+    maxDurationSeconds,
+    maxSilenceSeconds,
+    beep: record?.beep ?? defaults.beep,
+    terminateOn: record?.terminateOn || defaults.terminateOn,
+    thanksMedia: record?.prompt ? toMedia(record.prompt) : undefined,
+  };
+}
+
+/** 0 means "no limit" to ARI, which the reaper would cut short — treat it as the ceiling. */
+function clampDuration(
+  requested: number,
+  fallback: number,
+  ceiling: number,
+): number {
+  const value =
+    typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+      ? requested
+      : requested === 0
+        ? ceiling
+        : fallback;
+  return Math.min(value, ceiling);
+}
+
+function nonNegative(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : fallback;
 }
