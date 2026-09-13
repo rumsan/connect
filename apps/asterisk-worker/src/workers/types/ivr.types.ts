@@ -30,8 +30,20 @@ export interface IVRRecordSpec {
 export interface IVRMenuOption {
   /** Dialplans in the wild use both `1` and `"1"` — always compare via Number(). */
   digit: number | string;
+  /**
+   * Stable name for `jumpTo: "#<id>"`. Unique across the dialplan, must not
+   * start with `#` and must not be `main`. See `docs/ivr-jump-to.mdx`.
+   */
+  id?: string;
   prompt?: string;
   hangup?: boolean;
+  /**
+   * Node to move the caller to once this one finishes — after its prompt, or
+   * for a record node after the recording and `record.prompt`. One of `"main"`,
+   * a dotted digit path (`"2.1"`) or `"#<id>"`. Overrides `hangup`; resolved
+   * only by `resolveJumpTarget`. See `docs/ivr-jump-to.mdx`.
+   */
+  jumpTo?: string;
   /** `'record'` is a shorthand for `record: { enabled: true }`. */
   action?: string;
   destination?: string;
@@ -42,6 +54,8 @@ export interface IVRMenuOption {
 }
 
 export interface IVRMenu {
+  /** Lets `jumpTo: "#<id>"` target the root, same as `"main"`. */
+  id?: string;
   prompt: string;
   options: IVRMenuOption[];
 }
@@ -69,6 +83,8 @@ export interface ChannelState {
   menuPath: number[];
   /** Dotted labels of the nodes the caller selected, e.g. ['1', '1.2']. */
   ivrSelections: string[];
+  /** Jumps followed since the caller last pressed a menu digit — the loop guard. */
+  jumpsSinceInput: number;
   /** Voice messages recorded on this call, in order. */
   voiceResponses: VoiceResponse[];
   /** Name of the recording currently in flight; null when not recording. */

@@ -130,6 +130,19 @@ replayed instead, so the caller is never left in silence. Either way the input
 timeout (`IVR_INPUT_TIMEOUT_MS`) resumes once the recording is done, so a caller
 who then does nothing is eventually hung up on.
 
+**`jumpTo`** — the caller is sent to another node. It overrides `hangup`:
+
+```
+caller presses 3
+  -> "Please leave a message after the beep"   (option.prompt)
+  -> beep
+  -> caller speaks, presses #
+  -> "Thank you, we have your message"         (record.prompt)
+  -> the jumpTo node, as if the caller had selected it
+```
+
+See [IVR Jumps](./ivr-jump-to.mdx) for target forms and a full example.
+
 ### Nested under a submenu
 
 This is where `voiceResponses` earns its keep — the report can say _which_
@@ -562,6 +575,7 @@ fills quietly.
 | Every response `failed / UPLOAD_FAILED: InvalidAccessKeyId`            | Not an R2 token (R2 > API > Manage API tokens), or `R2_ACCOUNT_ID` is the wrong account                           |
 | Response `failed / RECORDING_NOT_STORED`                               | Caller hung up before Asterisk wrote anything, or the recording directory is not writable                         |
 | Caller hears "invalid option" after their message                      | `handleDTMF` is answering a non-menu digit — `#` (and `A`–`D`) must return before the option lookup, not fall into it |
+| Caller hears another node's prompt after their message                 | `jumpTo` is set on the record node — see [IVR Jumps](./ivr-jump-to.mdx)                                          |
 | Message cut off after ~10 seconds                                      | The input timeout is being armed during recording; `playPrompt` must be called with `onFinished`, not the default |
 | Message cut off around 3 minutes                                       | `maxDurationSeconds` above the reaper's `CHANNEL_TTL_MS`; lower it or raise the TTL                               |
 | Call answered but no prompt, tagged `ANSWERED_NO_PLAYBACK`             | A prompt URL is not under a key named `prompt`, so it was never rewritten to a `sound:` path                      |

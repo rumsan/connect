@@ -37,6 +37,64 @@ const dialPlan = {
   },
 } as unknown as IVRDialPlan;
 
+/**
+ * main
+ *   1 -> jumps to 2.1
+ *   2 -> sub-menu (id: closing)
+ *        1 -> leaf, hangup
+ *        2 -> record node
+ *   3 -> hangup:true, jumps to #closing
+ *   4 -> record node, hangup:true, jumps to 2
+ *   5 -> jumps to main
+ *   6 -> jumps to the record node 2.2
+ *   7 <-> 8 jump to each other
+ *   9 -> hangup:true, jumps to a node that doesn't exist
+ */
+const jumpPlan = {
+  main: {
+    prompt: 'sound:/sounds/main.wav',
+    options: [
+      { digit: 1, prompt: 'sound:/sounds/one.wav', jumpTo: '2.1' },
+      {
+        digit: 2,
+        id: 'closing',
+        prompt: 'sound:/sounds/two.wav',
+        options: [
+          { digit: 1, prompt: 'sound:/sounds/two-one.wav', hangup: true },
+          {
+            digit: 2,
+            prompt: 'sound:/sounds/speak.wav',
+            record: { prompt: 'sound:/sounds/thanks.wav' },
+          },
+        ],
+      },
+      {
+        digit: 3,
+        prompt: 'sound:/sounds/three.wav',
+        hangup: true,
+        jumpTo: '#closing',
+      },
+      {
+        digit: 4,
+        prompt: 'sound:/sounds/leave-a-message.wav',
+        hangup: true,
+        jumpTo: '2',
+        record: { prompt: 'sound:/sounds/thanks.wav' },
+      },
+      { digit: 5, prompt: 'sound:/sounds/five.wav', jumpTo: 'main' },
+      { digit: 6, prompt: 'sound:/sounds/six.wav', jumpTo: '2.2' },
+      { digit: 7, prompt: 'sound:/sounds/seven.wav', jumpTo: '8' },
+      { digit: 8, prompt: 'sound:/sounds/eight.wav', jumpTo: '7' },
+      {
+        digit: 9,
+        prompt: 'sound:/sounds/nine.wav',
+        hangup: true,
+        jumpTo: '9.9',
+      },
+    ],
+  },
+} as unknown as IVRDialPlan;
+
 describe('IVRService.handleDTMF', () => {
   const channelId = 'chan-1';
   const channel = { id: channelId } as Channel;
@@ -179,6 +237,149 @@ describe('IVRService.handleDTMF', () => {
 
       await options.onFinished();
       expect(recordingService.start).toHaveBeenCalled();
+    });
+  });
+
+  describe('jumpTo', () => {
+    let hangup: jest.Mock;
+
+    const lastPlay = () => {
+      const calls = playbackService.playPrompt.mock.calls;
+      return calls[calls.length - 1];
+    };
+    /** Runs the latest prompt's onFinished, as PlaybackFinished would. */
+    const finishPrompt = async () => {
+      await lastPlay()[3].onFinished();
+    };
+
+    beforeEach(() => {
+      manager.registerChannel({
+        channelId,
+        ivrDialPlan: jumpPlan,
+        sessionId: 'session-1',
+        broadcastLogId: 'log-1',
+        address: '+9779800000000',
+      });
+      hangup = jest.fn().mockResolvedValue(undefined);
+      (service as unknown as { client: unknown }).client = {
+        channels: { hangup },
+      };
+    });
+
+    it('plays the node, then jumps instead of waiting for input', async () => {
+      await service.handleDTMF(channel, '1');
+
+      const [, media, , opts] = lastPlay();
+      expect(media).toBe('sound:/sounds/one');
+      expect(opts).toEqual({ onFinished: expect.any(Function) });
+
+      await finishPrompt();
+
+      const [, target, , targetOpts] = lastPlay();
+      expect(target).toBe('sound:/sounds/two-one');
+      expect(targetOpts).toEqual({ immediateHangup: true });
+      // 2.1 is a leaf, so the caller sits on its parent menu.
+      expect(manager.getMenuPath(channelId)).toEqual([2]);
+    });
+
+    it('reports the jump target in the IVR path', async () => {
+      await service.handleDTMF(channel, '1');
+      await finishPrompt();
+
+      expect(manager.getIvrSelections(channelId)).toEqual(['1', '2.1']);
+    });
+
+    it('overrides hangup:true and descends into a sub-menu target by id', async () => {
+      await service.handleDTMF(channel, '3');
+      expect(lastPlay()[3]).toEqual({ onFinished: expect.any(Function) });
+
+      await finishPrompt();
+
+      expect(lastPlay()[1]).toBe('sound:/sounds/two');
+      expect(manager.getMenuPath(channelId)).toEqual([2]);
+      expect(hangup).not.toHaveBeenCalled();
+    });
+
+    it('jumps to main', async () => {
+      manager.setMenuPath(channelId, [2]);
+      await service.handleDTMF(channel, '0');
+      await service.handleDTMF(channel, '5');
+      await finishPrompt();
+
+      expect(lastPlay()[1]).toBe('sound:/sounds/main');
+      expect(manager.getMenuPath(channelId)).toEqual([]);
+      expect(manager.getIvrSelections(channelId)).toEqual(['5']);
+    });
+
+    it('records at a jumped-to record node under its own path', async () => {
+      await service.handleDTMF(channel, '6');
+      await finishPrompt();
+
+      expect(lastPlay()[1]).toBe('sound:/sounds/speak');
+      await finishPrompt();
+
+      const [, , , label, digit] = recordingService.start.mock.calls[0];
+      expect(label).toBe('2.2');
+      expect(digit).toBe('2');
+      expect(manager.getMenuPath(channelId)).toEqual([2]);
+    });
+
+    describe('after a recording', () => {
+      /** Presses 4, lets its prompt finish, and returns RecordingService's callback. */
+      const recordAtFour = async () => {
+        await service.handleDTMF(channel, '4');
+        await finishPrompt();
+        return recordingService.start.mock.calls[0][5] as (
+          outcome: 'finished' | 'failed',
+        ) => Promise<void>;
+      };
+
+      it('plays the thank-you, then jumps instead of hanging up', async () => {
+        const afterRecording = await recordAtFour();
+        await afterRecording('finished');
+
+        const [, media, , opts] = lastPlay();
+        expect(media).toBe('sound:/sounds/thanks');
+        expect(opts).toEqual({ onFinished: expect.any(Function) });
+
+        await finishPrompt();
+
+        expect(lastPlay()[1]).toBe('sound:/sounds/two');
+        expect(hangup).not.toHaveBeenCalled();
+      });
+
+      it('jumps straight away when the recording failed', async () => {
+        const afterRecording = await recordAtFour();
+        await afterRecording('failed');
+
+        expect(lastPlay()[1]).toBe('sound:/sounds/two');
+      });
+    });
+
+    it('falls back to hangup when the target does not resolve', async () => {
+      await service.handleDTMF(channel, '9');
+
+      expect(lastPlay()[3]).toEqual({ immediateHangup: true });
+    });
+
+    it('hangs up a jump loop once the budget is spent', async () => {
+      await service.handleDTMF(channel, '7');
+
+      for (let i = 0; i < 10; i++) await finishPrompt();
+      expect(hangup).not.toHaveBeenCalled();
+
+      await finishPrompt();
+      expect(hangup).toHaveBeenCalledWith({ channelId });
+    });
+
+    it('refills the budget on a keypress', async () => {
+      await service.handleDTMF(channel, '7');
+      for (let i = 0; i < 10; i++) await finishPrompt();
+
+      await service.handleDTMF(channel, '7');
+      for (let i = 0; i < 10; i++) await finishPrompt();
+
+      expect(hangup).not.toHaveBeenCalled();
     });
   });
 });

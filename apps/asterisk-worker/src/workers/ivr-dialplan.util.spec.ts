@@ -1,11 +1,15 @@
 import {
   findOption,
+  findPathById,
   getMenuOptions,
+  getOptionAtPath,
   getPromptForPath,
   getRecordSpec,
   hasChildren,
   pathLabel,
+  resolveJumpTarget,
   toMedia,
+  validateDialPlan,
 } from './ivr-dialplan.util';
 import { IVRDialPlan, IVRMenuOption, RecordDefaults } from './types/ivr.types';
 
@@ -97,6 +101,183 @@ const legacyPlan = {
     ],
   },
 } as unknown as IVRDialPlan;
+
+/** Jump targets by path, id and main; an id on main and on a nested node. */
+const jumpPlan = {
+  main: {
+    id: 'home',
+    prompt: 'sound:/sounds/main.wav',
+    options: [
+      { digit: '1', id: 'intro', prompt: 'sound:/sounds/1.wav', jumpTo: '2' },
+      {
+        digit: 2,
+        prompt: 'sound:/sounds/2.wav',
+        options: [
+          {
+            digit: 1,
+            id: 'closing',
+            prompt: 'sound:/sounds/2-1.wav',
+            hangup: true,
+          },
+        ],
+      },
+    ],
+  },
+} as unknown as IVRDialPlan;
+
+/** A dialplan with a playable main around the given options. */
+const planOf = (options: unknown[]) =>
+  ({
+    main: { prompt: 'sound:/sounds/main.wav', options },
+  }) as unknown as IVRDialPlan;
+
+describe('getOptionAtPath', () => {
+  it('returns a nested option', () => {
+    expect(getOptionAtPath(jumpPlan, [2, 1])?.id).toBe('closing');
+  });
+
+  it('returns undefined for the root and for a path that does not resolve', () => {
+    expect(getOptionAtPath(jumpPlan, [])).toBeUndefined();
+    expect(getOptionAtPath(jumpPlan, [2, 9])).toBeUndefined();
+  });
+});
+
+describe('findPathById', () => {
+  it('finds a nested node', () => {
+    expect(findPathById(jumpPlan, 'closing')).toEqual([2, 1]);
+  });
+
+  it('numbers a node declared with a string digit', () => {
+    expect(findPathById(jumpPlan, 'intro')).toEqual([1]);
+  });
+
+  it('returns the root for the id on main', () => {
+    expect(findPathById(jumpPlan, 'home')).toEqual([]);
+  });
+
+  it('returns null for an unknown id', () => {
+    expect(findPathById(jumpPlan, 'nope')).toBeNull();
+  });
+});
+
+describe('resolveJumpTarget', () => {
+  it('resolves main', () => {
+    expect(resolveJumpTarget(jumpPlan, 'main')).toEqual([]);
+  });
+
+  it('resolves a top-level path', () => {
+    expect(resolveJumpTarget(jumpPlan, '2')).toEqual([2]);
+  });
+
+  it('resolves a nested path', () => {
+    expect(resolveJumpTarget(jumpPlan, '2.1')).toEqual([2, 1]);
+  });
+
+  it('matches a path against string digits', () => {
+    expect(resolveJumpTarget(jumpPlan, '1')).toEqual([1]);
+  });
+
+  it('resolves an id', () => {
+    expect(resolveJumpTarget(jumpPlan, '#closing')).toEqual([2, 1]);
+  });
+
+  it('resolves the id on main', () => {
+    expect(resolveJumpTarget(jumpPlan, '#home')).toEqual([]);
+  });
+
+  it('tolerates a numeric jumpTo', () => {
+    expect(resolveJumpTarget(jumpPlan, 2)).toEqual([2]);
+  });
+
+  it.each(['#nope', '2.9', '3', 'two', '2.', '', ' '])(
+    'returns null for %p',
+    (ref) => {
+      expect(resolveJumpTarget(jumpPlan, ref)).toBeNull();
+    },
+  );
+
+  it('returns null without a dialplan', () => {
+    expect(resolveJumpTarget(null, '2')).toBeNull();
+  });
+});
+
+describe('validateDialPlan', () => {
+  it('passes a clean dialplan', () => {
+    expect(validateDialPlan(jumpPlan)).toEqual([]);
+    expect(validateDialPlan(mixedPlan)).toEqual([]);
+  });
+
+  it('flags an unresolvable target', () => {
+    const plan = planOf([{ digit: 1, prompt: 'p', jumpTo: '#nope' }]);
+    expect(validateDialPlan(plan)).toEqual([
+      expect.stringContaining('unresolvable jumpTo "#nope" on node 1'),
+    ]);
+  });
+
+  it('flags a target with nothing to play', () => {
+    const plan = planOf([
+      { digit: 1, prompt: 'p', jumpTo: '2' },
+      { digit: 2 },
+    ]);
+    expect(validateDialPlan(plan)).toEqual([
+      expect.stringContaining('which has no prompt and is not a record node'),
+    ]);
+  });
+
+  it('flags jumpTo alongside hangup:true', () => {
+    const plan = planOf([
+      { digit: 1, prompt: 'p', hangup: true, jumpTo: 'main' },
+    ]);
+    expect(validateDialPlan(plan)).toEqual([
+      'node 1 has both jumpTo and hangup:true — hangup is ignored',
+    ]);
+  });
+
+  it('flags jumpTo alongside sub-options', () => {
+    const plan = planOf([
+      {
+        digit: 1,
+        prompt: 'p',
+        jumpTo: 'main',
+        options: [{ digit: 1, prompt: 'q' }],
+      },
+    ]);
+    expect(validateDialPlan(plan)).toEqual([
+      expect.stringContaining('node 1 has both jumpTo and sub-options'),
+    ]);
+  });
+
+  it('flags duplicate and reserved ids', () => {
+    const plan = planOf([
+      { digit: 1, id: 'a', prompt: 'p' },
+      { digit: 2, id: 'a', prompt: 'p' },
+      { digit: 3, id: '#b', prompt: 'p' },
+      { digit: 4, id: 'main', prompt: 'p' },
+    ]);
+    expect(validateDialPlan(plan)).toEqual([
+      'id "a" on node 2 duplicates node 1 — "#a" resolves to 1',
+      expect.stringContaining('node 3 has reserved id "#b"'),
+      expect.stringContaining('node 4 has reserved id "main"'),
+    ]);
+  });
+
+  it('flags a jump cycle once', () => {
+    const plan = planOf([
+      { digit: 1, prompt: 'p', jumpTo: '2' },
+      { digit: 2, prompt: 'p', jumpTo: '1' },
+    ]);
+    expect(validateDialPlan(plan)).toEqual([
+      expect.stringContaining('jump cycle 1 -> 2 -> 1'),
+    ]);
+  });
+
+  it('flags a node that jumps to itself', () => {
+    const plan = planOf([{ digit: 1, prompt: 'p', jumpTo: '1' }]);
+    expect(validateDialPlan(plan)).toEqual([
+      expect.stringContaining('jump cycle 1 -> 1'),
+    ]);
+  });
+});
 
 describe('getMenuOptions', () => {
   it('returns the main options for the root path', () => {

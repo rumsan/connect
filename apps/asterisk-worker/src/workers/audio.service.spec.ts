@@ -69,6 +69,16 @@ describe('AudioService prompt preparation', () => {
       });
       expect(urls).toEqual([]);
     });
+
+    it('ignores jumpTo and id', async () => {
+      const urls = await service.extractAudioURLs({
+        digit: 1,
+        id: 'closing',
+        jumpTo: '#closing',
+        prompt: 'https://cdn.example.org/one.mp3',
+      });
+      expect(urls).toEqual(['https://cdn.example.org/one.mp3']);
+    });
   });
 
   describe('replacePromptsIfMatch', () => {

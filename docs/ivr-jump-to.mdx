@@ -1,0 +1,288 @@
+# IVR Jumps
+
+How to send a caller to another node of the IVR once a prompt finishes, without
+them pressing anything.
+
+## Why
+
+Until now a caller only ever moved through the tree by pressing digits. When a
+node's prompt finished it could do one of three things: hang up (`hangup: true`),
+wait on its parent menu for the next digit, or open its own sub-menu.
+
+`jumpTo` adds a fourth: **go to that node next**. Typical uses:
+
+- Record a message, then play a closing menu instead of hanging up.
+- Share one "thank you / goodbye" node between several branches rather than
+  copying its audio into each.
+- Play an announcement, then return the caller to the main menu.
+
+## Authoring a jump
+
+A jump is an ordinary option with a `jumpTo` on it. A dialplan with no `jumpTo`
+anywhere behaves exactly as before.
+
+### Minimal
+
+```json
+{
+  "digit": 1,
+  "destination": "",
+  "prompt": "https://cdn.example.org/opening-hours.mp3",
+  "hangup": false,
+  "options": [],
+  "jumpTo": "main"
+}
+```
+
+```
+caller presses 1
+  -> "We are open 9 to 5"                (option 1's prompt)
+  -> main menu prompt                    (the jump)
+  -> waits for the next digit
+```
+
+### Field reference
+
+| Field    | Type   | Where                | Effect                                                                                          |
+| -------- | ------ | -------------------- | ----------------------------------------------------------------------------------------------- |
+| `jumpTo` | string | any option           | Node to move the caller to once this one finishes. Overrides `hangup`                           |
+| `id`     | string | any option, or `main` | Stable name a `jumpTo` can target as `"#<id>"`. Unique; must not start with `#` or be `"main"` |
+
+### Target forms
+
+| `jumpTo`     | Resolves to                                          | Use it when                                          |
+| ------------ | ---------------------------------------------------- | ---------------------------------------------------- |
+| `"main"`     | The root menu                                        | Returning the caller to the start                    |
+| `"2"`, `"2.1"` | The node reached by pressing those digits from main | Hand-written dialplans that won't be reorganised     |
+| `"#closing"` | The node carrying `"id": "closing"`, wherever it sits | Anything edited in the IVR builder                   |
+
+> **Prefer ids for any dialplan edited in the builder.**
+>
+> A path is just the digits. Renumber option 2 to 3, or move it under another
+> menu, and `"jumpTo": "2"` still resolves — to whatever is now at 2. Nothing
+> errors; callers are quietly sent to the wrong place. An id follows the node
+> wherever it moves.
+
+### Record, then jump
+
+The record node from [IVR Voice Responses](./voice-response-recording.mdx),
+sending the caller to option 2 instead of hanging up:
+
+```json
+{
+  "main": {
+    "prompt": "https://cdn.example.org/main.mp3",
+    "options": [
+      {
+        "digit": 1,
+        "prompt": "https://cdn.example.org/feedback.mp3",
+        "hangup": false,
+        "options": [
+          {
+            "digit": 1,
+            "prompt": "https://cdn.example.org/leave-a-message.mp3",
+            "hangup": true,
+            "options": [],
+            "jumpTo": "2",
+            "record": {
+              "enabled": true,
+              "maxDurationSeconds": 90,
+              "terminateOn": "#",
+              "prompt": "https://cdn.example.org/thank-you.mp3"
+            }
+          }
+        ]
+      },
+      {
+        "digit": 2,
+        "prompt": "https://cdn.example.org/goodbye.mp3",
+        "hangup": true,
+        "options": []
+      }
+    ]
+  }
+}
+```
+
+```
+caller presses 1
+  -> "Tell us about your experience"       (option 1's prompt)
+caller presses 1
+  -> "Please leave a message after the beep" (option 1.1's prompt)
+  -> beep
+  -> caller speaks, presses #
+  -> "Thank you"                            (record.prompt)
+  -> "Goodbye"                              (option 2 — the jump)
+  -> call ends                              (option 2's hangup: true)
+```
+
+Option 1.1's own `hangup: true` is ignored because `jumpTo` is set. Option 2's
+`hangup: true` still applies, because the caller is now on option 2.
+
+If the recording fails, the thank-you is skipped (as it always is) and the jump
+still happens.
+
+### Same example with ids
+
+```diff
+       {
+         "digit": 2,
++        "id": "goodbye",
+         "prompt": "https://cdn.example.org/goodbye.mp3",
+```
+
+```diff
+-            "jumpTo": "2",
++            "jumpTo": "#goodbye",
+```
+
+## What happens at the target
+
+**A jump behaves exactly as if the caller had pressed the target's digit from
+its parent menu.** Selecting by digit and jumping go through the same code.
+
+| Target                       | The caller                                                    |
+| ---------------------------- | ------------------------------------------------------------- |
+| A leaf                       | Hears its prompt, then waits on its parent menu               |
+| A node with sub-options      | Hears its prompt, then waits on its sub-menu                  |
+| A node with `hangup: true`   | Hears its prompt, then the call ends                          |
+| A record node                | Hears its prompt, then is recorded (with its own `path`)      |
+| A node with its own `jumpTo` | Hears its prompt, then jumps again — jumps chain              |
+| `"main"`                     | Hears the main prompt, then waits on the main menu            |
+
+## Interactions
+
+### `jumpTo` vs `hangup`
+
+Both decide what happens after the prompt, so they can't both apply. `jumpTo`
+wins. The readiness check warns about nodes that set both.
+
+### `jumpTo` with sub-options
+
+The node still opens its sub-menu while its prompt plays, so a caller who
+presses a digit *during* the prompt picks one of its sub-options. A caller who
+waits is jumped away, so the sub-options are reachable only by pressing early.
+The readiness check warns about this too.
+
+### Pressing during the prompt
+
+A menu digit pressed while a prompt is playing stops that prompt, and **a
+stopped prompt never jumps**. The digit is handled from the menu the caller is
+on, just as it would be without `jumpTo`:
+
+```
+caller presses 1 (a leaf on main with jumpTo "2")
+  -> option 1's prompt starts
+caller presses 3 halfway through
+  -> option 1's prompt stops; no jump
+  -> option 3 of main is selected
+```
+
+The same applies to the thank-you prompt after a recording. `#` is not a menu
+digit and never cancels anything.
+
+### `0` and `*` after a jump
+
+Both work as usual from wherever the jump left the caller. `*` steps up one
+level from the *target's* menu — it does not go back to the node that jumped.
+
+## Loops
+
+Two nodes that jump to each other (or one that jumps to itself) loop for as
+long as the caller presses nothing. The channel reaper won't end it: every
+prompt counts as activity.
+
+The worker stops following jumps once a caller has been carried through
+`IVR_MAX_CONSECUTIVE_JUMPS` (default `10`) of them without pressing a menu
+digit, and hangs up:
+
+```
+IVR jump limit reached on channel 5f1c…: 7 -> 8 would be jump 11 without a keypress (IVR_MAX_CONSECUTIVE_JUMPS=10) — hanging up
+```
+
+Any menu digit (including `0` and `*`) resets the count. `#`, and digits pressed
+while recording, do not. A record node inside a loop counts too — each pass is a
+jump, however long the caller spends speaking.
+
+## Reading the report
+
+Jumps show up by comparing `ivrSequence` (the digits pressed) with `ivrPath`
+(the nodes visited). For the example above:
+
+```json
+{
+  "ivrSequence": ["1", "1", "#"],
+  "ivrPath": ["1", "1.1", "2"],
+  "voiceResponses": [{ "path": "1.1", "digit": "1", "status": "uploaded" }]
+}
+```
+
+`"2"` is in `ivrPath` without a matching digit in `ivrSequence`: the caller was
+jumped there. Details:
+
+- Jumps to `main` are not listed in `ivrPath`, the same as a `0` reset.
+- Reports always use dotted paths, never ids — a record node reached by
+  `"#closing"` reports its `path` as e.g. `"2.1"`.
+- A record node reached by a jump reports the last digit of its own path as
+  `digit`, even though the caller never pressed it.
+
+## Validation
+
+When the worker prepares an IVR for a session, it checks the dialplan and logs
+a warning for each problem as `IVR dialplan <url>: <warning>`. **Warnings never
+block the session** — the call-time fallbacks below are safe. The prepared
+dialplan is cached per IVR URL, so the warnings appear once, on the first
+readiness check for that URL.
+
+| Warning                                                                             | At call time                                           | Fix                                                        |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------- |
+| `unresolvable jumpTo "<ref>" on node <n> — ignored, …`                              | The jump is skipped; the node's `hangup` flag applies | Fix the path, or add the missing `id`                      |
+| `jumpTo "<ref>" on node <n> targets <t>, which has no prompt and is not a record node — ignored` | The jump is skipped; the node's `hangup` flag applies | Give the target a `prompt`, or point at another node       |
+| `node <n> has both jumpTo and hangup:true — hangup is ignored`                      | The jump happens                                       | Remove `hangup`, or remove `jumpTo` if hanging up was meant |
+| `node <n> has both jumpTo and sub-options — …`                                      | Sub-options only reachable by pressing early           | Usually a mistake: drop one of them                        |
+| `id "<id>" on node <n> duplicates node <m> — "#<id>" resolves to <m>`               | Every `#<id>` goes to the first node                   | Make ids unique                                            |
+| `node <n> has reserved id "<id>" — …`                                               | `#<id>` never matches                                  | Rename: no leading `#`, not `main`                         |
+| `node <n> has an empty or non-string id`                                            | The id is unusable                                     | Remove it or make it a string                              |
+| `jump cycle 1 -> 2 -> 1 — …`                                                        | A silent caller loops until the jump limit hangs up    | Break the cycle, or accept it as a deliberate replay loop  |
+
+## How it works
+
+- [`ivr-dialplan.util.ts`](../apps/asterisk-worker/src/workers/ivr-dialplan.util.ts)
+  - `resolveJumpTarget` is the only code that reads a `jumpTo` string. It turns
+    `"main"`, `"2.1"` or `"#id"` into a digit path. A new way of addressing
+    nodes only needs changing here.
+  - `validateDialPlan` does the readiness checks above.
+- [`ivr.service.ts`](../apps/asterisk-worker/src/workers/ivr.service.ts)
+  - `handleDTMF` handles digits that aren't a node (`0`, `*`, invalid, `#`) and
+    otherwise calls `enterNode` with the selected path.
+  - `enterNode` records the selection, sets the caller's menu, and plays the
+    node — hanging up after, waiting for input after, starting a recording
+    after, or jumping after.
+  - `jump` checks the loop budget and calls `enterNode` on the target (or plays
+    the main prompt for `"main"`).
+  - `afterRecording` checks for a jump before the `hangup` flag.
+- [`playback.service.ts`](../apps/asterisk-worker/src/workers/playback.service.ts)
+  — a jump is passed to `playPrompt` as `onFinished`. That is the same hook a
+  record node uses to start recording, and it replaces the input timeout, so a
+  jumping node never also starts the "no digit pressed" hangup timer.
+- Why a keypress cancels a jump: `stopActivePlayback` clears the channel's
+  `activePlaybackId` before stopping the playback. When Asterisk then reports
+  that playback finished, the handler sees an id that no longer matches, treats
+  it as stale, and never runs `onFinished`.
+
+## Configuration
+
+| Variable                    | Default | Scope      | Effect                                                             |
+| --------------------------- | ------- | ---------- | ------------------------------------------------------------------ |
+| `IVR_MAX_CONSECUTIVE_JUMPS` | `10`    | Per worker | Jumps a caller can be carried through without pressing a menu digit before the call is hung up |
+
+## Symptoms
+
+| Symptom                                                                 | Likely cause                                                                                                             |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| The node hangs up or waits instead of jumping                           | `jumpTo` didn't resolve — look for `IVR unresolvable jumpTo` (or `which has nothing to play`) in the worker log         |
+| The jump lands on the wrong node                                        | A path target went stale after options were renumbered or moved in the builder — switch to `#id`                        |
+| The call drops after several prompts with no key pressed                | The loop guard: `IVR jump limit reached` in the log. Check the readiness warnings for a `jump cycle`                    |
+| The jump sometimes doesn't happen                                       | The caller pressed a digit during the prompt, which cancels it — check `ivrSequence`                                    |
+| The jumped-to node is silent and the call is tagged `ANSWERED_NO_PLAYBACK` | The target's prompt URL wasn't prepared — for example a `blob:` URL from the builder instead of an `https://` one     |
+| No readiness warnings after editing the dialplan                        | The prepared dialplan is cached per IVR URL; warnings only log the first time a URL is prepared                          |

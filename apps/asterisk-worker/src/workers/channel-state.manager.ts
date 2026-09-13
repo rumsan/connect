@@ -115,6 +115,7 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       dtmfSequence: [],
       menuPath: [],
       ivrSelections: [],
+      jumpsSinceInput: 0,
       voiceResponses: [],
       activeRecordingName: null,
       createdAt: now,
@@ -199,6 +200,22 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     if (!s) return;
     s.ivrSelections.push(label);
     s.lastActivityAt = Date.now();
+  }
+
+  /** Counts a jump taken without a keypress and returns the running total. */
+  countJump(channelId: string): number {
+    const s = this.channelStates.get(channelId);
+    if (!s) return 0;
+    s.jumpsSinceInput += 1;
+    s.lastActivityAt = Date.now();
+    return s.jumpsSinceInput;
+  }
+
+  /** The caller pressed a menu digit — they are driving again. */
+  resetJumps(channelId: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.jumpsSinceInput = 0;
   }
 
   getIvrSelections(channelId: string): string[] {
