@@ -2,11 +2,11 @@ import { InjectQueue } from '@nestjs/bull';
 import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Queue } from 'bull';
-import { UsageService } from './usage.service';
 import {
   USAGE_BACKFILL_JOB,
   USAGE_BACKFILL_QUEUE,
 } from './usage.backfill.worker';
+import { UsageService } from './usage.service';
 
 @Controller('usage')
 @ApiTags('Usage')
@@ -68,18 +68,44 @@ export class UsageController {
   }
 
   @Post('backfill')
-  @ApiOperation({ summary: 'Enqueue backfill of usage snapshots from historical completed sessions' })
+  @ApiOperation({
+    summary:
+      'Enqueue backfill of usage snapshots from historical completed sessions',
+  })
   @ApiQuery({ name: 'batchSize', required: false, example: 100 })
   @ApiQuery({ name: 'concurrency', required: false, example: 5 })
-  async backfill(
+  backfill(
     @Query('batchSize') batchSize?: string,
     @Query('concurrency') concurrency?: string,
+  ) {
+    return this.enqueueBackfill(batchSize, concurrency);
+  }
+
+  @Post('backfill/:appId')
+  @ApiOperation({
+    summary: 'Enqueue backfill of usage snapshots for a specific app',
+  })
+  @ApiQuery({ name: 'batchSize', required: false, example: 100 })
+  @ApiQuery({ name: 'concurrency', required: false, example: 5 })
+  backfillByApp(
+    @Param('appId') appId: string,
+    @Query('batchSize') batchSize?: string,
+    @Query('concurrency') concurrency?: string,
+  ) {
+    return this.enqueueBackfill(batchSize, concurrency, appId);
+  }
+
+  private async enqueueBackfill(
+    batchSize?: string,
+    concurrency?: string,
+    appId?: string,
   ) {
     const job = await this.backfillQueue.add(
       USAGE_BACKFILL_JOB,
       {
         batchSize: batchSize ? parseInt(batchSize, 10) : 100,
         concurrency: concurrency ? parseInt(concurrency, 10) : 5,
+        ...(appId ? { appId } : {}),
       },
       {
         removeOnComplete: true,
@@ -87,7 +113,9 @@ export class UsageController {
       },
     );
     return {
-      message: 'Backfill job enqueued',
+      message: appId
+        ? `Backfill job enqueued for app ${appId}`
+        : 'Backfill job enqueued',
       jobId: job.id,
     };
   }
