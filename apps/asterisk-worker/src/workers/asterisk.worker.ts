@@ -35,8 +35,10 @@ import { SessionModel } from '../entities/session.entity';
 
 import { wait } from '../utils';
 import { AudioService } from './audio.service';
+import { validateDialPlan } from './ivr-dialplan.util';
 import { IVRService } from './ivr.service';
 import { SessionGate } from './session-gate';
+import { IVRDialPlan } from './types/ivr.types';
 
 /**
  * Queue this instance consumes. With WORKER_ID set each worker owns a private
@@ -278,6 +280,13 @@ export class AsteriskWorker extends TransportWorker {
           const { url, preparedData } = await this.audioService.makeJSONReady(
             session,
           );
+          // Authoring mistakes (bad jumpTo, duplicate ids, jump cycles) never
+          // block the session — the call-time fallbacks are safe — but an
+          // operator should hear about them before callers do. Once per IVR,
+          // since the prepared plan is cached.
+          for (const warning of validateDialPlan(preparedData as IVRDialPlan)) {
+            this.logger.warn(`IVR dialplan ${url}: ${warning}`);
+          }
           await this.ivrCache.create({
             url,
             jsonData: JSON.stringify(preparedData),

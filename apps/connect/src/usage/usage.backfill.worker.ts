@@ -15,14 +15,17 @@ export class UsageBackfillWorker {
   ) {}
 
   @Process(USAGE_BACKFILL_JOB)
-  async processBackfill(job: Job<{ batchSize: number; concurrency: number }>) {
-    const { batchSize, concurrency } = job.data;
+  async processBackfill(
+    job: Job<{ batchSize: number; concurrency: number; appId?: string }>,
+  ) {
+    const { batchSize, concurrency, appId } = job.data;
     this.logger.log(
-      `Processing backfill job ${job.id}: batchSize=${batchSize}, concurrency=${concurrency}`,
+      `Processing backfill job ${job.id}: appId=${appId ?? 'all'}, batchSize=${batchSize}, concurrency=${concurrency}`,
     );
     const result = await this.usageBackfillService.backfill(
       batchSize,
       concurrency,
+      appId,
     );
     this.logger.log(`Backfill job ${job.id} complete: ${result.total} sessions`);
     return result;

@@ -5,11 +5,13 @@ import {
   CallDetails,
   CallDisposition,
   QueueBroadcastLogVoice,
+  TERMINAL_VOICE_RESPONSE_STATUSES,
 } from '@rumsan/connect/types';
 import { ChannelWrapper } from 'amqp-connection-manager';
 import AsteriskManager from 'asterisk-manager';
 import { getAsteriskDisposition } from '../utils';
 import { ChannelStateManager } from './channel-state.manager';
+import { RecordingService } from './recording.service';
 
 const amiConfig = {
   host: process.env.ASTERISK_HOST,
@@ -45,6 +47,7 @@ export class AMIService implements OnModuleDestroy {
     private readonly batchManager: BatchManger,
     private readonly broadcastLogQueue: BroadcastLogQueue,
     private readonly channelStateManager: ChannelStateManager,
+    private readonly recordingService: RecordingService,
   ) {
     this.startIvrReaper();
   }
@@ -150,6 +153,11 @@ export class AMIService implements OnModuleDestroy {
           this.ivrSequences.delete(evt.uniqueid);
           this.ivrSequenceTimestamps.delete(evt.uniqueid);
 
+          // Read before consumePlaybackSnapshot below wipes the snapshot.
+          const voiceResponses = this.channelStateManager.getVoiceResponses(
+            evt.uniqueid,
+          );
+
           const ps = this.channelStateManager.getPlaybackStatus(evt.uniqueid);
           const answered = disposition === CallDisposition.ANSWERED;
           const playbackOk =
@@ -178,6 +186,7 @@ export class AMIService implements OnModuleDestroy {
             hangupDetails: evt,
             ivrSequence: [...ivrSequence],
             ivrPath: [...ivrPath],
+            ...(voiceResponses.length ? { voiceResponses } : {}),
           };
           await this.broadcastLogQueue.addVoice(broadcastLog);
           await this.batchManager.endMonitoring(evt.uniqueid);
@@ -185,6 +194,20 @@ export class AMIService implements OnModuleDestroy {
           this.logger.log(
             `Call Hangup: ${evt.uniqueid}, status=${status}${errorTag ? ` (${errorTag})` : ''}, DTMF: [${ivrSequence.join(',')}], IVR path: [${ivrPath.join(',')}]`,
           );
+
+          // Uploads outlive the call. The report above already carries every
+          // recording's location, so this only ever adds the S3 URLs — it can
+          // never hold up the disposition or the batch slot just freed.
+          if (
+            voiceResponses.some(
+              (v) => !TERMINAL_VOICE_RESPONSE_STATUSES.includes(v.status),
+            )
+          ) {
+            this.recordingService.attachReport(evt.uniqueid, {
+              broadcastLogId: broadcastLog.broadcastLogId,
+              voiceResponses,
+            });
+          }
         } else {
           this.ivrSequences.delete(evt.uniqueid);
           this.ivrSequenceTimestamps.delete(evt.uniqueid);

@@ -33,6 +33,12 @@ export class LogWorker implements OnModuleInit {
       await this.channel.addSetup(async (channel: ConfirmChannel) => {
         await channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
 
+        // One message at a time. Several writers (the hangup report, the
+        // deferred CDR, the voice-response follow-up) update the same
+        // broadcastLog through a non-transactional read-modify-write, and
+        // concurrent delivery lets them clobber each other's fields.
+        await channel.prefetch(1);
+
         await channel.consume(QUEUES.TO_CONNECT, async (message) => {
           if (message) {
             const content: QueueJobData<QueueBroadcastLog> = JSON.parse(

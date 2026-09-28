@@ -12,7 +12,9 @@ import { ConnectionLifecycleManager } from './connection-lifecycle.manager';
 import { LogStreamModule } from '@rsconnect/log-stream';
 import { IVRService } from './ivr.service';
 import { PlaybackService } from './playback.service';
+import { RecordingService } from './recording.service';
 import { SessionGate } from './session-gate';
+import { StorageService } from './storage.service';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { SessionGate } from './session-gate';
     ChannelStateManager,
     ConnectionLifecycleManager,
     PlaybackService,
+    RecordingService,
+    StorageService,
     IVRService,
     SessionGate,
   ],
