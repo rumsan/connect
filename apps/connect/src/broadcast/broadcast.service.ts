@@ -383,7 +383,14 @@ export class BroadcastService {
       batchSize,
       session.Transport.cuid,
     );
-    if (batchGuard.halt) return;
+    if (batchGuard.halt) {
+      await this.transportQueue.notifySessionComplete({
+        transportQueue: this._getQueueName(transportType),
+        sessionCuid,
+        workerId,
+      });
+      return;
+    }
     batchSize = batchGuard.batchSize;
 
     // Claim before validating: ownership has to be settled in one statement,
