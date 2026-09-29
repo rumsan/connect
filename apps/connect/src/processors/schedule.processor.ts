@@ -38,7 +38,7 @@ export class ScheduleProcessor {
   @Process('schedule')
   async processSchedule(job: Job) {
     console.log(job.data);
-    this.broadcastService.checkTransportReadiness(
+    this.broadcastService.runScheduledSession(
       job.data.sessionCuid,
       job.data.transportType as TransportType,
     );

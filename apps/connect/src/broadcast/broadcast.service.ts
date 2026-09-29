@@ -1,4 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createId } from '@paralleldrive/cuid2';
 import {
@@ -106,6 +112,98 @@ export class BroadcastService {
         jobId: sessionCuid,
       },
     );
+  }
+
+  /**
+   * Start a scheduled session whose job has come due. Sessions that have left
+   * NEW (cancelled, or already started) are skipped, so a job that outlived a
+   * cancellation does nothing.
+   */
+  async runScheduledSession(sessionCuid: string, transportType: TransportType) {
+    try {
+      const session = await this.prisma.session.findUnique({
+        where: { cuid: sessionCuid },
+        select: { status: true },
+      });
+      if (session?.status !== SessionStatus.NEW) {
+        this.logger.log(
+          `Skipping scheduled session ${sessionCuid}: status is ${
+            session?.status ?? 'missing'
+          }`,
+        );
+        return;
+      }
+      await this.checkTransportReadiness(sessionCuid, transportType);
+    } catch (err) {
+      this.logger.error(
+        `Failed to run scheduled session ${sessionCuid}`,
+        err as Error,
+      );
+    }
+  }
+
+  /**
+   * Cancel a scheduled session that has not started yet. The session and its
+   * pending broadcasts are marked CANCELLED; endedAt records when.
+   */
+  async cancelScheduledSession(sessionCuid: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { cuid: sessionCuid },
+      select: { status: true, triggerType: true },
+    });
+    if (!session) throw new NotFoundException('Session not found');
+    if (session.triggerType !== TriggerType.SCHEDULED) {
+      throw new BadRequestException('Only scheduled sessions can be cancelled');
+    }
+
+    const cancelledAt = new Date();
+    const cancelledBroadcasts = await this.prisma.$transaction(async (tx) => {
+      // Guarded on NEW so a session that started meanwhile is left alone.
+      const updated = await tx.session.updateMany({
+        where: { cuid: sessionCuid, status: SessionStatus.NEW },
+        data: { status: SessionStatus.CANCELLED, endedAt: cancelledAt },
+      });
+      if (updated.count === 0) return null;
+
+      // isComplete keeps them out of retries and the reclaim sweeper.
+      const broadcasts = await tx.broadcast.updateMany({
+        where: { session: sessionCuid, status: BroadcastStatus.SCHEDULED },
+        data: { status: BroadcastStatus.CANCELLED, isComplete: true },
+      });
+      return broadcasts.count;
+    });
+
+    if (cancelledBroadcasts === null) {
+      throw new ConflictException(
+        'Session has already started and can no longer be cancelled',
+      );
+    }
+
+    // Best effort: runScheduledSession skips non-NEW sessions anyway.
+    try {
+      if (this.redisZsetScheduler.isEnabled()) {
+        await this.redisZsetScheduler.unschedule(sessionCuid);
+      } else {
+        const job = await this.scheduleQueue.getJob(sessionCuid);
+        await job?.remove();
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Cancelled session ${sessionCuid} but could not remove its queued job: ${
+          (err as Error).message
+        }`,
+      );
+    }
+
+    this.logger.log(
+      `Cancelled scheduled session ${sessionCuid} (${cancelledBroadcasts} broadcasts)`,
+    );
+    return {
+      cuid: sessionCuid,
+      cancelled: true,
+      cancelledAt,
+      broadcasts: cancelledBroadcasts,
+    };
   }
 
   async create(appId: string, dto: BroadcastDto) {
@@ -604,7 +702,7 @@ export class BroadcastService {
       const { count } = await this.prisma.session.updateMany({
         where: {
           cuid: sessionCuid,
-          status: { not: SessionStatus.COMPLETED },
+          status: { notIn: [SessionStatus.COMPLETED, SessionStatus.CANCELLED] },
         },
         data: {
           status: SessionStatus.COMPLETED,

@@ -11,6 +11,7 @@ export enum SessionStatus {
   PENDING = 'PENDING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+  CANCELLED = 'CANCELLED',
 }
 
 export type Session = {

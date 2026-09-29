@@ -28,6 +28,7 @@ enum SessionStatus {
   PENDING
   COMPLETED
   FAILED
+  CANCELLED
 }
 
 enum TriggerType {
@@ -41,6 +42,7 @@ enum BroadcastStatus {
   PENDING
   SUCCESS
   FAIL
+  CANCELLED
 }
 
 enum ValidationContent {

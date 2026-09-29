@@ -15,6 +15,7 @@ type ScheduledBroadcastPayload = {
 interface RedisClient {
   hset: (key: string, field: string, value: string) => Promise<number>;
   zadd: (key: string, score: number, member: string) => Promise<number>;
+  zrem: (key: string, member: string) => Promise<number>;
   eval: (script: string, numKeys: number, ...args: any[]) => Promise<any>;
   hget: (key: string, field: string) => Promise<string | null>;
   hdel: (key: string, field: string) => Promise<number>;
@@ -159,6 +160,16 @@ return ids
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Remove a job that has not been claimed yet (e.g. a cancelled session).
+   * @param id - Job identifier
+   */
+  async unschedule(id: string): Promise<void> {
+    const client = this.getRedisClient();
+    await client.zrem(this.keyZset(), id);
+    await client.hdel(this.keyPayloadHash(), id);
   }
 
   /**
