@@ -114,12 +114,12 @@ export class ListBroadcastDto extends PaginationDto {
 
   @ApiProperty({
     example: 'SUCCESS',
-    description: 'Filter by status (SUCCESS, PENDING, FAILED)',
+    description: 'Filter by status (SCHEDULED, PENDING, SUCCESS, FAIL, CANCELLED)',
     required: false,
   })
   @IsOptional()
   @IsEnum(BroadcastStatus, {
-    message: 'status must be one of PENDING,SCHEDULED, SUCCESS, or FAILED',
+    message: 'status must be one of SCHEDULED, PENDING, SUCCESS, FAIL, or CANCELLED',
   })
   status?: BroadcastStatus;
 

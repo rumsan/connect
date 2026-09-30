@@ -81,6 +81,14 @@ export class SessionController {
     return this.sessionService.triggerBroadcast(cuid, dto.include_failed);
   }
 
+  @Post(':cuid/cancel')
+  @ApiOperation({
+    summary: 'Cancel a scheduled broadcast that has not started yet',
+  })
+  cancelScheduled(@Param('cuid') cuid: string) {
+    return this.sessionService.cancelScheduled(cuid);
+  }
+
   @Post('broadcast-counts')
   @ApiOperation({
     summary:

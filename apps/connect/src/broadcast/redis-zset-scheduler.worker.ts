@@ -41,7 +41,7 @@ export class RedisZsetSchedulerWorker implements OnModuleInit {
         continue;
       }
 
-      this.broadcastService.checkTransportReadiness(
+      this.broadcastService.runScheduledSession(
         payload.sessionCuid,
         payload.transportType as TransportType,
       );

@@ -8,6 +8,7 @@ export enum BroadcastStatus {
   PENDING = 'PENDING',
   SUCCESS = 'SUCCESS',
   FAIL = 'FAIL',
+  CANCELLED = 'CANCELLED',
 }
 
 export type Message = {

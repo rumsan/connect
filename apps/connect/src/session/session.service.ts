@@ -39,6 +39,11 @@ export class SessionService {
     );
   }
 
+  cancelScheduled(sessionCuid: string) {
+    this.logger.log(`Cancelling scheduled session: ${sessionCuid}`);
+    return this.broadcastService.cancelScheduledSession(sessionCuid);
+  }
+
   findAll(
     appId: string,
     dto: ListSessionDto,
@@ -210,6 +215,7 @@ export class SessionService {
       PENDING: 0,
       SUCCESS: 0,
       FAIL: 0,
+      CANCELLED: 0,
       TOTAL: 0,
       TOTAL_PRICE: 0,
     };
