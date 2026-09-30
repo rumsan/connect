@@ -42,7 +42,6 @@ export class ApiWorker extends TransportWorker {
       jobData.sessionId,
     );
 
-    this.transport.init(session.Transport?.config as TransportApiConfig);
     const bulkDataTpl = extractBulkDataTemplate(session.Transport?.config);
 
     if (bulkDataTpl) {
@@ -76,14 +75,16 @@ export class ApiWorker extends TransportWorker {
       `Processing bulk broadcast job for session: ${jobData.sessionId}`,
     );
     const addresses = jobData.broadcasts.map((b) => b.address);
+    const config = session.Transport?.config as TransportApiConfig;
     let result;
     let status = BroadcastStatus.SUCCESS;
     try {
       result = await this.transport.sendBulk(
+        config,
         addresses,
         session.message as Message,
       );
-      const outcome = this.transport.normalizeSendOutcome(result);
+      const outcome = this.transport.normalizeSendOutcome(config, result);
       status = outcome.status;
       result = outcome.details;
     } catch (e: any) {
@@ -118,13 +119,15 @@ export class ApiWorker extends TransportWorker {
       `Sending broadcast for session: ${data.session.cuid}, address: ${data.broadcastJob.address}`,
     );
     const { session, broadcastLog, broadcastJob } = data;
+    const config = session.Transport?.config as TransportApiConfig;
 
     try {
       const res = await this.transport.send(
+        config,
         broadcastJob.address,
         session.message as Message,
       );
-      const outcome = this.transport.normalizeSendOutcome(res);
+      const outcome = this.transport.normalizeSendOutcome(config, res);
       broadcastLog.status = outcome.status;
       broadcastLog.details = outcome.details;
     } catch (e: any) {
