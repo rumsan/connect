@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { workerLabel } from '@rsconnect/queue';
 import { Session } from '@rumsan/connect/types';
 import axios from 'axios';
 import ffmpeg from 'fluent-ffmpeg';
@@ -14,6 +15,14 @@ const sftpConfig = {
   audioPath: process.env.ASTERISK_AUDIO_PATH,
 };
 
+/**
+ * Scratch space for downloads and ffmpeg output, scoped per worker so two
+ * instances on one host can prepare the same session concurrently without
+ * overwriting each other mid-transfer. The remote path stays keyed by session
+ * cuid — each worker uploads to its own Asterisk box.
+ */
+const SCRATCH_DIR = `.data/${workerLabel()}`;
+
 @Injectable()
 export class AudioService {
   private readonly logger = new Logger(AudioService.name);
@@ -24,8 +33,8 @@ export class AudioService {
   }
 
   async makeAudioReady(session: Session) {
-    const rawFile = `.data/${session.cuid}-raw.wav`;
-    const convertedFile = `.data/${session.cuid}.wav`;
+    const rawFile = `${SCRATCH_DIR}/${session.cuid}-raw.wav`;
+    const convertedFile = `${SCRATCH_DIR}/${session.cuid}.wav`;
     const asteriskFile = `${sftpConfig.audioPath}/${session.cuid}.wav`;
     this.logger.log('Preparing audio file for Asterisk');
     // download file from message.content
@@ -51,8 +60,8 @@ export class AudioService {
     const urls = await this.extractAudioURLs(record);
     for (const url of urls) {
       const urlHash = url.split('/').pop();
-      const rawFile = `.data/${urlHash}-raw.wav`;
-      const convertedFile = `.data/${urlHash}.wav`;
+      const rawFile = `${SCRATCH_DIR}/${urlHash}-raw.wav`;
+      const convertedFile = `${SCRATCH_DIR}/${urlHash}.wav`;
       const asteriskFile = `${sftpConfig.audioPath}/${urlHash}.wav`;
       // download file from message.content
       await this.downloadFile(url, rawFile);

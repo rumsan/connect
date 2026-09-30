@@ -9,10 +9,12 @@ import { NestFactory } from '@nestjs/core';
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
+import { LogStreamService } from '@rsconnect/log-stream';
 import { RsExceptionFilter } from '@rumsan/extensions/exceptions';
 import { ResponseTransformInterceptor } from '@rumsan/extensions/interceptors';
 import { WinstonModule } from 'nest-winston';
 import { AppModule } from './app/app.module';
+import { LogStreamTransport } from './utils/log-stream.transport';
 import { loggerInstance } from './utils/winston.logger';
 
 // import { GlobalExceptionFilter } from './utils/exceptions/rpcException.filter';
@@ -25,6 +27,8 @@ async function bootstrap() {
   });
   const globalPrefix = 'api/v1';
   app.enableCors();
+
+  loggerInstance.add(new LogStreamTransport(app.get(LogStreamService)));
 
   // app.use(bodyParser.raw({ type: 'application/octet-stream' }));
   app.use(bodyParser.raw({ type: 'application/octet-stream', limit: '50mb' }));

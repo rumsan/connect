@@ -7,6 +7,9 @@ export class PlaybackService {
   private readonly logger = new Logger(PlaybackService.name);
   private client: Client;
   private audioPath: string;
+  // How long a caller has to press the next digit before the call is dropped.
+  private readonly inputTimeoutMs =
+    +(process.env['IVR_INPUT_TIMEOUT_MS'] as string) || 10_000;
 
   constructor(private readonly channelStateManager: ChannelStateManager) {
     this.audioPath = process.env.ASTERISK_AUDIO_PATH || '';
@@ -101,12 +104,24 @@ export class PlaybackService {
     }
   }
 
+  /**
+   * Plays one IVR prompt.
+   *
+   * What happens when it finishes depends on `opts`: hang up immediately, run
+   * `onFinished` (used to start a recording — the input timeout must not be
+   * armed then, or a long message would be cut short), or, by default, wait
+   * `inputTimeoutMs` for the caller's next digit.
+   */
   async playPrompt(
     channelId: string,
     media: string,
     channel: Channel,
-    immediateHangup = false,
+    opts: {
+      immediateHangup?: boolean;
+      onFinished?: () => Promise<void>;
+    } = {},
   ) {
+    const { immediateHangup = false, onFinished } = opts;
     const channelState = this.channelStateManager.getState(channelId);
     if (!channelState?.isActive) {
       this.logger.warn(
@@ -176,8 +191,16 @@ export class PlaybackService {
             );
           }
           // Cleanup will be triggered by StasisEnd event
+        } else if (onFinished) {
+          try {
+            await onFinished();
+          } catch (err) {
+            this.logger.error(
+              `onFinished handler failed for channel ${channelId}: ${(err as Error).message}`,
+            );
+          }
         } else if (channelState.isActive) {
-          this.channelStateManager.scheduleHangup(channelId, 10000);
+          this.channelStateManager.scheduleHangup(channelId, this.inputTimeoutMs);
         }
       });
 

@@ -1,11 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Transport } from '@prisma/client';
 import {
   BroadcastStatus,
   SessionStatus,
   TransportType,
 } from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
-import { Transport } from '@prisma/client';
 
 type TwilioBatchingState = {
   enabled: boolean;
@@ -74,7 +74,7 @@ export class TwilioBatchingService {
     const since = new Date(Date.now() - intervalHours * 3_600_000);
 
     const where = {
-      createdAt: { gte: since },
+      lastAttempt: { gte: since },
       status: {
         in: [
           BroadcastStatus.PENDING,
@@ -90,14 +90,16 @@ export class TwilioBatchingService {
       this.prisma.broadcast.count({ where }),
       this.prisma.broadcast.findFirst({
         where,
-        orderBy: { createdAt: 'asc' },
-        select: { createdAt: true },
+        orderBy: { lastAttempt: 'asc' },
+        select: { lastAttempt: true },
       }),
     ]);
 
-    const oldestSentAt = oldest?.createdAt ?? null;
+    const oldestSentAt = oldest?.lastAttempt ?? null;
     const nextAvailableAt = oldestSentAt
-      ? new Date(oldestSentAt.getTime() + intervalHours * 3_600_000).toISOString()
+      ? new Date(
+          oldestSentAt.getTime() + intervalHours * 3_600_000,
+        ).toISOString()
       : null;
 
     return {
@@ -170,7 +172,10 @@ export class TwilioBatchingService {
       intervalHours = 24,
     } = twilioBatching;
     const rollingUsage = transportCuid
-      ? await this.getRollingWindowUsageForTransport(transportCuid, intervalHours)
+      ? await this.getRollingWindowUsageForTransport(
+          transportCuid,
+          intervalHours,
+        )
       : null;
 
     const effectiveSentCount = rollingUsage?.sentCount ?? roundSentCount;
@@ -196,7 +201,9 @@ export class TwilioBatchingService {
           },
         });
         this.logger.log(
-          `Twilio daily limit (${dailyLimit}) reached for session ${sessionCuid}. Sent in rolling window: ${effectiveSentCount}. Oldest sent at: ${rollingUsage?.oldestSentAt?.toISOString() ?? 'n/a'}. Next round at ${nextRoundAt}`,
+          `Twilio daily limit (${dailyLimit}) reached for session ${sessionCuid}. Sent in rolling window: ${effectiveSentCount}. Oldest sent at: ${
+            rollingUsage?.oldestSentAt?.toISOString() ?? 'n/a'
+          }. Next round at ${nextRoundAt}`,
         );
       }
 
@@ -273,10 +280,14 @@ export class TwilioBatchingService {
       (twilioBatching.roundSentCount ?? 0) + queuedCount;
 
     const rollingUsage = transportCuid
-      ? await this.getRollingWindowUsageForTransport(transportCuid, intervalHours)
+      ? await this.getRollingWindowUsageForTransport(
+          transportCuid,
+          intervalHours,
+        )
       : null;
 
-    const effectiveSentCount = rollingUsage?.sentCount ?? fallbackRoundSentCount;
+    const effectiveSentCount =
+      rollingUsage?.sentCount ?? fallbackRoundSentCount;
     const limitReached = effectiveSentCount >= twilioBatching.dailyLimit;
     const nextRoundAt = limitReached
       ? rollingUsage?.nextAvailableAt ??
@@ -357,6 +368,7 @@ export class TwilioBatchingService {
       ] as TwilioBatchingState | undefined;
 
       if (!tb?.nextRoundAt) continue;
+      if (new Date(tb.nextRoundAt).getTime() > now.getTime()) continue;
 
       const scheduledCount = await this.prisma.broadcast.count({
         where: {

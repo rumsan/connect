@@ -115,6 +115,14 @@ export class ApiTransport implements IService {
   }
 
   normalizeSendOutcome(details: Record<string, any>): ApiSendOutcome {
+    if (this.isPlasgateProvider()) {
+      return this.normalizePlasgateOutcome(details);
+    }
+
+    if (this.isAdnSmsProvider()) {
+      return this.normalizeAdnSmsOutcome(details);
+    }
+
     if (!this.isTwilioProvider()) {
       return {
         status: BroadcastStatus.SUCCESS,
@@ -144,5 +152,60 @@ export class ApiTransport implements IService {
 
   private isTwilioProvider(): boolean {
     return this.config?.['meta']?.provider === 'twilio';
+  }
+
+  private isPlasgateProvider(): boolean {
+    return this.config?.['meta']?.provider === 'plasgate';
+  }
+
+  private isAdnSmsProvider(): boolean {
+    return this.config?.['meta']?.provider === 'adnsms';
+  }
+
+  private normalizeAdnSmsOutcome(details: Record<string, any>): ApiSendOutcome {
+    const code = Number(details?.['api_response_code']);
+    const invalidNumbers = Array.isArray(details?.['invalid_numbers'])
+      ? details['invalid_numbers']
+      : [];
+
+    if (code !== 200 || invalidNumbers.length > 0) {
+      return {
+        status: BroadcastStatus.FAIL,
+        details: {
+          ...details,
+          provider: 'adnsms',
+          error:
+            details?.['error']?.['error_message'] ??
+            (invalidNumbers.length > 0 ? 'INVALID_NUMBER' : undefined) ??
+            details?.['api_response_message'],
+        },
+      };
+    }
+
+    return {
+      status: BroadcastStatus.PENDING,
+      details: {
+        ...details,
+        provider: 'adnsms',
+        providerMessageSid: details?.['sms_uid'] ?? null,
+        campaignUid: details?.['campaign_uid'] ?? null,
+      },
+    };
+  }
+
+  private normalizePlasgateOutcome(
+    details: Record<string, any>,
+  ): ApiSendOutcome {
+    const queueId =
+      details?.['queue_id'] ?? details?.['queueId'] ?? details?.['id'] ?? null;
+
+    return {
+      status: BroadcastStatus.PENDING,
+      details: {
+        ...details,
+        provider: 'plasgate',
+        providerMessageSid: queueId,
+      },
+    };
   }
 }

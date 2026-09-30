@@ -12,6 +12,32 @@ import { BroadcastService } from '../broadcast/broadcast.service';
 
 type TwilioWebhookPayload = Record<string, any>;
 
+type PlasgateDlrPayload = Record<string, any>;
+
+// Plasgate (Jasmin) DLR `message_status` → BroadcastStatus.
+function mapPlasgateStatusToBroadcastStatus(
+  messageStatus: string | null,
+  errCode: string | null,
+): BroadcastStatus {
+  if (errCode && errCode !== '000' && errCode !== '0') {
+    return BroadcastStatus.FAIL;
+  }
+
+  switch ((messageStatus ?? '').toUpperCase()) {
+    case 'DELIVRD':
+      return BroadcastStatus.SUCCESS;
+    case 'UNDELIV':
+    case 'EXPIRED':
+    case 'REJECTD':
+    case 'DELETED':
+    case 'UNKNOWN':
+      return BroadcastStatus.FAIL;
+    // ESME_ROK / ACCEPTD / BUFFRED and anything else = not yet final.
+    default:
+      return BroadcastStatus.PENDING;
+  }
+}
+
 @Injectable()
 export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
@@ -126,6 +152,110 @@ export class WebhookService {
       providerMessageSid,
       providerStatus: providerStatus ?? rawProviderStatus ?? null,
       broadcastStatus: groupedStatus,
+    };
+  }
+
+  async handlePlasgateDlrWebhook(params: PlasgateDlrPayload) {
+    this.logger.log(`Received Plasgate DLR: ${JSON.stringify(params)}`);
+
+    const providerMessageSid = params?.id ? String(params.id) : undefined;
+    if (!providerMessageSid) {
+      return { message: 'Plasgate DLR received without id', processed: false };
+    }
+
+    const level = params?.level != null ? String(params.level) : null;
+    const rawStatus = params?.message_status
+      ? String(params.message_status)
+      : null;
+    const errCode = params?.err != null ? String(params.err) : null;
+    const status = mapPlasgateStatusToBroadcastStatus(rawStatus, errCode);
+
+    const broadcast = await this.findBroadcastByProviderMessageSid(
+      providerMessageSid,
+    );
+    if (!broadcast) {
+      this.logger.warn(
+        `No broadcast found for Plasgate message id ${providerMessageSid}`,
+      );
+      return {
+        message: 'Plasgate DLR received but no broadcast matched',
+        processed: false,
+      };
+    }
+
+    // Idempotency / ordering guard: once a broadcast is final, ignore duplicate
+    // finals and any late non-final (submission) callbacks.
+    const currentStatus = broadcast.status as BroadcastStatus;
+    if (
+      isTerminalBroadcastStatus(currentStatus) &&
+      (currentStatus === status || !isTerminalBroadcastStatus(status))
+    ) {
+      return {
+        message: 'Plasgate DLR ignored (already final or duplicate)',
+        processed: false,
+        broadcastId: broadcast.cuid,
+        providerMessageSid,
+        broadcastStatus: currentStatus,
+      };
+    }
+
+    const attempt = Math.max(
+      broadcast.attempts,
+      broadcast.Logs[0]?.attempt ?? 0,
+      1,
+    );
+
+    const disposition = {
+      ...((broadcast.disposition as Record<string, any>) ?? {}),
+      provider: 'plasgate',
+      providerStatus: rawStatus,
+      providerMessageSid,
+      level,
+      idSmsc: params?.id_smsc ?? null,
+      err: errCode,
+      subdate: params?.subdate ?? null,
+      donedate: params?.donedate ?? null,
+      lastWebhookAt: new Date().toISOString(),
+      lastWebhookPayload: params,
+    };
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.broadcastLog.create({
+        data: {
+          cuid: createId(),
+          app: broadcast.app,
+          session: broadcast.session,
+          broadcast: broadcast.cuid,
+          status,
+          attempt,
+          details: disposition,
+          notes: `Plasgate DLR level ${level ?? '?'}: ${
+            rawStatus ?? 'unknown'
+          }${errCode && errCode !== '000' ? ` (err ${errCode})` : ''}`,
+        },
+      });
+
+      await tx.broadcast.update({
+        where: { cuid: broadcast.cuid },
+        data: {
+          status,
+          disposition,
+          isComplete: isTerminalBroadcastStatus(status),
+        },
+      });
+    });
+
+    if (isTerminalBroadcastStatus(status)) {
+      await this.broadcastService.syncSessionCompletion(broadcast.session);
+    }
+
+    return {
+      message: 'Plasgate DLR processed successfully',
+      processed: true,
+      broadcastId: broadcast.cuid,
+      providerMessageSid,
+      providerStatus: rawStatus,
+      broadcastStatus: status,
     };
   }
 

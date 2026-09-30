@@ -1,0 +1,47 @@
+meta {
+  name: send-voice-2
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-voice}}",
+    "message": {
+    // "content": "https://lime-voluntary-lizard-659.mypinata.cloud/ipfs/bafybeiaay3cpmbomiskvooz4mtwlbs2o55hvyyc6h5pbsij4nj3nlaentq",
+      "content":"https://lime-voluntary-lizard-659.mypinata.cloud/ipfs/bafybeicxvh3y4mwcucf7grhbdgey2cqcxeq2txi3o32df3pdjkxststtcq",
+      "meta": {}
+    },
+    "addresses": [
+      "9705069368"
+    ],
+    "maxAttempts": 2,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "xref":"test-1",
+    "options": {
+      "scheduledTime": "2h",
+      "allowedTimeFrame": "09:00-18:00",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setEnvVar("session-id", data.cuid);
+    bru.setEnvVar("xref",data.xref);
+  }
+}

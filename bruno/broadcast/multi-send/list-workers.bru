@@ -1,0 +1,43 @@
+meta {
+  name: list-workers
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{url}}/broadcasts/workers
+  body: none
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+docs {
+  # Fleet roster
+
+  Every worker currently heartbeating, ordered the way work is filled:
+  transport, then priority, then workerId.
+
+  An empty list right after connect starts is expected — the roster rebuilds
+  within one WORKER_HEARTBEAT_MS (default 15s).
+
+  A worker missing here but owning rows in the DB is a dead worker.
+}
+
+tests {
+  var data = res.getBody();
+
+  test("worker ids are unique", function() {
+    var ids = data.map(function(w) { return w.workerId; });
+    expect(new Set(ids).size).to.equal(ids.length);
+  });
+
+  test("priorities are set", function() {
+    data.forEach(function(w) {
+      expect(w.priority).to.be.a("number");
+      expect(w.capacity).to.be.a("number");
+    });
+  });
+}

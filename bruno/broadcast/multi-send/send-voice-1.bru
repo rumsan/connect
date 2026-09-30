@@ -1,0 +1,47 @@
+meta {
+  name: send-voice-1
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{url}}/broadcasts
+  body: json
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+body:json {
+  {
+    "transport": "{{transport-id-voice}}",
+    "message": {
+    // "content": "https://lime-voluntary-lizard-659.mypinata.cloud/ipfs/bafybeiaay3cpmbomiskvooz4mtwlbs2o55hvyyc6h5pbsij4nj3nlaentq",
+      "content":"https://rahat-rumsan.s3.us-east-1.amazonaws.com/aa/dev/QmSukMcbeT2DmVCpFMYgWgfBKKqddfEADuxfKPvHbU1gSC",
+      "meta": {}
+    },
+    "addresses": [
+      "9841602388"
+    ],
+    "maxAttempts": 2,
+    "trigger": "IMMEDIATE",
+    "webhook": "",
+    "xref":"test-1",
+    "options": {
+      "scheduledTime": "2h",
+      "allowedTimeFrame": "09:00-18:00",
+      "attemptIntervalMinutes": "5"
+    }
+  }
+}
+
+tests {
+  var data = res.getBody().data;
+  
+  if(data){
+    bru.setEnvVar("session-id", data.cuid);
+    bru.setEnvVar("xref",data.xref);
+  }
+}

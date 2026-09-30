@@ -1,0 +1,27 @@
+meta {
+  name: worker-health-w1
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{worker1-url}}/health
+  body: none
+  auth: none
+}
+
+docs {
+  # Worker 1 health
+
+  Identity, capacity and current load straight from the worker process.
+
+  - `activeSession` — the session its SessionGate is committed to, null if free.
+    A worker with a null activeSession is a spillover candidate.
+  - `pendingSessions` — sessions queued behind the active one on this worker.
+  - `inFlight` — broadcasts it is currently handling.
+  - `queue` — should be `rsconnect.transport.voice.<workerId>`. If it reads
+    `rsconnect.transport.voice`, WORKER_ID is not set and this worker is running
+    in single-worker mode.
+
+  Set `worker1-url` in the environment, e.g. http://localhost:5653/api
+}

@@ -1,0 +1,38 @@
+meta {
+  name: session-workers
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{url}}/broadcasts/{{session-id}}/workers
+  body: none
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+docs {
+  # Per-session worker breakdown
+
+  Shows how a session's broadcasts are split across workers, with status counts
+  and whether each worker is still reporting in.
+
+  `workerId: "unclaimed"` counts rows nobody has taken yet — normal mid-session,
+  a problem if it stays non-zero after the session should be finished.
+
+  `live: false` on a worker that owns PENDING rows means that worker died; those
+  rows will be reclaimed after BROADCAST_CLAIM_TTL_MS.
+}
+
+tests {
+  var data = res.getBody();
+
+  test("every claimed broadcast has exactly one owner", function() {
+    var claimed = data.filter(function(w) { return w.workerId !== "unclaimed"; });
+    var ids = claimed.map(function(w) { return w.workerId; });
+    expect(new Set(ids).size).to.equal(ids.length);
+  });
+}

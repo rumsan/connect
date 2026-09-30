@@ -4,6 +4,7 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { VoiceResponse } from '@rumsan/connect/types';
 import { Client } from 'ari-client';
 import {
   ChannelState,
@@ -21,10 +22,25 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
   // still read them.
   private playbackSnapshots = new Map<
     string,
-    PlaybackStatus & { dtmfSequence: string[]; isIvr: boolean; snapshotAt: number }
+    PlaybackStatus & {
+      dtmfSequence: string[];
+      ivrSelections: string[];
+      voiceResponses: VoiceResponse[];
+      isIvr: boolean;
+      snapshotAt: number;
+    }
   >();
   private readonly snapshotRetentionMs = 60_000;
+  // Serializes DTMF handling per channel. Two keypresses arriving back to back
+  // would otherwise both read the same menuPath and descend from it twice.
+  private dtmfChains = new Map<string, Promise<void>>();
   private drainCallback: (() => void) | null = null;
+  // Registered by RecordingService so a channel teardown can finalize any
+  // recording still in flight. A callback rather than an injection, to keep
+  // this service free of a dependency on the thing that depends on it.
+  private recordingCleanupCallback:
+    | ((channelId: string, voiceResponses: VoiceResponse[]) => void)
+    | null = null;
   private reaperTimer: NodeJS.Timeout | null = null;
   private readonly channelTtlMs =
     +(process.env['CHANNEL_TTL_MS'] as string) || 180_000;
@@ -49,6 +65,12 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
 
   clearDrainCallback() {
     this.drainCallback = null;
+  }
+
+  onRecordingCleanup(
+    callback: (channelId: string, voiceResponses: VoiceResponse[]) => void,
+  ) {
+    this.recordingCleanupCallback = callback;
   }
 
   onModuleInit() {
@@ -91,6 +113,11 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       playbackFailed: false,
       playbackError: undefined,
       dtmfSequence: [],
+      menuPath: [],
+      ivrSelections: [],
+      jumpsSinceInput: 0,
+      voiceResponses: [],
+      activeRecordingName: null,
       createdAt: now,
       lastActivityAt: now,
     };
@@ -152,6 +179,109 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `DTMF '${digit}' recorded for channel ${channelId} (sequence: [${s.dtmfSequence.join(',')}])`,
     );
+  }
+
+  /** Menu the caller is currently on. `[]` = main. */
+  getMenuPath(channelId: string): number[] {
+    const s = this.channelStates.get(channelId);
+    return s ? [...s.menuPath] : [];
+  }
+
+  setMenuPath(channelId: string, path: number[]) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.menuPath = [...path];
+    s.lastActivityAt = Date.now();
+  }
+
+  /** Records the dotted label of a node the caller selected, e.g. '1.2'. */
+  recordSelection(channelId: string, label: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.ivrSelections.push(label);
+    s.lastActivityAt = Date.now();
+  }
+
+  /** Counts a jump taken without a keypress and returns the running total. */
+  countJump(channelId: string): number {
+    const s = this.channelStates.get(channelId);
+    if (!s) return 0;
+    s.jumpsSinceInput += 1;
+    s.lastActivityAt = Date.now();
+    return s.jumpsSinceInput;
+  }
+
+  /** The caller pressed a menu digit — they are driving again. */
+  resetJumps(channelId: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.jumpsSinceInput = 0;
+  }
+
+  getIvrSelections(channelId: string): string[] {
+    const s = this.channelStates.get(channelId);
+    if (s) return [...s.ivrSelections];
+    const snap = this.playbackSnapshots.get(channelId);
+    if (snap) return [...snap.ivrSelections];
+    return [];
+  }
+
+  /**
+   * Registers a recording that has just started. Bumps `lastActivityAt` so the
+   * reaper doesn't expire a channel whose caller is silently mid-message.
+   */
+  startRecording(channelId: string, entry: VoiceResponse) {
+    const s = this.channelStates.get(channelId);
+    // The entry is stored by reference and RecordingService keeps the same
+    // object, so later status/url patches are visible here without a setter.
+    if (!s) {
+      this.logger.warn(
+        `startRecording: channel ${channelId} not found, recording ${entry.recordingName} untracked`,
+      );
+      return;
+    }
+    s.voiceResponses.push(entry);
+    s.activeRecordingName = entry.recordingName;
+    s.lastActivityAt = Date.now();
+    this.logger.log(
+      `Recording '${entry.recordingName}' started on channel ${channelId} (IVR path ${entry.path || 'main'})`,
+    );
+  }
+
+  /** Clears the in-flight marker, so DTMF is treated as navigation again. */
+  endRecording(channelId: string, recordingName?: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    if (recordingName && s.activeRecordingName !== recordingName) return;
+    s.activeRecordingName = null;
+    s.lastActivityAt = Date.now();
+  }
+
+  isRecording(channelId: string): boolean {
+    return !!this.channelStates.get(channelId)?.activeRecordingName;
+  }
+
+  getVoiceResponses(channelId: string): VoiceResponse[] {
+    const s = this.channelStates.get(channelId);
+    if (s) return s.voiceResponses.map((v) => ({ ...v }));
+    const snap = this.playbackSnapshots.get(channelId);
+    if (snap) return snap.voiceResponses.map((v) => ({ ...v }));
+    return [];
+  }
+
+  /**
+   * Runs `fn` after any DTMF handling already in flight for this channel, so
+   * navigation state is read and written in keypress order.
+   */
+  enqueueDtmf(channelId: string, fn: () => Promise<void>): Promise<void> {
+    const previous = this.dtmfChains.get(channelId) ?? Promise.resolve();
+    const next = previous.then(fn).catch((err) => {
+      this.logger.error(
+        `DTMF handling failed for channel ${channelId}: ${(err as Error).message}`,
+      );
+    });
+    this.dtmfChains.set(channelId, next);
+    return next;
   }
 
   isIvrChannel(channelId: string): boolean {
@@ -255,6 +385,15 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // The input timeout is measured in seconds and a message can run for a
+    // minute. Arming it mid-recording would cut the caller off.
+    if (channelState.activeRecordingName) {
+      this.logger.debug(
+        `Not scheduling hangup for channel ${channelId} — recording '${channelState.activeRecordingName}' in progress`,
+      );
+      return;
+    }
+
     this.cancelScheduledHangup(channelId);
 
     const timer = setTimeout(async () => {
@@ -300,14 +439,35 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
 
     // Snapshot playback status + DTMF sequence BEFORE deletion so AMI Hangup
     // (which arrives AFTER StasisEnd) can still tag the call correctly.
+    // The snapshot holds the live entry objects (not copies) so a recording
+    // that finishes uploading after cleanup still patches something the AMI
+    // Hangup handler can read.
     this.playbackSnapshots.set(channelId, {
       playbackStarted: channelState.playbackStarted,
       playbackFailed: channelState.playbackFailed,
       playbackError: channelState.playbackError,
       dtmfSequence: [...channelState.dtmfSequence],
+      ivrSelections: [...channelState.ivrSelections],
+      voiceResponses: channelState.voiceResponses,
       isIvr: !!channelState.ivrDialPlan,
       snapshotAt: Date.now(),
     });
+
+    this.dtmfChains.delete(channelId);
+
+    // Hand any still-running recording to RecordingService before the state
+    // goes away. A hangup mid-message is the common path, and the ARI
+    // RecordingFinished event for it may never reach us.
+    if (channelState.voiceResponses.length && this.recordingCleanupCallback) {
+      try {
+        this.recordingCleanupCallback(channelId, channelState.voiceResponses);
+      } catch (err) {
+        this.logger.error(
+          `Recording cleanup callback failed for channel ${channelId}: ${(err as Error).message}`,
+        );
+      }
+    }
+    channelState.activeRecordingName = null;
 
     // Mark inactive first to prevent new operations
     channelState.isActive = false;
