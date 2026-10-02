@@ -74,7 +74,9 @@ export class WorkerRegistry {
    * doing, which is the opposite of what assignment is trying to achieve.
    */
   idle(transport: string): WorkerState[] {
-    return this.live(transport).filter((w) => !w.activeSessionCuid);
+    return this.live(transport).filter(
+      (w) => !w.activeSessionCuid && !w.queuedSessions,
+    );
   }
 
   get(workerId: string): WorkerState | undefined {

@@ -85,6 +85,9 @@ export class AsteriskWorker extends TransportWorker {
   }
 
   public override async onModuleInit() {
+    this.batchManager.setActiveSessionResolver(
+      () => this.sessionGate.activeSession,
+    );
     try {
       await this.channel.addSetup(async (channel: ConfirmChannel) => {
         await this.assertQueue(channel);
@@ -186,6 +189,7 @@ export class AsteriskWorker extends TransportWorker {
       capacity: this.batchManager.batchSize,
       activeSessionCuid: this.sessionGate.activeSession,
       inFlight: this.batchManager.processingBroadcasts.size,
+      queuedSessions: this.sessionGate.pendingCount,
     });
   }
 

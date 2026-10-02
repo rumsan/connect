@@ -89,6 +89,11 @@ export type QueueWorkerHeartbeat = {
   activeSessionCuid: string | null;
   /** Broadcasts currently in flight on this worker. */
   inFlight: number;
+  /**
+   * Sessions waiting behind the active one in the worker's SessionGate.
+   * Optional so an older worker image still heartbeats.
+   */
+  queuedSessions?: number;
 };
 export interface QueueSessionTiming {
   sessionCuid: string;

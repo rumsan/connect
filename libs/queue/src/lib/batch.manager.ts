@@ -43,6 +43,15 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
    */
   private dispatching = false;
 
+  /**
+   * Session the worker is currently running, when it gates sessions. With it,
+   * the "batch drained" confirm is driven by that session's broadcasts only and
+   * always asks for that session — a late hangup from a session the gate has
+   * already left can neither request work for it nor start the next session's
+   * first batch before its audio is ready. Unset: original behaviour.
+   */
+  private activeSession: (() => string | null) | null = null;
+
   constructor(
     private readonly transportQueue: TransportQueue,
     @Optional() private readonly broadcastLogQueue?: BroadcastLogQueue,
@@ -75,6 +84,30 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  public setActiveSessionResolver(resolver: () => string | null) {
+    this.activeSession = resolver;
+  }
+
+  /** Broadcasts in flight, optionally only those of one session. */
+  public inFlightFor(sessionCuid?: string): number {
+    if (!sessionCuid) return this.processingBroadcasts.size;
+    let n = 0;
+    for (const { log } of this.processingBroadcasts.values()) {
+      if (log.sessionId === sessionCuid) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Whether draining `sessionCuid` should ask for more. A gated worker only
+   * asks for the session it is running, counting only that session's calls.
+   */
+  private drained(sessionCuid: string): boolean {
+    if (!this.activeSession) return this.processingBroadcasts.size === 0;
+    if (this.activeSession() !== sessionCuid) return false;
+    return this.inFlightFor(sessionCuid) === 0;
+  }
+
   /** Call before dispatching a batch to the transport. */
   public beginBatch() {
     this.dispatching = true;
@@ -87,7 +120,7 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
    */
   public finishBatch(sessionCuid: string) {
     this.dispatching = false;
-    if (this.processingBroadcasts.size === 0) {
+    if (this.drained(sessionCuid)) {
       this.scheduleReadinessConfirm(sessionCuid);
     }
   }
@@ -141,13 +174,15 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
     // Drained our share of the batch — ask connect for more work. With several
     // workers on a session this is what makes it free-worker-pull: whoever
     // empties first claims next, so throughput follows real capacity.
-    if (!this.dispatching && this.processingBroadcasts.size === 0) {
+    if (!this.dispatching && this.drained(sessionCuid)) {
       this.scheduleReadinessConfirm(sessionCuid);
     }
   }
 
   private scheduleReadinessConfirm(sessionCuid: string) {
     setTimeout(async () => {
+      // The gate may have moved on during batchDelay.
+      if (this.activeSession && this.activeSession() !== sessionCuid) return;
       await this.transportQueue.confirmReadiness({
         sessionCuid,
         maxBatchSize: this.batchSize,
