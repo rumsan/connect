@@ -103,4 +103,63 @@ describe('BatchManger', () => {
       }),
     );
   });
+
+  describe('with a session gate', () => {
+    let active: string | null;
+
+    beforeEach(() => {
+      active = 's1';
+      manager.setActiveSessionResolver(() => active);
+    });
+
+    it('does not ask for a session the gate has already left', () => {
+      manager.beginBatch();
+      manager.startMonitoring('c1', log('c1', 's1'));
+      manager.finishBatch('s1');
+
+      // Gate moved on (e.g. timed out) while an s1 call was still up.
+      active = 's2';
+      manager.endMonitoring('c1');
+      flush();
+
+      expect(transportQueue.confirmReadiness).not.toHaveBeenCalled();
+    });
+
+    it('counts only the active session when deciding the batch drained', () => {
+      manager.startMonitoring('old', log('old', 's1'));
+      active = 's2';
+
+      manager.beginBatch();
+      manager.startMonitoring('c1', log('c1', 's2'));
+      manager.finishBatch('s2');
+      manager.endMonitoring('c1');
+      flush();
+
+      // The lingering s1 call does not hold up s2's next batch.
+      expect(transportQueue.confirmReadiness).toHaveBeenCalledTimes(1);
+      expect(transportQueue.confirmReadiness).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionCuid: 's2' }),
+      );
+    });
+
+    it('drops a confirm when the gate moves on during batchDelay', () => {
+      manager.beginBatch();
+      manager.startMonitoring('c1', log('c1', 's1'));
+      manager.finishBatch('s1');
+      manager.endMonitoring('c1');
+
+      active = null;
+      flush();
+
+      expect(transportQueue.confirmReadiness).not.toHaveBeenCalled();
+    });
+
+    it('reports in-flight per session', () => {
+      manager.startMonitoring('a', log('a', 's1'));
+      manager.startMonitoring('b', log('b', 's2'));
+
+      expect(manager.inFlightFor('s1')).toBe(1);
+      expect(manager.inFlightFor()).toBe(2);
+    });
+  });
 });

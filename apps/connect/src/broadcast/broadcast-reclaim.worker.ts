@@ -3,7 +3,6 @@ import { Interval } from '@nestjs/schedule';
 import { createId } from '@paralleldrive/cuid2';
 import {
   BroadcastStatus,
-  SessionStatus,
   TransportType,
 } from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
@@ -40,76 +39,17 @@ export class BroadcastReclaimWorker {
     );
   }
 
-  private get maxSessionAgeMs(): number {
-    return (
-      Number(process.env.BROADCAST_MAX_SESSION_AGE_MS) ||
-      BROADCAST_CONSTANTS.DEFAULT_MAX_SESSION_AGE_MS
-    );
-  }
-
   /**
-   * Assign workers to in-progress sessions that do not have enough of them.
-   *
-   * Covers the case where every worker was busy when a session started, and the
-   * case where one dies: without this the session would sit at PENDING with
-   * nobody working it, because the pull loop only advances when a worker asks
-   * for more. `ensureAssignment` is a no-op when the assigned workers already
-   * have the headroom, so this is safe to run on every session every tick.
-   *
-   * Age-limited by `maxSessionAgeMs`: dialling someone about a day-old
-   * broadcast is worse than not dialling at all. Older sessions are skipped,
-   * never modified — an explicit `GET /sessions/:cuid/trigger` still assigns
-   * and dials them at any age, because retryBroadcasts calls ensureAssignment
-   * directly instead of waiting for this sweep.
+   * Backstop for sessions short of workers: every worker was busy when the
+   * session started, or one died. Workers freeing up normally trigger this
+   * immediately (see BroadcastService.sendBroadcasts); the tick covers the
+   * rest — a worker that aged out, or a reservation dropped by the grace rule.
+   * The query, ordering and age limit live in SessionAssignmentService.
    */
   @Interval(BROADCAST_CONSTANTS.RECLAIM_WORKER_INTERVAL_MS)
   async assignStalledSessions() {
     try {
-      const cutoff = new Date(Date.now() - this.maxSessionAgeMs);
-      const stalled = {
-        status: SessionStatus.PENDING,
-        Broadcasts: {
-          some: {
-            status: BroadcastStatus.SCHEDULED,
-            isComplete: false,
-          },
-        },
-      };
-
-      // Skipped sessions stay PENDING with work outstanding, so surface the
-      // backlog once per tick rather than leaving it invisible.
-      const skipped = await this.prisma.session.count({
-        where: { ...stalled, createdAt: { lt: cutoff } },
-      });
-      if (skipped > 0) {
-        this.logger.debug(
-          `assignment sweep skipped ${skipped} session(s) older than ${this.maxSessionAgeMs}ms (explicit retry still works)`,
-        );
-      }
-
-      const sessions = await this.prisma.session.findMany({
-        where: {
-          ...stalled,
-          createdAt: { gte: cutoff },
-        },
-        include: { Transport: true },
-        orderBy: { createdAt: 'asc' },
-        take: BROADCAST_CONSTANTS.RECLAIM_SESSION_SCAN_LIMIT,
-      });
-
-      for (const session of sessions) {
-        const transportType = session.Transport.type as TransportType;
-        if (!this.sessionAssignment.isMultiWorker(transportType)) continue;
-
-        await this.sessionAssignment
-          .ensureAssignment(session.cuid, transportType)
-          .catch((err) =>
-            this.logger.error(
-              `Assignment sweep failed for session ${session.cuid}`,
-              err,
-            ),
-          );
-      }
+      await this.sessionAssignment.assignWaiting();
     } catch (err) {
       this.logger.error('Assignment sweep failed', err);
     }
@@ -237,9 +177,8 @@ export class BroadcastReclaimWorker {
 
       if (!hasRescheduled) continue;
 
-      // The lost worker has aged out of the registry by now, so this picks the
-      // next live worker by priority.
-      this.sessionAssignment.clearPending(sessionCuid);
+      // The lost worker has aged out of the registry by now, so its
+      // reservation is dropped and this picks the next free worker.
       await this.sessionAssignment
         .ensureAssignment(sessionCuid, session.Transport.type as TransportType)
         .catch((err) =>

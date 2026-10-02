@@ -83,6 +83,14 @@ export const BROADCAST_CONSTANTS = {
   DEFAULT_SPILLOVER_MIN: 1,
 
   /**
+   * How long connect keeps a worker reserved for a session after the worker
+   * starts reporting that it is not on it (failed readiness, gate timeout).
+   * Must cover the worker's audio prep, during which its heartbeat can lag the
+   * READINESS_CHECK. Override with WORKER_RESERVATION_GRACE_MS.
+   */
+  DEFAULT_RESERVATION_GRACE_MS: 60000,
+
+  /**
    * A worker is considered gone after this many missed heartbeats.
    */
   WORKER_STALE_HEARTBEATS: 3,
