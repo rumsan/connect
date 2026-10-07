@@ -1,5 +1,5 @@
 import { BullModule } from '@nestjs/bull';
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { LogStreamModule } from '@rsconnect/log-stream';
@@ -23,9 +23,9 @@ import { SessionModule } from '../session/session.module';
 import { TemplateModule } from '../template/template.module';
 import { TransportModule } from '../transport/transport.module';
 import { UsageModule } from '../usage/usage.module';
+import { WebhookModule } from '../webhook/webhook.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { WebhookModule } from '../webhook/webhook.module';
 
 @Module({
   imports: [
@@ -66,8 +66,37 @@ import { WebhookModule } from '../webhook/webhook.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const connection = amqp.connect(configService.get('AMQP_URL'));
-        return connection.createChannel({
+        const amqpUrl = configService.get('AMQP_URL');
+        const logger = new Logger('AMQP');
+        let amqpHost = 'unknown';
+        try {
+          const u = new URL(amqpUrl);
+          amqpHost = `${u.hostname}:${u.port || 5672}${u.pathname}`;
+        } catch {}
+
+        logger.log(`Connecting to RabbitMQ at ${amqpHost}...`);
+        const connection = amqp.connect(amqpUrl);
+        connection.on('connect', () =>
+          logger.log(`Connected to RabbitMQ at ${amqpHost}`),
+        );
+        connection.on('connectFailed', ({ err }) =>
+          logger.error(
+            `Failed to connect to RabbitMQ at ${amqpHost}: ${err?.message}`,
+          ),
+        );
+        connection.on('disconnect', ({ err }) =>
+          logger.warn(
+            `Disconnected from RabbitMQ at ${amqpHost}: ${err?.message}`,
+          ),
+        );
+        connection.on('blocked', ({ reason }) =>
+          logger.error(`RabbitMQ blocked publishing: ${reason}`),
+        );
+        connection.on('unblocked', () =>
+          logger.log('RabbitMQ unblocked publishing'),
+        );
+
+        const channel = connection.createChannel({
           setup: async (channel: Channel) => {
             // Routes batches to one specific worker; workers declare and bind
             // their own queues to it.
@@ -82,6 +111,12 @@ import { WebhookModule } from '../webhook/webhook.module';
             await channel.assertQueue(QUEUES.TO_CONNECT, { durable: true });
           },
         });
+        channel.on('connect', () => logger.log('RabbitMQ channel ready'));
+        channel.on('error', (err) =>
+          logger.error(`RabbitMQ channel error: ${err?.message}`),
+        );
+        channel.on('close', () => logger.warn('RabbitMQ channel closed'));
+        return channel;
       },
     }),
     LocalQueueModule,
