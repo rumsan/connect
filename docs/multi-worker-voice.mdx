@@ -78,9 +78,43 @@ If work still exceeds the assigned workers' headroom and a worker frees up — o
 one dies — it is assigned mid-session, preparing on demand. This is also how a
 session that started while every other worker was busy grows its set later.
 
-Sessions themselves queue **per worker**: each runs one session at a time via
-its `SessionGate`. A worker outside session S1's chosen set is idle and so
-immediately eligible for S2.
+### 6. One session per worker
+
+A worker holds **one session at a time**, and connect enforces it. When connect
+sends a worker a `READINESS_CHECK` it *reserves* that worker for the session,
+and only releases it when it sends that worker `SESSION_COMPLETE`. Workers that
+hold a reservation are never candidates for another session, even if they
+have spare capacity.
+
+This can't be left to heartbeats. A heartbeat can be a full
+`WORKER_HEARTBEAT_MS` old, so two sessions started together would both see
+the primary as idle. The second would then queue behind the first in the
+primary's `SessionGate` while a lower-priority worker sat unused, and it would
+borrow the primary's headroom so the other worker was never woken.
+
+With `w1` (priority 1, capacity 20) and `w2` (priority 2, capacity 5), two
+10-address sessions started together:
+
+| Session | Worker | Why |
+| --- | --- | --- |
+| S1 | `w1` | primary is free and 20 ≥ 10 |
+| S2 | `w2` | `w1` holds S1; `w2` runs S2 in batches of 5 |
+| S3 | — | waits at connect until a worker is released |
+
+A session with no free worker stays `PENDING` at connect. The moment connect
+sends any worker its `SESSION_COMPLETE`, it hands that worker to the oldest
+waiting session (`SessionAssignmentService.assignWaiting`). Sessions with
+nobody on them go before running sessions that only want more capacity. The
+60s sweep runs the same method as a backstop.
+
+Reservations are dropped without a `SESSION_COMPLETE` in two cases. One is
+that the worker leaves the roster. The other is that, once
+`WORKER_RESERVATION_GRACE_MS` has passed, its heartbeats keep saying it is not
+on the session (its readiness failed, or its gate timed out). On boot, connect
+rebuilds reservations from live claims (`PENDING` rows with a `workerId`).
+
+The worker's `SessionGate` stays as a safety net. Its heartbeat reports
+`queuedSessions`, and a worker with anything queued is treated as busy.
 
 ## Message flow
 
@@ -187,9 +221,10 @@ worker has aged out of the registry, so `ensureAssignment` hands the work to the
 next live worker by priority.
 
 **Every worker was busy when the session started.** The session still goes to
-`PENDING` with nobody assigned. `BroadcastReclaimWorker.assignStalledSessions`
-runs on the same 60s tick and retries assignment for any `PENDING` session with
-`SCHEDULED` work left, so it starts as soon as a worker frees up. This is also
+`PENDING` with nobody assigned, and starts as soon as a worker is released (see
+*One session per worker*). `BroadcastReclaimWorker.assignStalledSessions`
+also runs `assignWaiting` on the same 60s tick for any `PENDING` session with
+`SCHEDULED` work left. This is also
 the backstop for any session that loses all its workers — without it a session
 would sit at `PENDING` forever, because the pull loop only advances when a
 worker asks for more.
@@ -206,8 +241,15 @@ Closing them out for good should be an explicit operator action, never
 automatic.
 
 **Worker never gets `SESSION_COMPLETE`.** Its `SessionGate` force-completes after
-`SESSION_GATE_TIMEOUT_MS` (10 min) and moves on. Since assignment is per worker,
-this only costs that one worker.
+`SESSION_GATE_TIMEOUT_MS` (10 min), unless calls of that session are still in
+flight, in which case it extends the timeout so the next session never starts
+on top of them. Connect drops the reservation once the worker has reported
+being off the session for `WORKER_RESERVATION_GRACE_MS`.
+
+**Late hangups across sessions.** The worker's "batch drained" confirm counts
+only the active session's calls and always asks for the active session. A
+hangup from a session the gate has left can't request work for that session,
+and it can't start the next session's first batch before its audio is ready.
 
 **A transport fails before producing a channel.** `TransportWorker._sendBroadcast`
 publishes the FAIL log and releases the slot. Without that the batch never drains
@@ -241,6 +283,7 @@ scratch directory.
 | --- | --- |
 | `BROADCAST_CLAIM_TTL_MS` | Stale-claim window (default 600000). Keep above `BATCH_TTL_MS`. |
 | `BROADCAST_SPILLOVER_MIN` | Minimum overflow before waking another worker (default 1). |
+| `WORKER_RESERVATION_GRACE_MS` | How long a worker stays reserved for a session while its heartbeats say otherwise (default 60000). Must cover audio prep. |
 | `BROADCAST_MAX_SESSION_AGE_MS` | How old a session may get before the automatic sweep stops assigning it (default 86400000). Explicit retry ignores it. |
 | `WORKER_HEARTBEAT_MS` | Must match the workers'; three misses drops a worker. |
 

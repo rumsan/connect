@@ -13,6 +13,7 @@ const worker = (
   priority: number,
   capacity: number,
   activeSessionCuid: string | null = null,
+  extra: Partial<WorkerState> = {},
 ): WorkerState => ({
   workerId,
   transport: 'voice',
@@ -21,12 +22,17 @@ const worker = (
   activeSessionCuid,
   inFlight: 0,
   lastSeenAt: Date.now(),
+  ...extra,
 });
 
 describe('SessionAssignmentService', () => {
   let service: SessionAssignmentService;
   let prisma: {
     broadcast: {
+      count: jest.Mock;
+      findMany: jest.Mock;
+    };
+    session: {
       count: jest.Mock;
       findMany: jest.Mock;
     };
@@ -42,6 +48,10 @@ describe('SessionAssignmentService', () => {
   beforeEach(async () => {
     prisma = {
       broadcast: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      session: {
         count: jest.fn().mockResolvedValue(0),
         findMany: jest.fn().mockResolvedValue([]),
       },
@@ -68,7 +78,19 @@ describe('SessionAssignmentService', () => {
 
   afterEach(() => {
     delete process.env.BROADCAST_SPILLOVER_MIN;
+    delete process.env.BROADCAST_MAX_SESSION_AGE_MS;
+    delete process.env.WORKER_RESERVATION_GRACE_MS;
   });
+
+  /** Put a worker on a session the way production does. */
+  const assign = async (sessionCuid: string, w: WorkerState, remaining = 1) => {
+    prisma.broadcast.count.mockResolvedValueOnce(remaining);
+    registry.live.mockReturnValueOnce([w]);
+    expect(await service.ensureAssignment(sessionCuid, TransportType.VOICE)).toEqual([
+      w.workerId,
+    ]);
+    transportQueue.checkReadiness.mockClear();
+  };
 
   describe('selectWorkers', () => {
     // The fleet used throughout the docs: primary holds 10, spillover holds 5.
@@ -209,10 +231,10 @@ describe('SessionAssignmentService', () => {
 
     it('does not add a worker when the assigned ones still have headroom', async () => {
       // 5 left, w1 already on the session with 10 capacity and nothing in flight.
+      await assign('s1', worker('w1', 1, 10));
       prisma.broadcast.count.mockImplementation((args: any) =>
         args?.where?.workerId ? 0 : 5,
       );
-      prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
       // w2 is live and idle — the point is that it is still not woken.
       registry.live.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
 
@@ -224,10 +246,10 @@ describe('SessionAssignmentService', () => {
 
     it('adds a worker when the assigned ones are saturated', async () => {
       // 40 left; w1 is on the session and fully in flight, so headroom is 0.
+      await assign('s1', worker('w1', 1, 10));
       prisma.broadcast.count.mockImplementation((args: any) =>
         args?.where?.workerId ? 10 : 40,
       );
-      prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
       registry.live.mockReturnValue([
         worker('w1', 1, 10, 's1'),
         worker('w2', 2, 5),
@@ -239,24 +261,26 @@ describe('SessionAssignmentService', () => {
     });
 
     it('treats a worker that stopped heartbeating as contributing no capacity', async () => {
-      // w1 owns rows but is gone from the roster: its share becomes shortfall.
+      // w1 holds the session but is gone from the roster: its share becomes
+      // shortfall and its reservation is dropped.
+      await assign('s1', worker('w1', 1, 10));
       prisma.broadcast.count.mockImplementation((args: any) =>
         args?.where?.workerId ? 0 : 30,
       );
-      prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
       // w1 is absent from the roster entirely — only w2 is live.
       registry.live.mockReturnValue([worker('w2', 2, 5)]);
 
       expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual([
         'w2',
       ]);
+      expect(service.assignedWorkers('s1')).toEqual(new Set(['w2']));
     });
 
     it('does not re-assign a worker already on the session', async () => {
+      await assign('s1', worker('w1', 1, 10));
       prisma.broadcast.count.mockImplementation((args: any) =>
         args?.where?.workerId ? 10 : 40,
       );
-      prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
       registry.live.mockReturnValue([worker('w1', 1, 10, 's1')]);
 
       expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual(
@@ -279,7 +303,7 @@ describe('SessionAssignmentService', () => {
       registry.live.mockReturnValue([worker('w1', 1, 10), worker('w2', 2, 5)]);
 
       await service.ensureAssignment('s1', TransportType.VOICE);
-      expect(await service.assignedWorkers('s1')).toEqual(new Set(['w1']));
+      expect(service.assignedWorkers('s1')).toEqual(new Set(['w1']));
     });
 
     it('does not wake a worker that is busy with another session', async () => {
@@ -305,14 +329,234 @@ describe('SessionAssignmentService', () => {
       expect(transportQueue.checkReadiness).not.toHaveBeenCalled();
     });
 
-    it('forgets a pending assignment once cleared', async () => {
-      prisma.broadcast.count.mockResolvedValue(8);
-      registry.live.mockReturnValue([worker('w1', 1, 10)]);
+    it('frees a worker once it is released from the session', async () => {
+      await assign('s1', worker('w1', 1, 10));
+      service.release('w1', 's1');
 
+      expect(service.assignedWorkers('s1')).toEqual(new Set());
+    });
+
+    it('ignores a release for a session the worker no longer holds', async () => {
+      await assign('s1', worker('w1', 1, 10));
+      service.release('w1', 'old-session');
+
+      expect(service.reservationOf('w1')).toBe('s1');
+    });
+  });
+
+  describe('one session per worker', () => {
+    // The fleet from the bug report: primary holds 20, secondary holds 5.
+    const fleet = () => [worker('w1', 1, 20), worker('w2', 2, 5)];
+
+    beforeEach(() => {
+      prisma.broadcast.count.mockImplementation((args: any) =>
+        args?.where?.workerId ? 0 : 10,
+      );
+      registry.live.mockImplementation(fleet);
+    });
+
+    it('sends the second of two simultaneous sessions to the idle worker', async () => {
+      // Heartbeats still say both are idle — they can be 15s stale.
+      const [a, b] = await Promise.all([
+        service.ensureAssignment('s1', TransportType.VOICE),
+        service.ensureAssignment('s2', TransportType.VOICE),
+      ]);
+
+      expect(a).toEqual(['w1']);
+      expect(b).toEqual(['w2']);
+      expect(service.reservationOf('w1')).toBe('s1');
+      expect(service.reservationOf('w2')).toBe('s2');
+    });
+
+    it('does not let a session borrow headroom from a worker on another session', async () => {
       await service.ensureAssignment('s1', TransportType.VOICE);
-      service.clearPending('s1', 'w1');
+      await service.ensureAssignment('s2', TransportType.VOICE);
+      transportQueue.checkReadiness.mockClear();
 
-      expect(await service.assignedWorkers('s1')).toEqual(new Set());
+      // s2 tops up: w1 has spare capacity but belongs to s1.
+      expect(await service.ensureAssignment('s2', TransportType.VOICE)).toEqual(
+        [],
+      );
+      expect(service.assignedWorkers('s2')).toEqual(new Set(['w2']));
+    });
+
+    it('makes a third session wait until a worker is released', async () => {
+      await service.ensureAssignment('s1', TransportType.VOICE);
+      await service.ensureAssignment('s2', TransportType.VOICE);
+
+      expect(await service.ensureAssignment('s3', TransportType.VOICE)).toEqual(
+        [],
+      );
+
+      service.release('w1', 's1');
+      // w1's last heartbeat predates the release and still names s1.
+      registry.live.mockReturnValue([
+        worker('w1', 1, 20, 's1', { lastSeenAt: Date.now() - 1000 }),
+        worker('w2', 2, 5, 's2'),
+      ]);
+
+      expect(await service.ensureAssignment('s3', TransportType.VOICE)).toEqual([
+        'w1',
+      ]);
+    });
+
+    it('treats a worker with a session queued in its gate as busy', async () => {
+      registry.live.mockReturnValue([
+        worker('w1', 1, 20, null, { queuedSessions: 1 }),
+        worker('w2', 2, 5),
+      ]);
+
+      expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual([
+        'w2',
+      ]);
+    });
+
+    it('assigns a retried session to a free worker, not the one that ran it before', async () => {
+      // s1 ran on w1 earlier; w1 has since moved on to s2.
+      prisma.broadcast.findMany.mockResolvedValue([{ workerId: 'w1' }]);
+      await service.ensureAssignment('s2', TransportType.VOICE);
+
+      expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual([
+        'w2',
+      ]);
+    });
+
+    it('drops a reservation the worker has stopped honouring after the grace period', async () => {
+      process.env.WORKER_RESERVATION_GRACE_MS = '1000';
+      const now = Date.now();
+      jest.spyOn(Date, 'now').mockReturnValue(now);
+      await service.ensureAssignment('s1', TransportType.VOICE);
+
+      // Readiness failed and the gate gave up: w1 heartbeats idle.
+      (Date.now as jest.Mock).mockReturnValue(now + 5000);
+      registry.live.mockReturnValue([
+        worker('w1', 1, 20, null, { lastSeenAt: now + 4000 }),
+        worker('w2', 2, 5),
+      ]);
+
+      expect(await service.ensureAssignment('s1', TransportType.VOICE)).toEqual([
+        'w1',
+      ]);
+      jest.restoreAllMocks();
+    });
+
+    it('keeps a reservation while the worker is still preparing', async () => {
+      await service.ensureAssignment('s1', TransportType.VOICE);
+      // Heartbeat arrives before the gate activates — inside the grace period.
+      registry.live.mockReturnValue([
+        worker('w1', 1, 20, null),
+        worker('w2', 2, 5),
+      ]);
+
+      await service.ensureAssignment('s2', TransportType.VOICE);
+      expect(service.reservationOf('w1')).toBe('s1');
+      expect(service.reservationOf('w2')).toBe('s2');
+    });
+
+    it('restores reservations from live claims after a restart', async () => {
+      prisma.broadcast.findMany.mockResolvedValue([
+        { workerId: 'w1', session: 's1' },
+      ]);
+
+      await service.restoreReservations();
+
+      expect(service.reservationOf('w1')).toBe('s1');
+      expect(await service.ensureAssignment('s2', TransportType.VOICE)).toEqual([
+        'w2',
+      ]);
+    });
+  });
+
+  describe('assignWaiting', () => {
+    const session = (cuid: string, type = TransportType.VOICE) => ({
+      cuid,
+      Transport: { type },
+    });
+
+    beforeEach(() => {
+      prisma.broadcast.count.mockImplementation((args: any) =>
+        args?.where?.workerId ? 0 : 10,
+      );
+      registry.live.mockReturnValue([worker('w1', 1, 20)]);
+    });
+
+    it('gives a freed worker to the oldest waiting session', async () => {
+      prisma.session.findMany.mockResolvedValue([session('s2'), session('s3')]);
+
+      await service.assignWaiting();
+
+      expect(service.reservationOf('w1')).toBe('s2');
+    });
+
+    it('serves sessions with nobody on them before topping up running ones', async () => {
+      registry.live.mockReturnValue([worker('w1', 1, 5), worker('w2', 2, 5)]);
+      await assign('s1', worker('w1', 1, 5));
+      registry.live.mockReturnValue([worker('w1', 1, 5, 's1'), worker('w2', 2, 5)]);
+      // s1 is older and short of capacity, but s2 has no worker at all.
+      prisma.session.findMany.mockResolvedValue([session('s1'), session('s2')]);
+
+      await service.assignWaiting();
+
+      expect(service.reservationOf('w2')).toBe('s2');
+    });
+
+    it('skips transports that are not multi-worker', async () => {
+      prisma.session.findMany.mockResolvedValue([
+        session('s1', TransportType.SMTP),
+      ]);
+
+      await service.assignWaiting();
+
+      expect(transportQueue.checkReadiness).not.toHaveBeenCalled();
+    });
+
+    it('keeps going when one session fails to assign', async () => {
+      prisma.session.findMany.mockResolvedValue([session('s1'), session('s2')]);
+      transportQueue.checkReadiness
+        .mockRejectedValueOnce(new Error('broker down'))
+        .mockResolvedValueOnce(true);
+
+      await service.assignWaiting();
+
+      expect(transportQueue.checkReadiness).toHaveBeenCalledTimes(2);
+      expect(service.reservationOf('w1')).toBe('s2');
+    });
+
+    describe('age limit', () => {
+      const cutoffOf = (call: any) => call.where.createdAt.gte.getTime();
+
+      it('only considers sessions newer than the 24h default', async () => {
+        const before = Date.now();
+
+        await service.assignWaiting();
+
+        const cutoff = cutoffOf(prisma.session.findMany.mock.calls[0][0]);
+        expect(cutoff).toBeGreaterThanOrEqual(before - 86_400_000);
+        expect(cutoff).toBeLessThanOrEqual(Date.now() - 86_400_000 + 1000);
+      });
+
+      it('honours BROADCAST_MAX_SESSION_AGE_MS', async () => {
+        process.env.BROADCAST_MAX_SESSION_AGE_MS = '3600000';
+        const before = Date.now();
+
+        await service.assignWaiting();
+
+        const cutoff = cutoffOf(prisma.session.findMany.mock.calls[0][0]);
+        expect(cutoff).toBeGreaterThanOrEqual(before - 3_600_000);
+        expect(cutoff).toBeLessThanOrEqual(Date.now() - 3_600_000 + 1000);
+      });
+
+      it('counts the skipped backlog with the mirrored cutoff', async () => {
+        process.env.BROADCAST_MAX_SESSION_AGE_MS = '3600000';
+
+        await service.assignWaiting();
+
+        const countArgs = prisma.session.count.mock.calls[0][0];
+        expect(countArgs.where.createdAt.lt.getTime()).toBeCloseTo(
+          cutoffOf(prisma.session.findMany.mock.calls[0][0]),
+          -3,
+        );
+      });
     });
   });
 });

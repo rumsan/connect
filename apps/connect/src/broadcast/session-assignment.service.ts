@@ -1,7 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { TransportQueue } from '@rsconnect/queue';
 import { QUEUES, TRANSPORT_SLUG } from '@rumsan/connect';
-import { BroadcastStatus, TransportType } from '@rumsan/connect/types';
+import {
+  BroadcastStatus,
+  SessionStatus,
+  TransportType,
+} from '@rumsan/connect/types';
 import { PrismaService } from '@rumsan/prisma';
 import {
   WorkerRegistry,
@@ -22,6 +26,9 @@ export type SelectionTrace = {
   reason: string;
 };
 
+/** A worker's hold on one session, from READINESS_CHECK to SESSION_COMPLETE. */
+type Reservation = { sessionCuid: string; reservedAt: number };
+
 const QUEUE_BY_SLUG: Record<string, QUEUES> = {
   [TRANSPORT_SLUG.VOICE]: QUEUES.TRANSPORT_VOICE,
   [TRANSPORT_SLUG.API]: QUEUES.TRANSPORT_API,
@@ -41,18 +48,38 @@ const QUEUE_BY_SLUG: Record<string, QUEUES> = {
  * Once assigned, workers pull independently — whoever drains its batch first
  * claims the next one, so throughput follows real capacity rather than a fixed
  * split.
+ *
+ * A worker holds **one session at a time**. Connect enforces that here with a
+ * reservation per worker rather than trusting heartbeats, which can be a full
+ * WORKER_HEARTBEAT_MS stale: two sessions started together would otherwise
+ * both see the primary as idle, and the second would queue behind the first
+ * in its SessionGate while a lower-priority worker sat unused. A session with
+ * no free worker waits here, oldest first, and `assignWaiting` hands it the
+ * next worker that frees up.
  */
 @Injectable()
-export class SessionAssignmentService {
+export class SessionAssignmentService implements OnModuleInit {
   private readonly logger = new Logger(SessionAssignmentService.name);
 
   /**
-   * Workers we have sent a READINESS_CHECK that have not claimed anything yet.
-   * The DB (`DISTINCT workerId`) is the authoritative set; this only covers the
-   * window before a worker's first claim. Losing it risks assigning one extra
-   * worker, never losing work.
+   * workerId → the session it holds. Set when connect sends a READINESS_CHECK,
+   * cleared when it sends that worker SESSION_COMPLETE (or the worker is
+   * gone). In-process like the registry; rebuilt from live claims on boot.
    */
-  private readonly pendingAssignments = new Map<string, Set<string>>();
+  private readonly reservations = new Map<string, Reservation>();
+
+  /**
+   * When each worker was last released. A heartbeat older than this still
+   * names the session the worker just finished, so it must not make the
+   * worker look busy.
+   */
+  private readonly releasedAt = new Map<string, number>();
+
+  /**
+   * Serializes assignment. Reading who is free and reserving them has to be
+   * one step, or two sessions triggered in the same tick pick the same worker.
+   */
+  private lock: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -60,10 +87,60 @@ export class SessionAssignmentService {
     private readonly registry: WorkerRegistry,
   ) {}
 
+  async onModuleInit() {
+    await this.restoreReservations().catch((err) =>
+      this.logger.error('Failed to restore worker reservations', err),
+    );
+  }
+
+  /**
+   * A connect restart loses the in-memory map while workers are still dialling.
+   * Any worker owning a live claim is still on that session.
+   */
+  async restoreReservations() {
+    const rows = await this.prisma.broadcast.findMany({
+      where: {
+        status: BroadcastStatus.PENDING,
+        isComplete: false,
+        workerId: { not: null },
+      },
+      distinct: ['workerId'],
+      select: { workerId: true, session: true },
+    });
+
+    for (const { workerId, session } of rows) {
+      if (!workerId || this.reservations.has(workerId)) continue;
+      this.reservations.set(workerId, {
+        sessionCuid: session,
+        reservedAt: Date.now(),
+      });
+    }
+
+    if (rows.length) {
+      this.logger.log(
+        `Restored ${this.reservations.size} worker reservation(s) from live claims`,
+      );
+    }
+  }
+
   private get spilloverMin() {
     return (
       Number(process.env.BROADCAST_SPILLOVER_MIN) ||
       BROADCAST_CONSTANTS.DEFAULT_SPILLOVER_MIN
+    );
+  }
+
+  private get reservationGraceMs() {
+    return (
+      Number(process.env.WORKER_RESERVATION_GRACE_MS) ||
+      BROADCAST_CONSTANTS.DEFAULT_RESERVATION_GRACE_MS
+    );
+  }
+
+  private get maxSessionAgeMs(): number {
+    return (
+      Number(process.env.BROADCAST_MAX_SESSION_AGE_MS) ||
+      BROADCAST_CONSTANTS.DEFAULT_MAX_SESSION_AGE_MS
     );
   }
 
@@ -130,9 +207,28 @@ export class SessionAssignmentService {
    * ones already on it cannot absorb what is left. Safe to call repeatedly —
    * it is the same code path for session start and for mid-session top-up.
    */
-  async ensureAssignment(sessionCuid: string, transportType: TransportType) {
+  ensureAssignment(
+    sessionCuid: string,
+    transportType: TransportType,
+  ): Promise<string[]> {
+    const run = this.lock.then(() =>
+      this._ensureAssignment(sessionCuid, transportType),
+    );
+    // Keep the chain alive past a failure; the caller still sees the error.
+    this.lock = run.catch(() => undefined);
+    return run;
+  }
+
+  private async _ensureAssignment(
+    sessionCuid: string,
+    transportType: TransportType,
+  ): Promise<string[]> {
     const slug = this.transportSlug(transportType);
     if (!slug) return [];
+
+    // One live() pass: it prunes stale entries as it iterates.
+    const live = this.registry.live(slug);
+    this.pruneReservations(live);
 
     const remaining = await this.countRemaining(sessionCuid);
     if (remaining === 0) {
@@ -142,8 +238,8 @@ export class SessionAssignmentService {
       return [];
     }
 
-    const assigned = await this.assignedWorkers(sessionCuid);
-    const headroom = await this.headroom(slug, assigned);
+    const assigned = this.assignedWorkers(sessionCuid);
+    const headroom = await this.headroom(live, assigned);
     const shortfall = remaining - headroom;
 
     if (assigned.size > 0 && shortfall < this.spilloverMin) {
@@ -156,12 +252,7 @@ export class SessionAssignmentService {
       return [];
     }
 
-    // One live() pass: it prunes stale entries as it iterates, and idle() would
-    // just call it again.
-    const live = this.registry.live(slug);
-    const candidates = live.filter(
-      (w) => !w.activeSessionCuid && !assigned.has(w.workerId),
-    );
+    const candidates = live.filter((w) => this.isFree(w));
 
     const trace: SelectionTrace[] = [];
     const chosen = candidates.length
@@ -179,11 +270,15 @@ export class SessionAssignmentService {
           chosen: false,
           reason: 'already on this session',
         });
-      } else if (w.activeSessionCuid) {
+      } else if (!this.isFree(w)) {
         trace.push({
           workerId: w.workerId,
           chosen: false,
-          reason: `busy with session ${w.activeSessionCuid}`,
+          reason: `busy with session ${
+            this.reservations.get(w.workerId)?.sessionCuid ??
+            w.activeSessionCuid ??
+            '(queued)'
+          }`,
         });
       }
     }
@@ -198,8 +293,8 @@ export class SessionAssignmentService {
 
     if (candidates.length === 0) {
       if (assigned.size === 0) {
-        this.logger.warn(
-          `No idle ${slug} worker available for session ${sessionCuid} (${remaining} remaining); will retry on the next confirm`,
+        this.logger.log(
+          `session ${sessionCuid}: every ${slug} worker holds another session — waiting at connect (${remaining} remaining) until one frees up`,
         );
       }
       return [];
@@ -222,7 +317,7 @@ export class SessionAssignmentService {
         );
         continue;
       }
-      this.markPending(sessionCuid, worker.workerId);
+      this.reserve(sessionCuid, worker.workerId);
       newlyAssigned.push(worker.workerId);
     }
 
@@ -284,23 +379,147 @@ export class SessionAssignmentService {
   }
 
   /**
-   * Workers that own rows on this session, plus any we have woken that have not
-   * claimed yet.
+   * Assign workers to every in-progress session that is short of them, oldest
+   * first, sessions with nobody on them ahead of mid-session top-ups. Runs
+   * whenever a worker frees up, and on the reclaim sweeper's tick as a
+   * backstop.
+   *
+   * Age-limited by `BROADCAST_MAX_SESSION_AGE_MS`: dialling someone about a
+   * day-old broadcast is worse than not dialling at all. Older sessions are
+   * skipped, never modified — an explicit `GET /sessions/:cuid/trigger` still
+   * assigns them, because retryBroadcasts calls ensureAssignment directly.
    */
-  async assignedWorkers(sessionCuid: string): Promise<Set<string>> {
-    const rows = await this.prisma.broadcast.findMany({
-      where: { session: sessionCuid, workerId: { not: null } },
-      distinct: ['workerId'],
-      select: { workerId: true },
+  async assignWaiting() {
+    const cutoff = new Date(Date.now() - this.maxSessionAgeMs);
+    const stalled = {
+      status: SessionStatus.PENDING,
+      Broadcasts: {
+        some: {
+          status: BroadcastStatus.SCHEDULED,
+          isComplete: false,
+        },
+      },
+    };
+
+    // Skipped sessions stay PENDING with work outstanding, so surface the
+    // backlog rather than leaving it invisible.
+    const skipped = await this.prisma.session.count({
+      where: { ...stalled, createdAt: { lt: cutoff } },
+    });
+    if (skipped > 0) {
+      this.logger.debug(
+        `assignment sweep skipped ${skipped} session(s) older than ${this.maxSessionAgeMs}ms (explicit retry still works)`,
+      );
+    }
+
+    const sessions = await this.prisma.session.findMany({
+      where: { ...stalled, createdAt: { gte: cutoff } },
+      include: { Transport: true },
+      orderBy: { createdAt: 'asc' },
+      take: BROADCAST_CONSTANTS.RECLAIM_SESSION_SCAN_LIMIT,
     });
 
-    const assigned = new Set<string>(
-      rows.map((r) => r.workerId).filter((id): id is string => !!id),
+    // Stable sort: waiting sessions keep their age order but go before
+    // sessions that already have a worker and only want more.
+    const ordered = [...sessions].sort(
+      (a, b) =>
+        Number(this.assignedWorkers(a.cuid).size > 0) -
+        Number(this.assignedWorkers(b.cuid).size > 0),
     );
-    for (const workerId of this.pendingAssignments.get(sessionCuid) ?? []) {
-      assigned.add(workerId);
+
+    for (const session of ordered) {
+      const transportType = session.Transport.type as TransportType;
+      if (!this.isMultiWorker(transportType)) continue;
+
+      await this.ensureAssignment(session.cuid, transportType).catch((err) =>
+        this.logger.error(
+          `Assignment failed for waiting session ${session.cuid}`,
+          err,
+        ),
+      );
+    }
+  }
+
+  /** Workers currently holding this session. */
+  assignedWorkers(sessionCuid: string): Set<string> {
+    const assigned = new Set<string>();
+    for (const [workerId, r] of this.reservations) {
+      if (r.sessionCuid === sessionCuid) assigned.add(workerId);
     }
     return assigned;
+  }
+
+  /** Session a worker holds, if any. */
+  reservationOf(workerId: string): string | undefined {
+    return this.reservations.get(workerId)?.sessionCuid;
+  }
+
+  /**
+   * A worker is free when connect has not reserved it and its own heartbeat
+   * agrees. The heartbeat check covers a connect restart; a heartbeat sent
+   * before we released the worker is ignored, since it still names the
+   * session the worker just finished.
+   */
+  private isFree(w: WorkerState): boolean {
+    if (this.reservations.has(w.workerId)) return false;
+    const released = this.releasedAt.get(w.workerId) ?? 0;
+    if (w.lastSeenAt <= released) return true;
+    return !w.activeSessionCuid && !w.queuedSessions;
+  }
+
+  private reserve(sessionCuid: string, workerId: string) {
+    this.reservations.set(workerId, { sessionCuid, reservedAt: Date.now() });
+    this.releasedAt.delete(workerId);
+  }
+
+  /**
+   * Called when connect sends this worker SESSION_COMPLETE. Only releases a
+   * reservation for that session, so a late message can't free a worker that
+   * has already moved on.
+   */
+  release(workerId: string, sessionCuid: string) {
+    if (this.reservations.get(workerId)?.sessionCuid !== sessionCuid) return;
+    this.reservations.delete(workerId);
+    this.releasedAt.set(workerId, Date.now());
+    this.logger.log(`Worker ${workerId} released from session ${sessionCuid}`);
+  }
+
+  /**
+   * Drop reservations whose worker is gone, or whose worker has reported for a
+   * while that it is not on the session (readiness failed, or its gate timed
+   * out). Without this a worker that never got SESSION_COMPLETE would be
+   * unassignable for good.
+   */
+  private pruneReservations(live: WorkerState[]) {
+    const byId = new Map(live.map((w) => [w.workerId, w]));
+    const now = Date.now();
+
+    for (const [workerId, r] of this.reservations) {
+      const w = byId.get(workerId);
+
+      let reason: string | undefined;
+      if (!w) {
+        // live() is per transport, but it prunes stale workers of every
+        // transport, so the registry no longer knowing it means it is gone.
+        if (this.registry.get(workerId)) continue;
+        reason = 'worker is gone';
+      } else if (
+        now - r.reservedAt > this.reservationGraceMs &&
+        w.lastSeenAt > r.reservedAt + this.reservationGraceMs &&
+        w.activeSessionCuid !== r.sessionCuid &&
+        !w.queuedSessions
+      ) {
+        reason = `worker reports ${w.activeSessionCuid ?? 'no session'}`;
+      }
+
+      if (reason) {
+        this.reservations.delete(workerId);
+        this.releasedAt.set(workerId, now);
+        this.logger.warn(
+          `Dropped ${workerId}'s reservation on session ${r.sessionCuid}: ${reason}`,
+        );
+      }
+    }
   }
 
   /**
@@ -308,14 +527,17 @@ export class SessionAssignmentService {
    * contributes nothing, so its share of the session shows up as shortfall and
    * gets covered by someone else.
    */
-  private async headroom(slug: string, assigned: Set<string>): Promise<number> {
+  private async headroom(
+    live: WorkerState[],
+    assigned: Set<string>,
+  ): Promise<number> {
     if (assigned.size === 0) return 0;
 
-    const live = new Map(this.registry.live(slug).map((w) => [w.workerId, w]));
+    const byId = new Map(live.map((w) => [w.workerId, w]));
     let headroom = 0;
 
     for (const workerId of assigned) {
-      const worker = live.get(workerId);
+      const worker = byId.get(workerId);
       if (!worker) continue;
       const inFlight = await this.prisma.broadcast.count({
         where: {
@@ -338,24 +560,6 @@ export class SessionAssignmentService {
         isComplete: false,
       },
     });
-  }
-
-  private markPending(sessionCuid: string, workerId: string) {
-    const set = this.pendingAssignments.get(sessionCuid) ?? new Set<string>();
-    set.add(workerId);
-    this.pendingAssignments.set(sessionCuid, set);
-  }
-
-  /** Called once a worker has claimed, or when it is told the session is done. */
-  clearPending(sessionCuid: string, workerId?: string) {
-    if (!workerId) {
-      this.pendingAssignments.delete(sessionCuid);
-      return;
-    }
-    const set = this.pendingAssignments.get(sessionCuid);
-    if (!set) return;
-    set.delete(workerId);
-    if (set.size === 0) this.pendingAssignments.delete(sessionCuid);
   }
 
   /** Per-worker breakdown of a session, for the ops endpoint and runbook. */
