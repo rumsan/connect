@@ -1,7 +1,7 @@
 import { Inject, OnModuleInit, Optional } from '@nestjs/common';
 import { BatchManger, BroadcastLogQueue, TransportQueue } from '@rsconnect/queue';
 import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
-import { ISessionGate, SessionGate } from './session-gate';
+import { ISessionGate, PassThroughSessionGate } from './session-gate';
 import {
   Broadcast,
   BroadcastJobData,
@@ -19,7 +19,11 @@ export abstract class TransportWorker implements OnModuleInit {
   /** Queue this instance consumes. May be worker-specific. */
   abstract queueTransport: QUEUES;
   protected batchManager: BatchManger;
-  protected sessionGate: ISessionGate = new SessionGate();
+  /**
+   * Ungated by default. Workers that must run one session at a time (the
+   * asterisk-worker) inject their own gate.
+   */
+  protected sessionGate: ISessionGate = new PassThroughSessionGate();
 
   /**
    * Transport identity recorded on broadcast logs. Workers that consume a

@@ -18,7 +18,10 @@ const staleBroadcast = (overrides = {}) => ({
 describe('BroadcastReclaimWorker', () => {
   let worker: BroadcastReclaimWorker;
   let prisma: any;
-  let broadcastService: { syncSessionCompletion: jest.Mock };
+  let broadcastService: {
+    syncSessionCompletion: jest.Mock;
+    checkTransportReadiness: jest.Mock;
+  };
   let sessionAssignment: {
     ensureAssignment: jest.Mock;
     isMultiWorker: jest.Mock;
@@ -44,7 +47,10 @@ describe('BroadcastReclaimWorker', () => {
       },
       $transaction: jest.fn().mockResolvedValue([]),
     };
-    broadcastService = { syncSessionCompletion: jest.fn().mockResolvedValue(true) };
+    broadcastService = {
+      syncSessionCompletion: jest.fn().mockResolvedValue(true),
+      checkTransportReadiness: jest.fn().mockResolvedValue(undefined),
+    };
     sessionAssignment = {
       ensureAssignment: jest.fn().mockResolvedValue([]),
       isMultiWorker: jest.fn().mockReturnValue(true),
@@ -143,6 +149,27 @@ describe('BroadcastReclaimWorker', () => {
         's1',
         TransportType.VOICE,
       );
+    });
+
+    it('re-checks readiness for shared-queue transports instead of reassigning', async () => {
+      // API/SMTP/ECHO have no assignment; without a readiness re-check the
+      // rescheduled rows would never be claimed again.
+      sessionAssignment.isMultiWorker.mockReturnValue(false);
+      prisma.session.findUnique.mockResolvedValue({
+        cuid: 's1',
+        Transport: { type: TransportType.API },
+      });
+      prisma.broadcast.findMany.mockResolvedValue([
+        staleBroadcast({ attempts: 1, maxAttempts: 3, workerId: null }),
+      ]);
+
+      await worker.reclaimStaleClaims();
+
+      expect(broadcastService.checkTransportReadiness).toHaveBeenCalledWith(
+        's1',
+        TransportType.API,
+      );
+      expect(sessionAssignment.ensureAssignment).not.toHaveBeenCalled();
     });
 
     it('does not reassign when everything was terminal', async () => {

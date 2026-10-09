@@ -177,10 +177,28 @@ export class BroadcastReclaimWorker {
 
       if (!hasRescheduled) continue;
 
+      const transportType = session.Transport.type as TransportType;
+
+      // Shared-queue transports (API/SMTP/ECHO) have no assignment to redo:
+      // re-check readiness so the confirm that comes back claims the rows we
+      // just put back to SCHEDULED. ensureAssignment is a no-op for them, so
+      // without this the rows would sit SCHEDULED forever.
+      if (!this.sessionAssignment.isMultiWorker(transportType)) {
+        await this.broadcastService
+          .checkTransportReadiness(sessionCuid, transportType)
+          .catch((err) =>
+            this.logger.error(
+              `Readiness re-check failed for session ${sessionCuid}`,
+              err,
+            ),
+          );
+        continue;
+      }
+
       // The lost worker has aged out of the registry by now, so its
       // reservation is dropped and this picks the next free worker.
       await this.sessionAssignment
-        .ensureAssignment(sessionCuid, session.Transport.type as TransportType)
+        .ensureAssignment(sessionCuid, transportType)
         .catch((err) =>
           this.logger.error(
             `Reassignment failed for session ${sessionCuid}`,
