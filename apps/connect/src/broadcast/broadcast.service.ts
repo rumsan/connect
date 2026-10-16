@@ -395,7 +395,6 @@ export class BroadcastService {
     );
 
     if (workerId) {
-      this.sessionAssignment.clearPending(sessionCuid, workerId);
       this.logger.log(
         `Worker ${workerId} claimed ${claimed.length} broadcast(s) for session ${sessionCuid}`,
       );
@@ -411,6 +410,20 @@ export class BroadcastService {
         sessionCuid,
         workerId,
       });
+
+      // The worker is free the moment it is told to stop, so hand it to the
+      // oldest waiting session now rather than on the next sweep.
+      if (workerId) {
+        this.sessionAssignment.release(workerId, sessionCuid);
+        this.sessionAssignment
+          .assignWaiting()
+          .catch((err) =>
+            this.logger.error(
+              `assignWaiting failed after ${workerId} left ${sessionCuid}`,
+              err,
+            ),
+          );
+      }
       return;
     }
 

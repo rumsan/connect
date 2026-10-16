@@ -35,6 +35,7 @@ import { SessionModel } from '../entities/session.entity';
 
 import { wait } from '../utils';
 import { AudioService } from './audio.service';
+import { ChannelStateManager } from './channel-state.manager';
 import { validateDialPlan } from './ivr-dialplan.util';
 import { IVRService } from './ivr.service';
 import { SessionGate } from './session-gate';
@@ -80,11 +81,21 @@ export class AsteriskWorker extends TransportWorker {
     override readonly batchManager: BatchManger,
     private readonly ivrService: IVRService,
     override readonly sessionGate: SessionGate,
+    private readonly channelStateManager: ChannelStateManager,
   ) {
     super(dataProvider, channel, transportQueue, batchManager, broadcastLogQueue);
   }
 
   public override async onModuleInit() {
+    this.batchManager.setActiveSessionResolver(
+      () => this.sessionGate.activeSession,
+    );
+    // A call still up is bounded by the channel reaper, which hangs it up and
+    // so produces a real Hangup report. The batch reaper is only for broadcasts
+    // whose channel is already gone and never reported.
+    this.batchManager.setLivenessCheck((channelId) =>
+      this.channelStateManager.hasChannel(channelId),
+    );
     try {
       await this.channel.addSetup(async (channel: ConfirmChannel) => {
         await this.assertQueue(channel);
@@ -186,6 +197,7 @@ export class AsteriskWorker extends TransportWorker {
       capacity: this.batchManager.batchSize,
       activeSessionCuid: this.sessionGate.activeSession,
       inFlight: this.batchManager.processingBroadcasts.size,
+      queuedSessions: this.sessionGate.pendingCount,
     });
   }
 

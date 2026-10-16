@@ -10,6 +10,31 @@ interface PendingSession {
   work: () => Promise<void>;
 }
 
+/**
+ * No serialization: every session's work runs as soon as it arrives. The
+ * default for in-process transports (API/SMTP/ECHO), which can run sessions
+ * concurrently and have no SESSION_COMPLETE-driven release they can rely on —
+ * a single failed batch would otherwise hold the gate and strand every later
+ * session in SCHEDULED.
+ */
+export class PassThroughSessionGate implements ISessionGate {
+  private readonly logger = new Logger(PassThroughSessionGate.name);
+
+  async enqueue(sessionCuid: string, work: () => Promise<void>) {
+    try {
+      await work();
+    } catch (err) {
+      this.logger.error(
+        `Work failed for session ${sessionCuid}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  completeSession() {
+    // Nothing held, nothing to release.
+  }
+}
+
 @Injectable()
 export class SessionGate implements OnModuleDestroy {
   private readonly logger = new Logger(SessionGate.name);

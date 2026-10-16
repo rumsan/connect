@@ -103,4 +103,119 @@ describe('BatchManger', () => {
       }),
     );
   });
+
+  describe('with a session gate', () => {
+    let active: string | null;
+
+    beforeEach(() => {
+      active = 's1';
+      manager.setActiveSessionResolver(() => active);
+    });
+
+    it('does not ask for a session the gate has already left', () => {
+      manager.beginBatch();
+      manager.startMonitoring('c1', log('c1', 's1'));
+      manager.finishBatch('s1');
+
+      // Gate moved on (e.g. timed out) while an s1 call was still up.
+      active = 's2';
+      manager.endMonitoring('c1');
+      flush();
+
+      expect(transportQueue.confirmReadiness).not.toHaveBeenCalled();
+    });
+
+    it('counts only the active session when deciding the batch drained', () => {
+      manager.startMonitoring('old', log('old', 's1'));
+      active = 's2';
+
+      manager.beginBatch();
+      manager.startMonitoring('c1', log('c1', 's2'));
+      manager.finishBatch('s2');
+      manager.endMonitoring('c1');
+      flush();
+
+      // The lingering s1 call does not hold up s2's next batch.
+      expect(transportQueue.confirmReadiness).toHaveBeenCalledTimes(1);
+      expect(transportQueue.confirmReadiness).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionCuid: 's2' }),
+      );
+    });
+
+    it('drops a confirm when the gate moves on during batchDelay', () => {
+      manager.beginBatch();
+      manager.startMonitoring('c1', log('c1', 's1'));
+      manager.finishBatch('s1');
+      manager.endMonitoring('c1');
+
+      active = null;
+      flush();
+
+      expect(transportQueue.confirmReadiness).not.toHaveBeenCalled();
+    });
+
+    it('reports in-flight per session', () => {
+      manager.startMonitoring('a', log('a', 's1'));
+      manager.startMonitoring('b', log('b', 's2'));
+
+      expect(manager.inFlightFor('s1')).toBe(1);
+      expect(manager.inFlightFor()).toBe(2);
+    });
+  });
+
+  describe('reaper', () => {
+    let logQueue: { addVoice: jest.Mock };
+    let reaper: BatchManger;
+
+    beforeEach(() => {
+      logQueue = { addVoice: jest.fn().mockResolvedValue(true) };
+      reaper = new BatchManger(
+        transportQueue as unknown as TransportQueue,
+        logQueue as never,
+      );
+      reaper.onModuleInit();
+    });
+
+    afterEach(() => {
+      reaper.onModuleDestroy();
+    });
+
+    const runReaper = async () => {
+      jest.advanceTimersByTime(reaper.ttlMs + reaper.reaperIntervalMs);
+      // Let the async reap() settle.
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+
+    it('leaves a broadcast alone while the transport says its call is live', async () => {
+      reaper.setLivenessCheck((id) => id === 'c1');
+      reaper.startMonitoring('c1', log('c1'));
+
+      await runReaper();
+
+      expect(logQueue.addVoice).not.toHaveBeenCalled();
+      expect(reaper.getLog('c1')).toBeDefined();
+    });
+
+    it('reaps a dead broadcast but still hands its log to a late report once', async () => {
+      reaper.setLivenessCheck(() => false);
+      reaper.startMonitoring('c1', log('c1'));
+
+      await runReaper();
+
+      expect(logQueue.addVoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          broadcastLogId: 'c1',
+          status: BroadcastStatus.FAIL,
+          details: expect.objectContaining({ errorTag: 'REAPER_TIMEOUT' }),
+        }),
+      );
+      expect(reaper.getLog('c1')).toBeUndefined();
+
+      const late = reaper.getLogOrReaped<QueueBroadcastLog>('c1');
+      expect(late).toEqual(
+        expect.objectContaining({ broadcastLogId: 'c1', status: BroadcastStatus.PENDING }),
+      );
+      expect(reaper.getLogOrReaped('c1')).toBeUndefined();
+    });
+  });
 });

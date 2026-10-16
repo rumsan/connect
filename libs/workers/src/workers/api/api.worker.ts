@@ -38,34 +38,45 @@ export class ApiWorker extends TransportWorker {
     this.logger.log(
       `Processing broadcast job for session: ${jobData.sessionId}`,
     );
-    const session: Session = await this.dataProvider.getSession(
-      jobData.sessionId,
-    );
+    try {
+      const session: Session = await this.dataProvider.getSession(
+        jobData.sessionId,
+      );
 
-    this.transport.init(session.Transport?.config as TransportApiConfig);
-    const bulkDataTpl = extractBulkDataTemplate(session.Transport?.config);
+      this.transport.init(session.Transport?.config as TransportApiConfig);
+      const bulkDataTpl = extractBulkDataTemplate(session.Transport?.config);
 
-    if (bulkDataTpl) {
-      await this.sendBulkBroadcast(session, jobData);
-    } else {
-      for (const job of jobData.broadcasts) {
-        const broadcastLog: QueueBroadcastLog = {
-          broadcastLogId: job.broadcastLogId,
-          broadcastId: job.broadcastId,
-          sessionId: jobData.sessionId,
-          attempt: job.attempt,
-          status: BroadcastStatus.PENDING,
-          queue: this.queueTransport,
-        };
+      if (bulkDataTpl) {
+        await this.sendBulkBroadcast(session, jobData);
+      } else {
+        for (const job of jobData.broadcasts) {
+          const broadcastLog: QueueBroadcastLog = {
+            broadcastLogId: job.broadcastLogId,
+            broadcastId: job.broadcastId,
+            sessionId: jobData.sessionId,
+            attempt: job.attempt,
+            status: BroadcastStatus.PENDING,
+            queue: this.queueTransport,
+          };
 
-        await this.sendBroadcast({
-          session,
-          broadcastLog,
-          broadcastJob: job,
-        });
+          await this.sendBroadcast({
+            session,
+            broadcastLog,
+            broadcastJob: job,
+          });
+        }
       }
+    } catch (e: any) {
+      this.logger.error(
+        `Failed to process broadcast job for session: ${jobData.sessionId}`,
+        e,
+      );
+    } finally {
+      // Always ask for the next batch. Connect either claims more or, finding
+      // nothing left, closes the session — skipping this leaves the rest of the
+      // session SCHEDULED with nothing to pick it up.
+      await this._makeTransportReady(jobData.sessionId);
     }
-    await this._makeTransportReady(jobData.sessionId);
   }
 
   async sendBulkBroadcast(
@@ -138,7 +149,15 @@ export class ApiWorker extends TransportWorker {
     }
 
     //send log to connect server
-    await this.broadcastLogQueue.add(broadcastLog);
+    try {
+      await this.broadcastLogQueue.add(broadcastLog);
+    } catch (e: any) {
+      // Don't let one failed publish abort the rest of the batch.
+      this.logger.error(
+        `Failed to publish broadcast log ${broadcastLog.broadcastLogId} for session: ${session.cuid}`,
+        e,
+      );
+    }
     return broadcastLog;
   }
 

@@ -296,6 +296,7 @@ export class IVRService implements OnModuleDestroy {
         if (incomingAddress) channelState.address = incomingAddress;
 
         await incomingChannel.answer();
+        this.channelStateManager.markAnswered(channelId);
 
         const postAnswerState = this.channelStateManager.getState(channelId);
         if (!postAnswerState?.isActive) {
@@ -339,7 +340,11 @@ export class IVRService implements OnModuleDestroy {
         const wasRecording = this.channelStateManager.isRecording(channel.id);
         // Serialized per channel so navigation state moves one keypress at a time.
         await this.channelStateManager.enqueueDtmf(channel.id, async () => {
-          this.channelStateManager.recordDtmf(channel.id, event.digit);
+          this.channelStateManager.recordDtmf(
+            channel.id,
+            event.digit,
+            event.duration_ms,
+          );
           await this.handleDTMF(channel, event.digit, wasRecording);
         });
       } catch (error) {
