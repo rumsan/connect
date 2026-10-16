@@ -162,4 +162,60 @@ describe('BatchManger', () => {
       expect(manager.inFlightFor()).toBe(2);
     });
   });
+
+  describe('reaper', () => {
+    let logQueue: { addVoice: jest.Mock };
+    let reaper: BatchManger;
+
+    beforeEach(() => {
+      logQueue = { addVoice: jest.fn().mockResolvedValue(true) };
+      reaper = new BatchManger(
+        transportQueue as unknown as TransportQueue,
+        logQueue as never,
+      );
+      reaper.onModuleInit();
+    });
+
+    afterEach(() => {
+      reaper.onModuleDestroy();
+    });
+
+    const runReaper = async () => {
+      jest.advanceTimersByTime(reaper.ttlMs + reaper.reaperIntervalMs);
+      // Let the async reap() settle.
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+
+    it('leaves a broadcast alone while the transport says its call is live', async () => {
+      reaper.setLivenessCheck((id) => id === 'c1');
+      reaper.startMonitoring('c1', log('c1'));
+
+      await runReaper();
+
+      expect(logQueue.addVoice).not.toHaveBeenCalled();
+      expect(reaper.getLog('c1')).toBeDefined();
+    });
+
+    it('reaps a dead broadcast but still hands its log to a late report once', async () => {
+      reaper.setLivenessCheck(() => false);
+      reaper.startMonitoring('c1', log('c1'));
+
+      await runReaper();
+
+      expect(logQueue.addVoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          broadcastLogId: 'c1',
+          status: BroadcastStatus.FAIL,
+          details: expect.objectContaining({ errorTag: 'REAPER_TIMEOUT' }),
+        }),
+      );
+      expect(reaper.getLog('c1')).toBeUndefined();
+
+      const late = reaper.getLogOrReaped<QueueBroadcastLog>('c1');
+      expect(late).toEqual(
+        expect.objectContaining({ broadcastLogId: 'c1', status: BroadcastStatus.PENDING }),
+      );
+      expect(reaper.getLogOrReaped('c1')).toBeUndefined();
+    });
+  });
 });

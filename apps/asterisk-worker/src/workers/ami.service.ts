@@ -4,6 +4,7 @@ import {
   BroadcastStatus,
   CallDetails,
   CallDisposition,
+  DtmfEvent,
   QueueBroadcastLogVoice,
   TERMINAL_VOICE_RESPONSE_STATUSES,
 } from '@rumsan/connect/types';
@@ -121,17 +122,22 @@ export class AMIService implements OnModuleDestroy {
 
       if (eventType === 'Hangup') {
         const disposition = getAsteriskDisposition(evt.cause, evt.channelstate);
-        const broadcastLog: QueueBroadcastLogVoice = this.batchManager.getLog(
-          evt.uniqueid,
-        );
+        // getLogOrReaped: a call the batch reaper already gave up on still
+        // gets its real disposition reported, rather than the reaper's FAIL.
+        const broadcastLog: QueueBroadcastLogVoice =
+          this.batchManager.getLogOrReaped(evt.uniqueid);
 
         if (broadcastLog) {
           const isIvr = this.channelStateManager.isIvrChannel(evt.uniqueid);
           let ivrSequence: string[] = [];
           let ivrPath: string[] = [];
+          let ivrDtmfEvents: DtmfEvent[] = [];
 
           if (isIvr) {
             ivrPath = this.channelStateManager.getIvrSelections(evt.uniqueid);
+            ivrDtmfEvents = this.channelStateManager.getDtmfEvents(
+              evt.uniqueid,
+            );
             const ariSequence = this.channelStateManager.getDtmfSequence(
               evt.uniqueid,
             );
@@ -186,6 +192,7 @@ export class AMIService implements OnModuleDestroy {
             hangupDetails: evt,
             ivrSequence: [...ivrSequence],
             ivrPath: [...ivrPath],
+            ...(ivrDtmfEvents.length ? { ivrDtmfEvents } : {}),
             ...(voiceResponses.length ? { voiceResponses } : {}),
           };
           await this.broadcastLogQueue.addVoice(broadcastLog);
@@ -216,24 +223,34 @@ export class AMIService implements OnModuleDestroy {
       }
 
       if (eventType === 'Cdr') {
-        const details: CallDetails = {
-          trunk: amiConfig.trunk,
-          disposition: CallDisposition.ANSWERED,
+        // Adds billing data to the report the Hangup handler already sent. It
+        // carries no status and no `disposition`: the hangup decided those
+        // (a call can be answered and still FAIL, e.g. ANSWERED_NO_PLAYBACK),
+        // and overwriting them here is what flipped failed calls to SUCCESS.
+        const details: Partial<CallDetails> = {
+          cdrDisposition: evt.disposition,
           answerTime: evt.answertime,
           endTime: evt.endtime,
           duration: +evt.billableseconds,
           cdr: evt,
         };
 
-        const [appName, broadcastLogId] = evt.lastdata.split(',');
+        const [, broadcastLogId] = (evt.lastdata ?? '').split(',');
         if (broadcastLogId) {
           setTimeout(async () => {
-            await this.broadcastLogQueue.updateDetailsVoice({
-              broadcastLogId,
-              status: BroadcastStatus.SUCCESS,
-              details,
-            });
-            this.logger.log(`CDR Sent: ${broadcastLogId}`);
+            try {
+              await this.broadcastLogQueue.updateDetails({
+                broadcastLogId,
+                details,
+              });
+              this.logger.log(`CDR Sent: ${broadcastLogId}`);
+            } catch (err) {
+              this.logger.error(
+                `Failed to send CDR for ${broadcastLogId}: ${
+                  (err as Error).message
+                }`,
+              );
+            }
           }, 5000);
         }
       }
@@ -241,6 +258,10 @@ export class AMIService implements OnModuleDestroy {
       if (eventType === 'DTMFEnd') {
         const uniqueid = evt.uniqueid;
         if (!this.channelStateManager.isIvrChannel(uniqueid)) {
+          return;
+        }
+        // DTMFEnd fires for both directions; only Received is the caller.
+        if (evt.direction && evt.direction !== 'Received') {
           return;
         }
         if (!this.ivrSequences.has(uniqueid)) {

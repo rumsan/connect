@@ -184,3 +184,52 @@ describe('ChannelStateManager voice responses', () => {
     expect(manager.getVoiceResponses(id)).toEqual([]);
   });
 });
+
+describe('ChannelStateManager DTMF events', () => {
+  let manager: ChannelStateManager;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    manager = new ChannelStateManager();
+    manager.registerChannel({
+      channelId: 'chan-1',
+      ivrDialPlan: dialPlan,
+      sessionId: 'sess-1',
+      broadcastLogId: 'log-1',
+      address: '9800000000',
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('records every digit, however short, with its duration and time since answer', () => {
+    manager.markAnswered('chan-1');
+    jest.advanceTimersByTime(250);
+    manager.recordDtmf('chan-1', '*', 12);
+    jest.advanceTimersByTime(1000);
+    manager.recordDtmf('chan-1', '1', 120);
+
+    expect(manager.getDtmfSequence('chan-1')).toEqual(['*', '1']);
+    expect(manager.getDtmfEvents('chan-1')).toEqual([
+      expect.objectContaining({ digit: '*', durationMs: 12, msSinceAnswer: 250 }),
+      expect.objectContaining({ digit: '1', durationMs: 120, msSinceAnswer: 1250 }),
+    ]);
+  });
+
+  it('leaves msSinceAnswer unset for a digit before answer', () => {
+    manager.recordDtmf('chan-1', '*');
+    expect(manager.getDtmfEvents('chan-1')[0].msSinceAnswer).toBeUndefined();
+  });
+
+  it('keeps the events readable after cleanup, for the AMI Hangup report', async () => {
+    manager.markAnswered('chan-1');
+    manager.recordDtmf('chan-1', '2', 90);
+    await manager.cleanupChannel('chan-1');
+
+    expect(manager.getDtmfEvents('chan-1')).toEqual([
+      expect.objectContaining({ digit: '2', durationMs: 90 }),
+    ]);
+  });
+});

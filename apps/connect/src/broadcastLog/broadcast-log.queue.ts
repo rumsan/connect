@@ -56,6 +56,11 @@ export class BroadcastLogQueue {
         },
       });
 
+      // The log row always takes its own report, but only the broadcast's
+      // current attempt may speak for the broadcast. A late report from an
+      // earlier attempt would otherwise overwrite the newer attempt's result.
+      if (this._isStaleAttempt(existingLog)) return;
+
       await tx.broadcast.update({
         where: {
           cuid: existingLog.broadcast,
@@ -80,43 +85,73 @@ export class BroadcastLogQueue {
     }
   }
 
+  /**
+   * Merges follow-up details (CDR, voice responses) into a log. These carry no
+   * status of their own unless one is given, so the outcome the main report
+   * set is left as it is.
+   */
   async updateDetails(data: QueueBroadcastLogDetails) {
     const { broadcastLogId, details, notes } = data;
-    const existingLog = await this.prisma.broadcastLog.findUnique({
-      where: {
-        cuid: broadcastLogId,
-      },
-    });
 
-    if (!existingLog) {
-      return;
-    }
+    const sessionCuid = await this.prisma.$transaction(
+      async (tx: PrismaService) => {
+        const existingLog = await tx.broadcastLog.findUnique({
+          where: {
+            cuid: broadcastLogId,
+          },
+          include: {
+            Broadcast: true,
+          },
+        });
 
-    const existingLogDetails = (existingLog.details as object) || {};
-    const updatedDetails = { ...existingLogDetails, ...details };
+        if (!existingLog) {
+          return null;
+        }
 
-    const broadcastLog = await this.prisma.broadcastLog.update({
-      where: {
-        cuid: broadcastLogId,
-      },
-      data: {
-        status: data.status,
-        details: updatedDetails,
-        notes,
-      },
-    });
+        const existingLogDetails = (existingLog.details as object) || {};
+        const updatedDetails = { ...existingLogDetails, ...details };
 
-    await this.prisma.broadcast.update({
-      where: {
-        cuid: broadcastLog.broadcast,
-      },
-      data: {
-        status: data.status,
-        disposition: updatedDetails,
-      },
-    });
+        await tx.broadcastLog.update({
+          where: {
+            cuid: broadcastLogId,
+          },
+          data: {
+            status: data.status,
+            details: updatedDetails,
+            notes,
+          },
+        });
 
-    await this.checkVoiceUsageReady(existingLog.session);
+        if (!this._isStaleAttempt(existingLog)) {
+          await tx.broadcast.update({
+            where: {
+              cuid: existingLog.broadcast,
+            },
+            data: {
+              status: data.status,
+              disposition: updatedDetails,
+            },
+          });
+        }
+
+        return existingLog.session;
+      },
+    );
+
+    if (sessionCuid) await this.checkVoiceUsageReady(sessionCuid);
+  }
+
+  /** True when the log belongs to an attempt older than the broadcast's latest. */
+  private _isStaleAttempt(log: {
+    cuid: string;
+    attempt: number;
+    Broadcast: { attempts: number };
+  }): boolean {
+    if (log.attempt >= log.Broadcast.attempts) return false;
+    this.logger.warn(
+      `Stale report for log ${log.cuid}: attempt ${log.attempt} < broadcast attempt ${log.Broadcast.attempts}, broadcast left untouched`,
+    );
+    return true;
   }
 
   private async checkVoiceUsageReady(sessionCuid: string) {
