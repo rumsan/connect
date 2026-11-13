@@ -29,6 +29,15 @@ export class BroadcastController {
     return this.workerRegistry.all();
   }
 
+  @Get('workers/assignments')
+  @ApiOperation({
+    summary:
+      'Read-only: which session each worker is reserved for, what its heartbeat reports, and what it holds',
+  })
+  workerAssignments() {
+    return this.sessionAssignment.workerAssignments();
+  }
+
   @Get(':sessionCuid/workers')
   @ApiOperation({
     summary: 'Show how a session\'s broadcasts are split across workers',

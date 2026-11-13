@@ -562,6 +562,111 @@ export class SessionAssignmentService implements OnModuleInit {
     });
   }
 
+  /**
+   * Read-only snapshot of who connect has reserved for what, next to what each
+   * worker's heartbeat says and what the DB shows it holding. For the ops
+   * endpoint: answers "why can't a new session get a worker?".
+   *
+   * `state`:
+   * - `free`      — not reserved; assignable.
+   * - `busy`      — reserved and has calls claimed on that session.
+   * - `idle`      — reserved, nothing claimed, but numbers still scheduled. The
+   *                 worker should be asking for them; if it stays here, it is
+   *                 the stuck case.
+   * - `mismatch`  — reserved for one session while its heartbeat reports
+   *                 another (or none). Pruned after WORKER_RESERVATION_GRACE_MS.
+   * - `gone`      — reserved but no longer heartbeating.
+   */
+  async workerAssignments() {
+    const now = Date.now();
+    const roster = this.registry.all();
+    const byId = new Map(roster.map((w) => [w.workerId, w]));
+    const workerIds = [
+      ...new Set([...byId.keys(), ...this.reservations.keys()]),
+    ];
+    const reservedSessions = [
+      ...new Set([...this.reservations.values()].map((r) => r.sessionCuid)),
+    ];
+
+    const [claims, scheduled] = await Promise.all([
+      this.prisma.broadcast.groupBy({
+        by: ['workerId', 'session'],
+        where: {
+          status: BroadcastStatus.PENDING,
+          isComplete: false,
+          workerId: { in: workerIds },
+        },
+        _count: { _all: true },
+      }),
+      reservedSessions.length
+        ? this.prisma.broadcast.groupBy({
+            by: ['session'],
+            where: {
+              session: { in: reservedSessions },
+              status: BroadcastStatus.SCHEDULED,
+              isComplete: false,
+            },
+            _count: { _all: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const scheduledBySession = new Map(
+      scheduled.map((s) => [s.session, s._count._all]),
+    );
+
+    const workers = workerIds.map((workerId) => {
+      const w = byId.get(workerId);
+      const r = this.reservations.get(workerId);
+      const held = claims
+        .filter((c) => c.workerId === workerId)
+        .map((c) => ({ sessionCuid: c.session, inFlight: c._count._all }));
+      const inFlightOnReserved = r
+        ? held.find((h) => h.sessionCuid === r.sessionCuid)?.inFlight ?? 0
+        : 0;
+      const scheduledOnReserved = r
+        ? scheduledBySession.get(r.sessionCuid) ?? 0
+        : 0;
+
+      let state: 'free' | 'busy' | 'idle' | 'mismatch' | 'gone';
+      if (!r) state = 'free';
+      else if (!w) state = 'gone';
+      else if (w.activeSessionCuid !== r.sessionCuid) state = 'mismatch';
+      else if (inFlightOnReserved > 0) state = 'busy';
+      else if (scheduledOnReserved > 0) state = 'idle';
+      else state = 'busy';
+
+      return {
+        workerId,
+        state,
+        transport: w?.transport ?? null,
+        priority: w?.priority ?? null,
+        capacity: w?.capacity ?? null,
+        live: !!w,
+        lastSeenAt: w ? new Date(w.lastSeenAt).toISOString() : null,
+        reservation: r
+          ? {
+              sessionCuid: r.sessionCuid,
+              reservedAt: new Date(r.reservedAt).toISOString(),
+              ageMs: now - r.reservedAt,
+              inFlight: inFlightOnReserved,
+              scheduled: scheduledOnReserved,
+            }
+          : null,
+        heartbeat: w
+          ? {
+              activeSessionCuid: w.activeSessionCuid ?? null,
+              inFlight: w.inFlight ?? null,
+              queuedSessions: w.queuedSessions ?? null,
+            }
+          : null,
+        claims: held,
+      };
+    });
+
+    return { at: new Date(now).toISOString(), workers };
+  }
+
   /** Per-worker breakdown of a session, for the ops endpoint and runbook. */
   async sessionWorkerBreakdown(sessionCuid: string) {
     const rows = await this.prisma.broadcast.groupBy({

@@ -31,6 +31,7 @@ describe('SessionAssignmentService', () => {
     broadcast: {
       count: jest.Mock;
       findMany: jest.Mock;
+      groupBy: jest.Mock;
     };
     session: {
       count: jest.Mock;
@@ -42,6 +43,7 @@ describe('SessionAssignmentService', () => {
     idle: jest.Mock;
     live: jest.Mock;
     get: jest.Mock;
+    all: jest.Mock;
     staleAfterMs: number;
   };
 
@@ -50,6 +52,7 @@ describe('SessionAssignmentService', () => {
       broadcast: {
         count: jest.fn().mockResolvedValue(0),
         findMany: jest.fn().mockResolvedValue([]),
+        groupBy: jest.fn().mockResolvedValue([]),
       },
       session: {
         count: jest.fn().mockResolvedValue(0),
@@ -61,6 +64,7 @@ describe('SessionAssignmentService', () => {
       idle: jest.fn().mockReturnValue([]),
       live: jest.fn().mockReturnValue([]),
       get: jest.fn(),
+      all: jest.fn().mockReturnValue([]),
       staleAfterMs: 45_000,
     };
 
@@ -556,6 +560,83 @@ describe('SessionAssignmentService', () => {
           cutoffOf(prisma.session.findMany.mock.calls[0][0]),
           -3,
         );
+      });
+    });
+  });
+  describe('workerAssignments', () => {
+    /** First groupBy: claims by worker+session. Second: scheduled by session. */
+    const db = (
+      claims: { workerId: string; session: string; n: number }[],
+      scheduled: { session: string; n: number }[],
+    ) => {
+      prisma.broadcast.groupBy
+        .mockResolvedValueOnce(
+          claims.map((c) => ({
+            workerId: c.workerId,
+            session: c.session,
+            _count: { _all: c.n },
+          })),
+        )
+        .mockResolvedValueOnce(
+          scheduled.map((s) => ({ session: s.session, _count: { _all: s.n } })),
+        );
+    };
+
+    const stateOf = async (workerId: string) =>
+      (await service.workerAssignments()).workers.find(
+        (w) => w.workerId === workerId,
+      );
+
+    it('reports an unreserved worker as free', async () => {
+      registry.all.mockReturnValue([worker('w1', 1, 10)]);
+      db([], []);
+      expect(await stateOf('w1')).toMatchObject({
+        state: 'free',
+        reservation: null,
+        live: true,
+      });
+    });
+
+    it('flags a reserved worker with nothing claimed but work scheduled as idle', async () => {
+      const w1 = worker('w1', 1, 190, 's1');
+      await assign('s1', worker('w1', 1, 190));
+      registry.all.mockReturnValue([w1]);
+      db([], [{ session: 's1', n: 3 }]);
+
+      expect(await stateOf('w1')).toMatchObject({
+        state: 'idle',
+        reservation: { sessionCuid: 's1', inFlight: 0, scheduled: 3 },
+        heartbeat: { activeSessionCuid: 's1' },
+      });
+    });
+
+    it('reports a reserved worker with live claims as busy', async () => {
+      await assign('s1', worker('w1', 1, 10));
+      registry.all.mockReturnValue([worker('w1', 1, 10, 's1')]);
+      db([{ workerId: 'w1', session: 's1', n: 4 }], [{ session: 's1', n: 6 }]);
+
+      expect(await stateOf('w1')).toMatchObject({
+        state: 'busy',
+        reservation: { inFlight: 4, scheduled: 6 },
+        claims: [{ sessionCuid: 's1', inFlight: 4 }],
+      });
+    });
+
+    it('flags a reservation the heartbeat disagrees with', async () => {
+      await assign('s1', worker('w1', 1, 10));
+      registry.all.mockReturnValue([worker('w1', 1, 10, null)]);
+      db([], [{ session: 's1', n: 1 }]);
+      expect((await stateOf('w1'))?.state).toBe('mismatch');
+    });
+
+    it('still lists a reserved worker that stopped heartbeating', async () => {
+      await assign('s1', worker('w1', 1, 10));
+      registry.all.mockReturnValue([]);
+      db([], []);
+      expect(await stateOf('w1')).toMatchObject({
+        state: 'gone',
+        live: false,
+        heartbeat: null,
       });
     });
   });

@@ -1,0 +1,62 @@
+meta {
+  name: worker-assignments
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{url}}/broadcasts/workers/assignments
+  body: none
+  auth: none
+}
+
+headers {
+  app-id: {{app-id}}
+}
+
+docs {
+  # Worker assignments (read-only)
+
+  Which session connect has reserved each voice worker for, what the worker's
+  own heartbeat reports, and which sessions it holds claims on. Use it when a
+  new session sits waiting with "every voice worker holds another session".
+
+  `state` per worker:
+
+  | state      | meaning                                                                 |
+  |------------|-------------------------------------------------------------------------|
+  | `free`     | no reservation — can take a new session                                 |
+  | `busy`     | reserved, and has PENDING claims on that session                        |
+  | `idle`     | reserved, nothing claimed, but rows still SCHEDULED — stuck; the worker's idle watchdog (WORKER_IDLE_RESUME_MS) should re-ask for work |
+  | `mismatch` | heartbeat reports a different (or no) active session than the reservation |
+  | `gone`     | reserved but no longer heartbeating — dropped after WORKER_RESERVATION_GRACE_MS |
+
+  `reservation.ageMs` shows how long the worker has held its session.
+  `claims` lists every session it has calls in flight on, straight from the DB.
+}
+
+tests {
+  var data = res.getBody();
+  var states = ["free", "busy", "idle", "mismatch", "gone"];
+
+  test("returns a worker list", function() {
+    expect(data.workers).to.be.an("array");
+  });
+
+  test("worker ids are unique", function() {
+    var ids = data.workers.map(function(w) { return w.workerId; });
+    expect(new Set(ids).size).to.equal(ids.length);
+  });
+
+  test("every worker has a known state", function() {
+    data.workers.forEach(function(w) {
+      expect(states).to.include(w.state);
+    });
+  });
+
+  test("free workers hold no reservation", function() {
+    data.workers
+      .filter(function(w) { return w.state === "free"; })
+      .forEach(function(w) { expect(w.reservation).to.equal(null); });
+  });
+}

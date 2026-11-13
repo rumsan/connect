@@ -352,6 +352,18 @@ is still live.
 **Who is in the fleet right now?** `GET /broadcasts/workers`, or per worker
 `GET http://<worker>:<port>/api/health` for its gate state and in-flight count.
 
+**Why can't a new session get a worker?** `GET /broadcasts/workers/assignments`
+(read-only) shows, per worker, the session connect has it reserved for and since
+when, what its heartbeat reports, and what it holds in the DB. `state` is one of:
+
+| state | meaning |
+| --- | --- |
+| `free` | Not reserved — assignable. |
+| `busy` | Reserved, with calls claimed on that session. |
+| `idle` | Reserved, nothing claimed, numbers still `SCHEDULED`. The worker's idle watchdog should pick them up within `WORKER_IDLE_RESUME_MS`; if it stays here, check the worker log. |
+| `mismatch` | Reserved for one session while the heartbeat reports another or none. Pruned after `WORKER_RESERVATION_GRACE_MS`. |
+| `gone` | Reserved but no longer heartbeating. Pruned on the next assignment pass. |
+
 **Anything stuck?**
 
 ```sql
