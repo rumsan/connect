@@ -1,4 +1,4 @@
-import { VoiceResponse } from '@rumsan/connect/types';
+import { DtmfEvent, VoiceResponse } from '@rumsan/connect/types';
 import { Playback } from 'ari-client';
 
 /**
@@ -79,6 +79,10 @@ export interface ChannelState {
   playbackFailed: boolean;
   playbackError?: string;
   dtmfSequence: string[];
+  /** dtmfSequence with Asterisk's tone length and timing for each digit. */
+  dtmfEvents: DtmfEvent[];
+  /** When the call was answered (epoch ms); null until StasisStart answers it. */
+  answeredAt: number | null;
   /** Digits from the root to the menu the caller is currently on; [] = main. */
   menuPath: number[];
   /** Dotted labels of the nodes the caller selected, e.g. ['1', '1.2']. */

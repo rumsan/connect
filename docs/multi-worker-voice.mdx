@@ -78,9 +78,43 @@ If work still exceeds the assigned workers' headroom and a worker frees up — o
 one dies — it is assigned mid-session, preparing on demand. This is also how a
 session that started while every other worker was busy grows its set later.
 
-Sessions themselves queue **per worker**: each runs one session at a time via
-its `SessionGate`. A worker outside session S1's chosen set is idle and so
-immediately eligible for S2.
+### 6. One session per worker
+
+A worker holds **one session at a time**, and connect enforces it. When connect
+sends a worker a `READINESS_CHECK` it *reserves* that worker for the session,
+and only releases it when it sends that worker `SESSION_COMPLETE`. Workers that
+hold a reservation are never candidates for another session, even if they
+have spare capacity.
+
+This can't be left to heartbeats. A heartbeat can be a full
+`WORKER_HEARTBEAT_MS` old, so two sessions started together would both see
+the primary as idle. The second would then queue behind the first in the
+primary's `SessionGate` while a lower-priority worker sat unused, and it would
+borrow the primary's headroom so the other worker was never woken.
+
+With `w1` (priority 1, capacity 20) and `w2` (priority 2, capacity 5), two
+10-address sessions started together:
+
+| Session | Worker | Why |
+| --- | --- | --- |
+| S1 | `w1` | primary is free and 20 ≥ 10 |
+| S2 | `w2` | `w1` holds S1; `w2` runs S2 in batches of 5 |
+| S3 | — | waits at connect until a worker is released |
+
+A session with no free worker stays `PENDING` at connect. The moment connect
+sends any worker its `SESSION_COMPLETE`, it hands that worker to the oldest
+waiting session (`SessionAssignmentService.assignWaiting`). Sessions with
+nobody on them go before running sessions that only want more capacity. The
+60s sweep runs the same method as a backstop.
+
+Reservations are dropped without a `SESSION_COMPLETE` in two cases. One is
+that the worker leaves the roster. The other is that, once
+`WORKER_RESERVATION_GRACE_MS` has passed, its heartbeats keep saying it is not
+on the session (its readiness failed, or its gate timed out). On boot, connect
+rebuilds reservations from live claims (`PENDING` rows with a `workerId`).
+
+The worker's `SessionGate` stays as a safety net. Its heartbeat reports
+`queuedSessions`, and a worker with anything queued is treated as busy.
 
 ## Message flow
 
@@ -187,9 +221,10 @@ worker has aged out of the registry, so `ensureAssignment` hands the work to the
 next live worker by priority.
 
 **Every worker was busy when the session started.** The session still goes to
-`PENDING` with nobody assigned. `BroadcastReclaimWorker.assignStalledSessions`
-runs on the same 60s tick and retries assignment for any `PENDING` session with
-`SCHEDULED` work left, so it starts as soon as a worker frees up. This is also
+`PENDING` with nobody assigned, and starts as soon as a worker is released (see
+*One session per worker*). `BroadcastReclaimWorker.assignStalledSessions`
+also runs `assignWaiting` on the same 60s tick for any `PENDING` session with
+`SCHEDULED` work left. This is also
 the backstop for any session that loses all its workers — without it a session
 would sit at `PENDING` forever, because the pull loop only advances when a
 worker asks for more.
@@ -206,13 +241,62 @@ Closing them out for good should be an explicit operator action, never
 automatic.
 
 **Worker never gets `SESSION_COMPLETE`.** Its `SessionGate` force-completes after
-`SESSION_GATE_TIMEOUT_MS` (10 min) and moves on. Since assignment is per worker,
-this only costs that one worker.
+`SESSION_GATE_TIMEOUT_MS` (10 min), unless calls of that session are still in
+flight, in which case it extends the timeout so the next session never starts
+on top of them. Connect drops the reservation once the worker has reported
+being off the session for `WORKER_RESERVATION_GRACE_MS`.
+
+**Late hangups across sessions.** The worker's "batch drained" confirm counts
+only the active session's calls and always asks for the active session. A
+hangup from a session the gate has left can't request work for that session,
+and it can't start the next session's first batch before its audio is ready.
 
 **A transport fails before producing a channel.** `TransportWorker._sendBroadcast`
 publishes the FAIL log and releases the slot. Without that the batch never drains
 and the worker never asks for another one — silently dropping itself from the
 pool for the rest of the session.
+
+**ARI never answers an originate.** `ari-client` sets no HTTP timeout, and the
+dispatch loop dials one number at a time, so a single lost reply used to freeze
+the worker: no more calls, no reports, no request for the next batch, until the
+gate timeout. Each originate is now bounded by `ARI_ORIGINATE_TIMEOUT_MS`
+(default 15000): on timeout the broadcast fails with `ORIGINATE_TIMEOUT`, the
+channel is hung up best-effort and the loop moves on. The call is monitored
+*before* the originate is sent, so a call the trunk rejects at once is reported
+with its real hangup cause even if the hangup beats the originate reply.
+
+**ARI WebSocket drops mid-session.** `IVRService` reconnects and then calls
+`BatchManger.resumeIfIdle`, because reconnecting only restores events. If the
+session is past preparation with nothing in flight, the worker asks connect
+for the rest of it.
+
+**Worker idle on a session it still holds.** A lost `READINESS_CONFIRM`, or rows
+the reclaim sweeper put back to `SCHEDULED` while the worker was still reserved,
+used to leave connect logging "absorbed … no new worker needed" while nobody
+dialled. On every heartbeat tick the worker checks: a prepared, active session
+with nothing in flight and no progress for `WORKER_IDLE_RESUME_MS` (default
+120000) means it asks again. Connect answers with a batch or `SESSION_COMPLETE`.
+This lives on the worker, not connect, because only the worker can tell
+"preparing audio" from "idle".
+
+**Session audio is unreachable.** Preparation downloads the session's audio (or
+IVR plan and its prompts). A failed download used to be swallowed: the worker
+sent no `READINESS_CONFIRM`, held its gate until the gate timeout, and the
+assignment sweep, oldest first, handed the same session straight back — so one
+bad URL blocked the worker indefinitely. Now each fetch is bounded by
+`AUDIO_FETCH_TIMEOUT_MS`; 5xx, 408, 429 and network errors are retried
+(`AUDIO_FETCH_ATTEMPTS`, default 3), any other 4xx is final at once. A final
+failure throws `AudioUnavailableError` (a `TransportPrepareError`): the worker
+sends `READINESS_FAIL` and releases its gate immediately. Connect
+(`BroadcastService.failUnpreparableSession`) fails every outstanding broadcast
+with `errorTag: AUDIO_UNAVAILABLE` and the reason, marks the session `FAILED`
+with `stats.failure = { errorTag, reason, workerId, at }`, sends
+`SESSION_COMPLETE` to any other worker on it, and assigns the freed workers.
+Scheduled retries skip a `FAILED` session, and completion checks never relabel
+it `COMPLETED`. If another worker is already dialling the session, the audio is
+evidently reachable, so only the reporting worker is released. Other preparation
+failures (ffmpeg, SFTP upload to Asterisk) may be temporary and still wait for
+the gate timeout.
 
 **Connect restarts.** The roster is empty for up to one heartbeat interval;
 assignment resumes on the next confirm. In-flight claims are untouched — they
@@ -232,6 +316,9 @@ scratch directory.
 | `WORKER_PRIORITY` | `1` = primary. Lower fills first. |
 | `BATCH_SIZE` | Capacity — max concurrent calls. Size from `ASTERISK_TRUNK_CHANNELS`. |
 | `WORKER_HEARTBEAT_MS` | Announcement interval (default 15000). |
+| `ARI_ORIGINATE_TIMEOUT_MS` | Max wait for ARI's reply to one originate before that broadcast fails as `ORIGINATE_TIMEOUT` (default 15000). |
+| `WORKER_IDLE_RESUME_MS` | Idle time on a prepared session, with nothing in flight, before the worker re-asks connect for work (default 120000). Keep well above a confirm → BROADCAST round trip. |
+| `AUDIO_FETCH_TIMEOUT_MS` / `AUDIO_FETCH_ATTEMPTS` | Per-request timeout for downloading session audio (default 30000) and total tries for a temporary failure (default 3). After that the session is failed as `AUDIO_UNAVAILABLE`. |
 | `PORT` | Health endpoint port; must differ when workers share a host. |
 | `ASTERISK_*` | That worker's own host, trunk, ARI/AMI/SSH credentials. |
 
@@ -241,6 +328,7 @@ scratch directory.
 | --- | --- |
 | `BROADCAST_CLAIM_TTL_MS` | Stale-claim window (default 600000). Keep above `BATCH_TTL_MS`. |
 | `BROADCAST_SPILLOVER_MIN` | Minimum overflow before waking another worker (default 1). |
+| `WORKER_RESERVATION_GRACE_MS` | How long a worker stays reserved for a session while its heartbeats say otherwise (default 60000). Must cover audio prep. |
 | `BROADCAST_MAX_SESSION_AGE_MS` | How old a session may get before the automatic sweep stops assigning it (default 86400000). Explicit retry ignores it. |
 | `WORKER_HEARTBEAT_MS` | Must match the workers'; three misses drops a worker. |
 
@@ -284,6 +372,18 @@ is still live.
 **Who is in the fleet right now?** `GET /broadcasts/workers`, or per worker
 `GET http://<worker>:<port>/api/health` for its gate state and in-flight count.
 
+**Why can't a new session get a worker?** `GET /broadcasts/workers/assignments`
+(read-only) shows, per worker, the session connect has it reserved for and since
+when, what its heartbeat reports, and what it holds in the DB. `state` is one of:
+
+| state | meaning |
+| --- | --- |
+| `free` | Not reserved — assignable. |
+| `busy` | Reserved, with calls claimed on that session. |
+| `idle` | Reserved, nothing claimed, numbers still `SCHEDULED`. The worker's idle watchdog should pick them up within `WORKER_IDLE_RESUME_MS`; if it stays here, check the worker log. |
+| `mismatch` | Reserved for one session while the heartbeat reports another or none. Pruned after `WORKER_RESERVATION_GRACE_MS`. |
+| `gone` | Reserved but no longer heartbeating. Pruned on the next assignment pass. |
+
 **Anything stuck?**
 
 ```sql
@@ -307,6 +407,20 @@ SELECT broadcast, count(*) FROM tbl_broadcast_logs
 
 Rows here with more than one *attempt* are legitimate retries; check `attempt`
 before treating it as a duplicate.
+
+**Session stuck: "absorbed by [worker] … no new worker needed" but nothing dials.**
+Check the worker log for `ORIGINATE_TIMEOUT`, `Slow ARI originate`, `ARI WebSocket
+dropped`, `Hangup for untracked channel` and `Resuming session`. Frequent
+WebSocket drops at a regular interval point to a proxy idle timeout between the
+worker and ARI; reach ARI directly over a private network instead. To unblock at
+once, restart the worker: connect drops its reservation after
+`WORKER_RESERVATION_GRACE_MS` and reassigns.
+
+**Session FAILED with `AUDIO_UNAVAILABLE`.** `stats.failure.reason` on the
+session (and `disposition.error` on each broadcast) carries the HTTP status and
+the start of the response body, e.g. `HTTP 400 Bad Request: …`. Check the URL
+with `curl -i` from the worker host. The failed broadcasts are final; send a new
+broadcast once the audio is fixed.
 
 **RabbitMQ.** The exchange `rsconnect.transport` should show one queue per live
 worker, each bound to its own `voice.worker.<id>` plus `voice.control`. A queue

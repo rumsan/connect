@@ -9,7 +9,11 @@ import {
   WORKER_ID,
   WORKER_PRIORITY,
 } from '@rsconnect/queue';
-import { IDataProvider, TransportWorker } from '@rsconnect/workers';
+import {
+  IDataProvider,
+  TransportPrepareError,
+  TransportWorker,
+} from '@rsconnect/workers';
 import {
   controlRoutingKey,
   EXCHANGES,
@@ -35,6 +39,7 @@ import { SessionModel } from '../entities/session.entity';
 
 import { wait } from '../utils';
 import { AudioService } from './audio.service';
+import { ChannelStateManager } from './channel-state.manager';
 import { validateDialPlan } from './ivr-dialplan.util';
 import { IVRService } from './ivr.service';
 import { SessionGate } from './session-gate';
@@ -53,6 +58,12 @@ const VOICE_QUEUE = WORKER_ID
 // A decommissioned worker's queue would otherwise accumulate messages forever.
 // Only applies while nothing is consuming, so a live worker is never affected.
 const QUEUE_IDLE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+// How long an active, prepared session may sit with nothing in flight before
+// the worker asks connect for the rest of it again. Well above a normal
+// confirm → claim → BROADCAST round trip, so it never doubles a live batch.
+const IDLE_RESUME_MS =
+  +(process.env['WORKER_IDLE_RESUME_MS'] as string) || 120_000;
 
 @Injectable()
 export class AsteriskWorker extends TransportWorker {
@@ -80,11 +91,21 @@ export class AsteriskWorker extends TransportWorker {
     override readonly batchManager: BatchManger,
     private readonly ivrService: IVRService,
     override readonly sessionGate: SessionGate,
+    private readonly channelStateManager: ChannelStateManager,
   ) {
     super(dataProvider, channel, transportQueue, batchManager, broadcastLogQueue);
   }
 
   public override async onModuleInit() {
+    this.batchManager.setActiveSessionResolver(
+      () => this.sessionGate.activeSession,
+    );
+    // A call still up is bounded by the channel reaper, which hangs it up and
+    // so produces a real Hangup report. The batch reaper is only for broadcasts
+    // whose channel is already gone and never reported.
+    this.batchManager.setLivenessCheck((channelId) =>
+      this.channelStateManager.hasChannel(channelId),
+    );
     try {
       await this.channel.addSetup(async (channel: ConfirmChannel) => {
         await this.assertQueue(channel);
@@ -178,6 +199,12 @@ export class AsteriskWorker extends TransportWorker {
    */
   @Interval(WORKER_HEARTBEAT_MS)
   async sendHeartbeat() {
+    // Watchdog: a session this worker holds, past preparation, with nothing in
+    // flight and nothing happening for a while means a READINESS_CONFIRM (or
+    // connect's reply to it) went missing. Ask again rather than sit idle
+    // until the gate timeout while connect thinks we are busy.
+    this.batchManager.resumeIfIdle('idle watchdog', IDLE_RESUME_MS);
+
     if (!WORKER_ID) return false;
     return await this.transportQueue.sendHeartbeat({
       workerId: WORKER_ID,
@@ -186,6 +213,7 @@ export class AsteriskWorker extends TransportWorker {
       capacity: this.batchManager.batchSize,
       activeSessionCuid: this.sessionGate.activeSession,
       inFlight: this.batchManager.processingBroadcasts.size,
+      queuedSessions: this.sessionGate.pendingCount,
     });
   }
 
@@ -253,8 +281,12 @@ export class AsteriskWorker extends TransportWorker {
       console.log(e);
       broadcastLog.status = BroadcastStatus.FAIL;
       broadcastLog.details = { error: e.message };
+      return broadcastLog;
     }
-    return broadcastLog;
+    // The call is now the Hangup handler's to report. It mutates this same
+    // object — possibly already, for a call rejected at once — so hand the
+    // dispatch loop a PENDING copy, or it would report that FAIL again.
+    return { ...broadcastLog, status: BroadcastStatus.PENDING };
   }
   async makeTransportReady(sessionCuid: string) {
     try {
@@ -301,6 +333,9 @@ export class AsteriskWorker extends TransportWorker {
       return true;
     } catch (e: any) {
       this.logger.error(e.message);
+      // Unreachable audio fails the session outright (see TransportWorker);
+      // anything else may be temporary and is left to be retried.
+      if (e instanceof TransportPrepareError) throw e;
       return false;
     }
   }

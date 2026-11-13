@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { QUEUE_ACTIONS } from '@rumsan/connect';
-import { TransportQueue } from '@rsconnect/queue';
+import { BatchManger, TransportQueue } from '@rsconnect/queue';
 import { ConnectionLifecycleManager } from './connection-lifecycle.manager';
 
 interface PendingSession {
@@ -22,6 +22,7 @@ export class SessionGate implements OnModuleDestroy {
   constructor(
     private readonly connectionLifecycle: ConnectionLifecycleManager,
     private readonly transportQueue: TransportQueue,
+    private readonly batchManager: BatchManger,
   ) {}
 
   onModuleDestroy() {
@@ -125,12 +126,22 @@ export class SessionGate implements OnModuleDestroy {
   private resetSessionTimeout(sessionCuid: string) {
     this.clearSessionTimeout();
     this.sessionTimeout = setTimeout(() => {
-      if (this.activeSessionCuid === sessionCuid) {
+      if (this.activeSessionCuid !== sessionCuid) return;
+      // Calls still up means the session is alive, just long. Cutting it off
+      // here would start the next session on top of them and mix their
+      // reports, so wait for them; the batch reaper bounds how long that is.
+      const inFlight = this.batchManager.inFlightFor(sessionCuid);
+      if (inFlight > 0) {
         this.logger.warn(
-          `Session ${sessionCuid} timed out after ${this.sessionTimeoutMs}ms, force-completing`,
+          `Session ${sessionCuid} hit the ${this.sessionTimeoutMs}ms gate timeout with ${inFlight} call(s) in flight — extending`,
         );
-        this.completeSession(sessionCuid);
+        this.resetSessionTimeout(sessionCuid);
+        return;
       }
+      this.logger.warn(
+        `Session ${sessionCuid} timed out after ${this.sessionTimeoutMs}ms, force-completing`,
+      );
+      this.completeSession(sessionCuid);
     }, this.sessionTimeoutMs);
     this.sessionTimeout.unref?.();
   }

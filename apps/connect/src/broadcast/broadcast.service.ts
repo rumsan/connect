@@ -12,6 +12,7 @@ import { BroadcastQueue, TransportQueue } from '@rsconnect/queue';
 import { QUEUES } from '@rumsan/connect';
 import {
   BroadcastStatus,
+  QueueReadinessFail,
   Session,
   SessionStatus,
   TransportType,
@@ -265,6 +266,20 @@ export class BroadcastService {
     transportType: TransportType,
   ) {
     try {
+      // A FAILED session can never be prepared; scheduled retries and
+      // schedulers still holding it must not revive it (this would set it
+      // back to PENDING and send it to a worker again).
+      const current = await this.prisma.session.findUnique({
+        where: { cuid: sessionCuid },
+        select: { status: true },
+      });
+      if (current?.status === SessionStatus.FAILED) {
+        this.logger.log(
+          `Skipping readiness check for FAILED session ${sessionCuid}`,
+        );
+        return;
+      }
+
       // Multi-worker transports pick their workers by capacity and address the
       // readiness check to each; only those workers prepare audio. Everything
       // else keeps the single shared queue.
@@ -395,7 +410,6 @@ export class BroadcastService {
     );
 
     if (workerId) {
-      this.sessionAssignment.clearPending(sessionCuid, workerId);
       this.logger.log(
         `Worker ${workerId} claimed ${claimed.length} broadcast(s) for session ${sessionCuid}`,
       );
@@ -411,6 +425,20 @@ export class BroadcastService {
         sessionCuid,
         workerId,
       });
+
+      // The worker is free the moment it is told to stop, so hand it to the
+      // oldest waiting session now rather than on the next sweep.
+      if (workerId) {
+        this.sessionAssignment.release(workerId, sessionCuid);
+        this.sessionAssignment
+          .assignWaiting()
+          .catch((err) =>
+            this.logger.error(
+              `assignWaiting failed after ${workerId} left ${sessionCuid}`,
+              err,
+            ),
+          );
+      }
       return;
     }
 
@@ -581,6 +609,136 @@ export class BroadcastService {
     };
   }
 
+  /**
+   * A worker reported READINESS_FAIL: this session can never be prepared (its
+   * audio URL is unreachable, say). Fail every outstanding broadcast with the
+   * worker's reason, mark the session FAILED with that reason in
+   * `stats.failure`, and free every worker holding it.
+   *
+   * Exception: if some broadcast is already claimed, another worker prepared
+   * the same session fine, so the problem is the reporter's alone — only that
+   * worker is released and the session carries on.
+   */
+  async failUnpreparableSession(failure: QueueReadinessFail) {
+    const { sessionCuid, workerId, errorTag, reason } = failure;
+
+    const session = await this.prisma.session.findUnique({
+      where: { cuid: sessionCuid },
+      include: { Transport: true },
+    });
+    if (!session) return;
+    const transportQueue = this._getQueueName(
+      session.Transport.type as TransportType,
+    );
+
+    // The reporter has already let go of its gate.
+    if (workerId) this.sessionAssignment.release(workerId, sessionCuid);
+
+    const done: SessionStatus[] = [SessionStatus.FAILED, SessionStatus.COMPLETED];
+    if (done.includes(session.status as SessionStatus)) {
+      this.logger.log(
+        `Readiness failure for ${sessionCuid} from ${workerId ?? 'shared queue'} ignored: session already ${session.status}`,
+      );
+      return this._handFreedWorkers(sessionCuid);
+    }
+
+    const claimed = await this.prisma.broadcast.count({
+      where: {
+        session: sessionCuid,
+        status: BroadcastStatus.PENDING,
+        isComplete: false,
+      },
+    });
+    if (claimed > 0) {
+      this.logger.warn(
+        `Worker ${workerId} could not prepare session ${sessionCuid} (${errorTag}: ${reason}), but ${claimed} broadcast(s) are in progress elsewhere — releasing only that worker`,
+      );
+      return this._handFreedWorkers(sessionCuid);
+    }
+
+    const outstanding = await this.prisma.broadcast.findMany({
+      where: { session: sessionCuid, isComplete: false },
+      select: { cuid: true, app: true, attempts: true },
+    });
+
+    const endedAt = new Date();
+    const disposition = { error: reason, errorTag };
+    const stats = (session.stats as Record<string, unknown>) ?? {};
+
+    await this.prisma.$transaction(async (tx: PrismaService) => {
+      await tx.broadcast.updateMany({
+        where: { session: sessionCuid, isComplete: false },
+        data: {
+          status: BroadcastStatus.FAIL,
+          isComplete: true,
+          disposition,
+        },
+      });
+      if (outstanding.length > 0) {
+        await tx.broadcastLog.createMany({
+          data: outstanding.map((b) => ({
+            cuid: createId(),
+            broadcast: b.cuid,
+            session: sessionCuid,
+            app: b.app,
+            status: BroadcastStatus.FAIL,
+            attempt: b.attempts,
+            details: { ...disposition, workerId },
+          })),
+        });
+      }
+      await tx.session.update({
+        where: { cuid: sessionCuid },
+        data: {
+          status: SessionStatus.FAILED,
+          endedAt,
+          stats: {
+            ...stats,
+            failure: {
+              errorTag,
+              reason,
+              workerId: workerId ?? null,
+              at: endedAt.toISOString(),
+            },
+          },
+        },
+      });
+      await this.sessionTiming.closeLastRun(sessionCuid, endedAt, tx);
+    });
+
+    this.logger.warn(
+      `Session ${sessionCuid} FAILED (${errorTag}): ${reason} — ${outstanding.length} broadcast(s) failed`,
+    );
+
+    // Any other worker still holding it would otherwise wait for its gate
+    // timeout. The reporter already let go.
+    for (const other of this.sessionAssignment.assignedWorkers(sessionCuid)) {
+      await this.transportQueue.notifySessionComplete({
+        transportQueue,
+        sessionCuid,
+        workerId: other,
+      });
+      this.sessionAssignment.release(other, sessionCuid);
+    }
+
+    // Webhook and usage react to the end of a session, failed or not.
+    this.eventEmitter.emit('broadcast.session.completed', sessionCuid);
+
+    return this._handFreedWorkers(sessionCuid);
+  }
+
+  /** Give freed workers to the oldest waiting session now, not on the next sweep. */
+  private _handFreedWorkers(sessionCuid: string) {
+    this.sessionAssignment
+      .assignWaiting()
+      .catch((err) =>
+        this.logger.error(
+          `assignWaiting failed after readiness failure on ${sessionCuid}`,
+          err,
+        ),
+      );
+  }
+
   async syncSessionCompletion(sessionCuid: string) {
     return this._checkIfSessionComplete(sessionCuid);
   }
@@ -604,7 +762,9 @@ export class BroadcastService {
       const { count } = await this.prisma.session.updateMany({
         where: {
           cuid: sessionCuid,
-          status: { not: SessionStatus.COMPLETED },
+          // FAILED is final too: a failed session's broadcasts are all
+          // complete, so without this a later re-check would relabel it.
+          status: { notIn: [SessionStatus.COMPLETED, SessionStatus.FAILED] },
         },
         data: {
           status: SessionStatus.COMPLETED,

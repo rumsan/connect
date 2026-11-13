@@ -5,6 +5,7 @@ import {
   QueueBroadcastLogDetails,
   QueueJobData,
   QueueReadinessConfirm,
+  QueueReadinessFail,
   QueueSessionTiming,
   QueueWorkerHeartbeat,
 } from '@rumsan/connect/types';
@@ -97,6 +98,21 @@ export class LogWorker implements OnModuleInit {
           );
       } catch (error) {
         console.log(error);
+      }
+    }
+
+    if (action === QUEUE_ACTIONS.READINESS_FAIL) {
+      try {
+        await this.broadcastService.failUnpreparableSession(
+          job.data as QueueReadinessFail,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Handling readiness failure for session ${
+            (job.data as QueueReadinessFail)?.sessionCuid
+          } failed`,
+          error,
+        );
       }
     }
 

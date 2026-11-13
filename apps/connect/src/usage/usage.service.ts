@@ -5,6 +5,14 @@ import { TransportType } from '@prisma/client';
 import { PrismaService } from '@rumsan/prisma';
 import { getSmsSegments } from './sms-segments.util';
 
+function latest(a: Date | null, b: Date): Date {
+  return a && a > b ? a : b;
+}
+
+function earliest(a: Date | null, b: Date): Date {
+  return a && a < b ? a : b;
+}
+
 function startOfDay(date: Date): Date {
   const d = new Date(date);
   d.setUTCHours(0, 0, 0, 0);
@@ -281,6 +289,11 @@ export class UsageService {
       calls: 0,
       credits: 0,
     };
+    // When the figures above were first recorded and last changed. Snapshots
+    // are upserted as sessions complete, so updatedAt moves with every session
+    // folded in. null when the range holds no usage.
+    let firstRecordedAt: Date | null = null;
+    let lastUpdatedAt: Date | null = null;
 
     for (const s of snapshots) {
       const cuid = s.transportCuid;
@@ -298,8 +311,20 @@ export class UsageService {
           duration: 0,
           calls: 0,
           credits: 0,
+          firstRecordedAt: null as Date | null,
+          lastUpdatedAt: null as Date | null,
         };
       }
+      byTransport[cuid].firstRecordedAt = earliest(
+        byTransport[cuid].firstRecordedAt,
+        s.createdAt,
+      );
+      byTransport[cuid].lastUpdatedAt = latest(
+        byTransport[cuid].lastUpdatedAt,
+        s.updatedAt,
+      );
+      firstRecordedAt = earliest(firstRecordedAt, s.createdAt);
+      lastUpdatedAt = latest(lastUpdatedAt, s.updatedAt);
       byTransport[cuid].broadcasts += s.broadcastCount;
       byTransport[cuid].success += s.successCount;
       byTransport[cuid].fail += s.failCount;
@@ -320,7 +345,12 @@ export class UsageService {
       totals.credits += Number(s.creditsUsed);
     }
 
-    return { totals, byTransport: Object.values(byTransport) };
+    return {
+      totals,
+      firstRecordedAt,
+      lastUpdatedAt,
+      byTransport: Object.values(byTransport),
+    };
   }
 
   async getCredits(app: string, xref: string, from?: string, to?: string) {
@@ -357,6 +387,8 @@ export class UsageService {
       sessions: s.sessionCount,
       broadcasts: s.broadcastCount,
       sessionCuids: s.sessionCuids,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
     }));
   }
 }

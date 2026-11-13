@@ -88,7 +88,7 @@ export class BroadcastLogService {
       await tx.session.updateMany({
         where: {
           cuid: sessionId,
-          status: { not: SessionStatus.COMPLETED },
+          status: { notIn: [SessionStatus.COMPLETED, SessionStatus.FAILED] },
         },
         data: {
           status: SessionStatus.COMPLETED,

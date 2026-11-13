@@ -1,7 +1,8 @@
 import { Inject, OnModuleInit, Optional } from '@nestjs/common';
 import { BatchManger, BroadcastLogQueue, TransportQueue } from '@rsconnect/queue';
 import { QUEUE_ACTIONS, QUEUES } from '@rumsan/connect';
-import { ISessionGate, SessionGate } from './session-gate';
+import { ISessionGate, PassThroughSessionGate } from './session-gate';
+import { TransportPrepareError } from './transport-prepare.error';
 import {
   Broadcast,
   BroadcastJobData,
@@ -19,7 +20,11 @@ export abstract class TransportWorker implements OnModuleInit {
   /** Queue this instance consumes. May be worker-specific. */
   abstract queueTransport: QUEUES;
   protected batchManager: BatchManger;
-  protected sessionGate: ISessionGate = new SessionGate();
+  /**
+   * Ungated by default. Workers that must run one session at a time (the
+   * asterisk-worker) inject their own gate.
+   */
+  protected sessionGate: ISessionGate = new PassThroughSessionGate();
 
   /**
    * Transport identity recorded on broadcast logs. Workers that consume a
@@ -108,14 +113,39 @@ export abstract class TransportWorker implements OnModuleInit {
   }
 
   protected async _makeTransportReady(sessionCuid: string) {
-    const isTransportReady = await this.makeTransportReady(sessionCuid);
+    let isTransportReady: boolean;
+    try {
+      isTransportReady = await this.makeTransportReady(sessionCuid);
+    } catch (err) {
+      if (!(err instanceof TransportPrepareError)) throw err;
+      await this._failSession(sessionCuid, err);
+      return;
+    }
     if (isTransportReady) {
       await this.transportQueue.confirmReadiness({
         sessionCuid,
         maxBatchSize: this.batchManager.batchSize,
         workerId: this.batchManager.workerId,
       });
+      this.batchManager.markReady(sessionCuid);
     }
+  }
+
+  /**
+   * The session can never be prepared. Tell connect so it fails the session,
+   * and let go of the gate now: there is nothing to wait for, and holding it
+   * until the gate timeout would block every session queued behind this one.
+   * Released even if the report fails to publish — connect then drops the
+   * reservation once the heartbeat stops naming the session.
+   */
+  private async _failSession(sessionCuid: string, err: TransportPrepareError) {
+    await this.transportQueue.reportReadinessFailure({
+      sessionCuid,
+      workerId: this.batchManager.workerId,
+      errorTag: err.errorTag,
+      reason: err.message,
+    });
+    this.sessionGate.completeSession(sessionCuid);
   }
 
   async _sendBroadcast(jobData: QueueBroadcastJobData) {

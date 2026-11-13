@@ -11,6 +11,8 @@ export enum QUEUE_ACTIONS {
   BROADCAST = 'broadcast',
   READINESS_CHECK = 'readiness_check',
   READINESS_CONFIRM = 'readiness_confirm',
+  /** Worker → connect: this session can never be prepared (e.g. its audio URL is unreachable). */
+  READINESS_FAIL = 'readiness_fail',
   BROADCAST_LOG_CREATE = 'broadcast_log_create',
   BROADCAST_LOG_UPDATE = 'broadcast_log_update',
   BROADCAST_LOG_DETAILS = 'broadcast_log_details',

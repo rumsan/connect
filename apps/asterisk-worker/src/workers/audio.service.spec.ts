@@ -1,4 +1,4 @@
-import { AudioService } from './audio.service';
+import { AudioService, AudioUnavailableError } from './audio.service';
 
 /**
  * These lock the coupling between the dialplan schema and prompt preparation.
@@ -120,5 +120,90 @@ describe('AudioService prompt preparation', () => {
         'https://not-audio.example.org/ignore-me',
       );
     });
+  });
+});
+
+/**
+ * An unreachable audio URL must fail the session (AudioUnavailableError), not
+ * leave the worker holding it until the gate timeout. Temporary failures get a
+ * few retries first.
+ */
+describe('AudioService.fetchMedia', () => {
+  const service = new AudioService();
+  const url = 'https://gw.example.org/ipfs/bafy';
+  const realFetch = global.fetch;
+  let fetchMock: jest.Mock;
+
+  const res = (status: number, body = '', statusText = '') =>
+    new Response(body || null, { status, statusText });
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as any;
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    global.fetch = realFetch;
+  });
+
+  /** Runs fetchMedia to completion through its retry back-off. */
+  const run = async () => {
+    const result = service.fetchMedia(url).then(
+      (r) => ({ ok: r }),
+      (err) => ({ err }),
+    );
+    await jest.runAllTimersAsync();
+    return result as Promise<{ ok?: Response; err?: Error }>;
+  };
+
+  it('fails at once on a 4xx, with status and body in the reason', async () => {
+    fetchMock.mockResolvedValue(res(400, 'invalid gateway token', 'Bad Request'));
+
+    const { err } = await run();
+
+    expect(err).toBeInstanceOf(AudioUnavailableError);
+    expect((err as AudioUnavailableError).errorTag).toBe('AUDIO_UNAVAILABLE');
+    expect(err.message).toContain(url);
+    expect(err.message).toContain('HTTP 400 Bad Request: invalid gateway token');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a 5xx and returns the response once it succeeds', async () => {
+    fetchMock
+      .mockResolvedValueOnce(res(502))
+      .mockResolvedValueOnce(res(200, 'RIFF'));
+
+    const { ok, err } = await run();
+
+    expect(err).toBeUndefined();
+    expect(ok.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after the retries on a network error', async () => {
+    fetchMock.mockRejectedValue(
+      Object.assign(new TypeError('fetch failed'), {
+        cause: { code: 'ENOTFOUND' },
+      }),
+    );
+
+    const { err } = await run();
+
+    expect(err).toBeInstanceOf(AudioUnavailableError);
+    expect(err.message).toContain('ENOTFOUND');
+    expect(err.message).toContain('gave up after 3 attempts');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('treats 429 as temporary', async () => {
+    fetchMock
+      .mockResolvedValueOnce(res(429))
+      .mockResolvedValueOnce(res(200, 'RIFF'));
+
+    const { ok } = await run();
+
+    expect(ok.status).toBe(200);
   });
 });

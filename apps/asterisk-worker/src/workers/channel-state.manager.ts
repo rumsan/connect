@@ -4,7 +4,7 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { VoiceResponse } from '@rumsan/connect/types';
+import { DtmfEvent, VoiceResponse } from '@rumsan/connect/types';
 import { Client } from 'ari-client';
 import {
   ChannelState,
@@ -24,6 +24,7 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     string,
     PlaybackStatus & {
       dtmfSequence: string[];
+      dtmfEvents: DtmfEvent[];
       ivrSelections: string[];
       voiceResponses: VoiceResponse[];
       isIvr: boolean;
@@ -113,6 +114,8 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       playbackFailed: false,
       playbackError: undefined,
       dtmfSequence: [],
+      dtmfEvents: [],
+      answeredAt: null,
       menuPath: [],
       ivrSelections: [],
       jumpsSinceInput: 0,
@@ -166,7 +169,19 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     return undefined;
   }
 
-  recordDtmf(channelId: string, digit: string) {
+  markAnswered(channelId: string) {
+    const s = this.channelStates.get(channelId);
+    if (!s) return;
+    s.answeredAt = Date.now();
+    s.lastActivityAt = s.answeredAt;
+  }
+
+  /**
+   * Records a digit exactly as Asterisk reported it. Nothing is filtered:
+   * `durationMs` and `msSinceAnswer` are kept so a digit the caller never
+   * pressed (line noise, a carrier-sent event) can be told apart afterwards.
+   */
+  recordDtmf(channelId: string, digit: string, durationMs?: number) {
     const s = this.channelStates.get(channelId);
     if (!s) {
       this.logger.warn(
@@ -174,10 +189,21 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       );
       return;
     }
+    const now = Date.now();
+    const msSinceAnswer =
+      s.answeredAt !== null ? now - s.answeredAt : undefined;
     s.dtmfSequence.push(digit);
-    s.lastActivityAt = Date.now();
+    s.dtmfEvents.push({
+      digit,
+      durationMs,
+      msSinceAnswer,
+      at: new Date(now).toISOString(),
+    });
+    s.lastActivityAt = now;
     this.logger.log(
-      `DTMF '${digit}' recorded for channel ${channelId} (sequence: [${s.dtmfSequence.join(',')}])`,
+      `DTMF '${digit}' recorded for channel ${channelId} (duration=${
+        durationMs ?? '?'
+      }ms, sinceAnswer=${msSinceAnswer ?? '?'}ms, sequence: [${s.dtmfSequence.join(',')}])`,
     );
   }
 
@@ -297,6 +323,14 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
     if (s) return [...s.dtmfSequence];
     const snap = this.playbackSnapshots.get(channelId);
     if (snap) return [...snap.dtmfSequence];
+    return [];
+  }
+
+  getDtmfEvents(channelId: string): DtmfEvent[] {
+    const s = this.channelStates.get(channelId);
+    if (s) return s.dtmfEvents.map((e) => ({ ...e }));
+    const snap = this.playbackSnapshots.get(channelId);
+    if (snap) return snap.dtmfEvents.map((e) => ({ ...e }));
     return [];
   }
 
@@ -447,6 +481,7 @@ export class ChannelStateManager implements OnModuleInit, OnModuleDestroy {
       playbackFailed: channelState.playbackFailed,
       playbackError: channelState.playbackError,
       dtmfSequence: [...channelState.dtmfSequence],
+      dtmfEvents: [...channelState.dtmfEvents],
       ivrSelections: [...channelState.ivrSelections],
       voiceResponses: channelState.voiceResponses,
       isIvr: !!channelState.ivrDialPlan,

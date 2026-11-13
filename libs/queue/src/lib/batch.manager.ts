@@ -37,11 +37,43 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
   private reaperTimer: NodeJS.Timeout | null = null;
 
   /**
+   * Logs the reaper gave up on, kept briefly so a report that turns up late (a
+   * hangup after a long call) can still go out instead of being dropped.
+   */
+  private reapedLogs = new Map<
+    string,
+    { log: QueueBroadcastLog; reapedAt: number }
+  >();
+  private readonly reapedRetentionMs = 5 * 60_000;
+
+  /**
+   * Whether the transport still holds a live call for a broadcast. When set,
+   * the reaper leaves live entries alone: the transport bounds them itself,
+   * and reaping a connected call reports it failed while it is still going.
+   */
+  private isLive: ((uniqueId: string) => boolean) | null = null;
+
+  /**
    * True while a batch is still being handed to the transport. Suppresses the
    * "batch drained" confirm so an early failure (or a very fast hangup) can't
    * make us ask for more work before the current batch is even dispatched.
    */
   private dispatching = false;
+
+  /**
+   * Session the worker is currently running, when it gates sessions. With it,
+   * the "batch drained" confirm is driven by that session's broadcasts only and
+   * always asks for that session — a late hangup from a session the gate has
+   * already left can neither request work for it nor start the next session's
+   * first batch before its audio is ready. Unset: original behaviour.
+   */
+  private activeSession: (() => string | null) | null = null;
+
+  /** Last session that finished preparing — see markReady. */
+  private readySession: string | null = null;
+
+  /** Last time a batch moved: dispatched, a call started or ended, or we asked for more. */
+  private lastProgressAt = Date.now();
 
   constructor(
     private readonly transportQueue: TransportQueue,
@@ -75,9 +107,38 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  public setActiveSessionResolver(resolver: () => string | null) {
+    this.activeSession = resolver;
+  }
+
+  public setLivenessCheck(check: (uniqueId: string) => boolean) {
+    this.isLive = check;
+  }
+
+  /** Broadcasts in flight, optionally only those of one session. */
+  public inFlightFor(sessionCuid?: string): number {
+    if (!sessionCuid) return this.processingBroadcasts.size;
+    let n = 0;
+    for (const { log } of this.processingBroadcasts.values()) {
+      if (log.sessionId === sessionCuid) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Whether draining `sessionCuid` should ask for more. A gated worker only
+   * asks for the session it is running, counting only that session's calls.
+   */
+  private drained(sessionCuid: string): boolean {
+    if (!this.activeSession) return this.processingBroadcasts.size === 0;
+    if (this.activeSession() !== sessionCuid) return false;
+    return this.inFlightFor(sessionCuid) === 0;
+  }
+
   /** Call before dispatching a batch to the transport. */
   public beginBatch() {
     this.dispatching = true;
+    this.noteProgress();
   }
 
   /**
@@ -87,18 +148,61 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
    */
   public finishBatch(sessionCuid: string) {
     this.dispatching = false;
-    if (this.processingBroadcasts.size === 0) {
+    this.readySession = sessionCuid;
+    this.noteProgress();
+    if (this.drained(sessionCuid)) {
       this.scheduleReadinessConfirm(sessionCuid);
     }
   }
 
   public startMonitoring(uniqueId: string, log: QueueBroadcastLog) {
     const now = Date.now();
+    this.lastProgressAt = now;
     this.processingBroadcasts.set(uniqueId, {
       log,
       createdAt: now,
       lastActivityAt: now,
     });
+  }
+
+  /**
+   * Drop a broadcast without the drain check — for a caller that reports and
+   * drains it itself (a failed originate goes through _reportFailure).
+   */
+  public forget(uniqueId: string) {
+    this.processingBroadcasts.delete(uniqueId);
+  }
+
+  /**
+   * Ask connect for more of the active session when this worker has gone idle
+   * on it without asking — e.g. after the transport reconnected. Connect
+   * answers with the next batch, or SESSION_COMPLETE if nothing is left.
+   */
+  public resumeIfIdle(reason: string, minIdleMs = 0): boolean {
+    const sessionCuid = this.activeSession?.();
+    if (!sessionCuid || this.dispatching) return false;
+    // A session still preparing its audio must not be asked for calls early.
+    if (this.readySession !== sessionCuid) return false;
+    if (this.inFlightFor(sessionCuid) > 0) return false;
+    if (Date.now() - this.lastProgressAt < minIdleMs) return false;
+    this.logger.log(
+      `Resuming session ${sessionCuid} after ${reason}: idle with nothing in flight`,
+    );
+    this.scheduleReadinessConfirm(sessionCuid);
+    return true;
+  }
+
+  /**
+   * Record that a session finished preparing and has asked for its first
+   * batch. Until then resumeIfIdle leaves it alone.
+   */
+  public markReady(sessionCuid: string) {
+    this.readySession = sessionCuid;
+    this.noteProgress();
+  }
+
+  private noteProgress() {
+    this.lastProgressAt = Date.now();
   }
 
   public touch(uniqueId: string) {
@@ -108,6 +212,24 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
 
   public getLog<T>(broadcastLogId: string): T {
     return this.processingBroadcasts.get(broadcastLogId)?.log as T;
+  }
+
+  /**
+   * Like getLog, but also finds a log the reaper already expired, so its late
+   * report still reaches connect. Takes it out of the tombstones — one report.
+   */
+  public getLogOrReaped<T>(uniqueId: string): T {
+    const live = this.processingBroadcasts.get(uniqueId)?.log;
+    if (live) return live as T;
+    const reaped = this.reapedLogs.get(uniqueId);
+    if (!reaped) return undefined as T;
+    this.reapedLogs.delete(uniqueId);
+    this.logger.warn(
+      `Late report for reaped broadcast ${uniqueId} (${
+        Date.now() - reaped.reapedAt
+      }ms after reaping) — sending the real outcome`,
+    );
+    return reaped.log as T;
   }
 
   public update(broadcastLogId: string, data: Partial<QueueBroadcastLog>) {
@@ -134,6 +256,7 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
       return;
     }
     this.processingBroadcasts.delete(broadcastLogId);
+    this.noteProgress();
 
     const sessionCuid = broadcast?.log.sessionId ?? fallback?.sessionCuid;
     if (!sessionCuid) return;
@@ -141,13 +264,16 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
     // Drained our share of the batch — ask connect for more work. With several
     // workers on a session this is what makes it free-worker-pull: whoever
     // empties first claims next, so throughput follows real capacity.
-    if (!this.dispatching && this.processingBroadcasts.size === 0) {
+    if (!this.dispatching && this.drained(sessionCuid)) {
       this.scheduleReadinessConfirm(sessionCuid);
     }
   }
 
   private scheduleReadinessConfirm(sessionCuid: string) {
+    this.noteProgress();
     setTimeout(async () => {
+      // The gate may have moved on during batchDelay.
+      if (this.activeSession && this.activeSession() !== sessionCuid) return;
       await this.transportQueue.confirmReadiness({
         sessionCuid,
         maxBatchSize: this.batchSize,
@@ -159,9 +285,17 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
   private async reap() {
     if (!this.broadcastLogQueue) return;
     const now = Date.now();
+    for (const [id, { reapedAt }] of this.reapedLogs.entries()) {
+      if (now - reapedAt > this.reapedRetentionMs) this.reapedLogs.delete(id);
+    }
     const expired: string[] = [];
     for (const [id, entry] of this.processingBroadcasts.entries()) {
-      if (now - entry.lastActivityAt > this.ttlMs) expired.push(id);
+      if (now - entry.lastActivityAt <= this.ttlMs) continue;
+      if (this.isLive?.(id)) {
+        entry.lastActivityAt = now;
+        continue;
+      }
+      expired.push(id);
     }
     if (expired.length === 0) return;
     for (const id of expired) {
@@ -171,6 +305,9 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `Reaper expiring stuck broadcast ${id} (age=${ageMs}ms)`,
       );
+      // A copy goes out as the FAIL, so the tombstone keeps the log as it was
+      // and a late real report isn't carrying the reaper's details.
+      this.reapedLogs.set(id, { log: { ...entry.log }, reapedAt: now });
       entry.log.status = BroadcastStatus.FAIL;
       (entry.log as QueueBroadcastLog & { details?: unknown }).details = {
         errorTag: 'REAPER_TIMEOUT',

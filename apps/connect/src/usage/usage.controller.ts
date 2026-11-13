@@ -117,6 +117,7 @@ export class UsageController {
         ? `Backfill job enqueued for app ${appId}`
         : 'Backfill job enqueued',
       jobId: job.id,
+      enqueuedAt: new Date(job.timestamp),
     };
   }
 }

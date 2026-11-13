@@ -9,6 +9,10 @@ export type CallDetails = {
   ivrSequence?: string[];
   /** Dotted paths of the IVR nodes selected, e.g. ['1', '1.2'] — disambiguates ivrSequence in a nested dialplan. */
   ivrPath?: string[];
+  /** Every digit in ivrSequence with how Asterisk reported it — for telling a real keypress from line noise. */
+  ivrDtmfEvents?: DtmfEvent[];
+  /** Disposition as the Asterisk CDR recorded it, kept apart from the hangup-computed `disposition`. */
+  cdrDisposition?: string;
   /** Voice messages the caller left, in the order recorded. */
   voiceResponses?: VoiceResponse[];
   playbackOk?: boolean;
@@ -17,6 +21,17 @@ export type CallDetails = {
   playbackError?: string;
   errorTag?: string;
   ageMs?: number;
+};
+
+/** One DTMF digit as Asterisk reported it on the call. */
+export type DtmfEvent = {
+  digit: string;
+  /** Tone length Asterisk measured (ARI `duration_ms`). */
+  durationMs?: number;
+  /** Milliseconds after the call was answered; absent if it arrived before answer. */
+  msSinceAnswer?: number;
+  /** ISO timestamp of receipt. */
+  at: string;
 };
 
 /**

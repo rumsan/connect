@@ -18,11 +18,14 @@ const staleBroadcast = (overrides = {}) => ({
 describe('BroadcastReclaimWorker', () => {
   let worker: BroadcastReclaimWorker;
   let prisma: any;
-  let broadcastService: { syncSessionCompletion: jest.Mock };
+  let broadcastService: {
+    syncSessionCompletion: jest.Mock;
+    checkTransportReadiness: jest.Mock;
+  };
   let sessionAssignment: {
     ensureAssignment: jest.Mock;
     isMultiWorker: jest.Mock;
-    clearPending: jest.Mock;
+    assignWaiting: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -44,11 +47,14 @@ describe('BroadcastReclaimWorker', () => {
       },
       $transaction: jest.fn().mockResolvedValue([]),
     };
-    broadcastService = { syncSessionCompletion: jest.fn().mockResolvedValue(true) };
+    broadcastService = {
+      syncSessionCompletion: jest.fn().mockResolvedValue(true),
+      checkTransportReadiness: jest.fn().mockResolvedValue(undefined),
+    };
     sessionAssignment = {
       ensureAssignment: jest.fn().mockResolvedValue([]),
       isMultiWorker: jest.fn().mockReturnValue(true),
-      clearPending: jest.fn(),
+      assignWaiting: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -145,6 +151,27 @@ describe('BroadcastReclaimWorker', () => {
       );
     });
 
+    it('re-checks readiness for shared-queue transports instead of reassigning', async () => {
+      // API/SMTP/ECHO have no assignment; without a readiness re-check the
+      // rescheduled rows would never be claimed again.
+      sessionAssignment.isMultiWorker.mockReturnValue(false);
+      prisma.session.findUnique.mockResolvedValue({
+        cuid: 's1',
+        Transport: { type: TransportType.API },
+      });
+      prisma.broadcast.findMany.mockResolvedValue([
+        staleBroadcast({ attempts: 1, maxAttempts: 3, workerId: null }),
+      ]);
+
+      await worker.reclaimStaleClaims();
+
+      expect(broadcastService.checkTransportReadiness).toHaveBeenCalledWith(
+        's1',
+        TransportType.API,
+      );
+      expect(sessionAssignment.ensureAssignment).not.toHaveBeenCalled();
+    });
+
     it('does not reassign when everything was terminal', async () => {
       prisma.broadcast.findMany.mockResolvedValue([
         staleBroadcast({ attempts: 3, maxAttempts: 3 }),
@@ -168,99 +195,16 @@ describe('BroadcastReclaimWorker', () => {
   });
 
   describe('assignStalledSessions', () => {
-    it('tops up assignment for in-progress sessions with work waiting', async () => {
-      prisma.session.findMany.mockResolvedValue([
-        { cuid: 's1', Transport: { type: TransportType.VOICE } },
-        { cuid: 's2', Transport: { type: TransportType.VOICE } },
-      ]);
-
+    it('delegates to SessionAssignmentService.assignWaiting', async () => {
       await worker.assignStalledSessions();
 
-      expect(sessionAssignment.ensureAssignment).toHaveBeenCalledWith(
-        's1',
-        TransportType.VOICE,
-      );
-      expect(sessionAssignment.ensureAssignment).toHaveBeenCalledWith(
-        's2',
-        TransportType.VOICE,
-      );
+      expect(sessionAssignment.assignWaiting).toHaveBeenCalledTimes(1);
     });
 
-    it('skips transports that are not multi-worker', async () => {
-      prisma.session.findMany.mockResolvedValue([
-        { cuid: 's1', Transport: { type: TransportType.SMTP } },
-      ]);
-      sessionAssignment.isMultiWorker.mockReturnValue(false);
+    it('swallows a failed sweep so the next tick still runs', async () => {
+      sessionAssignment.assignWaiting.mockRejectedValueOnce(new Error('db down'));
 
-      await worker.assignStalledSessions();
-
-      expect(sessionAssignment.ensureAssignment).not.toHaveBeenCalled();
-    });
-
-    it('keeps going when one session fails to assign', async () => {
-      prisma.session.findMany.mockResolvedValue([
-        { cuid: 's1', Transport: { type: TransportType.VOICE } },
-        { cuid: 's2', Transport: { type: TransportType.VOICE } },
-      ]);
-      sessionAssignment.ensureAssignment
-        .mockRejectedValueOnce(new Error('broker down'))
-        .mockResolvedValueOnce(['w1']);
-
-      await worker.assignStalledSessions();
-
-      expect(sessionAssignment.ensureAssignment).toHaveBeenCalledTimes(2);
-    });
-
-    describe('age limit', () => {
-      const cutoffOf = (call: any) => call.where.createdAt.gte.getTime();
-
-      it('only considers sessions newer than the 24h default', async () => {
-        const before = Date.now();
-
-        await worker.assignStalledSessions();
-
-        const cutoff = cutoffOf(prisma.session.findMany.mock.calls[0][0]);
-        expect(cutoff).toBeGreaterThanOrEqual(before - 86_400_000);
-        expect(cutoff).toBeLessThanOrEqual(Date.now() - 86_400_000 + 1000);
-      });
-
-      it('honours BROADCAST_MAX_SESSION_AGE_MS', async () => {
-        process.env.BROADCAST_MAX_SESSION_AGE_MS = '3600000';
-        const before = Date.now();
-
-        await worker.assignStalledSessions();
-
-        const cutoff = cutoffOf(prisma.session.findMany.mock.calls[0][0]);
-        expect(cutoff).toBeGreaterThanOrEqual(before - 3_600_000);
-        expect(cutoff).toBeLessThanOrEqual(Date.now() - 3_600_000 + 1000);
-      });
-
-      it('counts the skipped backlog with the mirrored cutoff', async () => {
-        process.env.BROADCAST_MAX_SESSION_AGE_MS = '3600000';
-
-        await worker.assignStalledSessions();
-
-        const countArgs = prisma.session.count.mock.calls[0][0];
-        expect(countArgs.where.createdAt.lt).toBeInstanceOf(Date);
-        // Same window, opposite side — nothing falls through both.
-        expect(countArgs.where.createdAt.lt.getTime()).toBeCloseTo(
-          cutoffOf(prisma.session.findMany.mock.calls[0][0]),
-          -3,
-        );
-      });
-
-      it('never writes to an aged-out session, so retry still works', async () => {
-        prisma.session.count.mockResolvedValue(11);
-        prisma.session.findMany.mockResolvedValue([]);
-
-        await worker.assignStalledSessions();
-
-        expect(prisma.broadcast.updateMany).not.toHaveBeenCalled();
-        expect(prisma.session.update).not.toHaveBeenCalled();
-        expect(prisma.session.updateMany).not.toHaveBeenCalled();
-        expect(prisma.$transaction).not.toHaveBeenCalled();
-        expect(sessionAssignment.ensureAssignment).not.toHaveBeenCalled();
-      });
+      await expect(worker.assignStalledSessions()).resolves.toBeUndefined();
     });
   });
 });
