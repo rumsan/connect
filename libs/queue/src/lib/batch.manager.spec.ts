@@ -218,4 +218,67 @@ describe('BatchManger', () => {
       expect(reaper.getLogOrReaped('c1')).toBeUndefined();
     });
   });
+  describe('resumeIfIdle', () => {
+    let active: string | null;
+
+    beforeEach(() => {
+      active = 's1';
+      manager.setActiveSessionResolver(() => active);
+    });
+
+    it('re-asks for a prepared, idle session', () => {
+      manager.markReady('s1');
+      expect(manager.resumeIfIdle('test')).toBe(true);
+      flush();
+      expect(transportQueue.confirmReadiness).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionCuid: 's1' }),
+      );
+    });
+
+    it('leaves a session that is still preparing its audio alone', () => {
+      // Active at the gate, but readiness has not been confirmed yet.
+      expect(manager.resumeIfIdle('test')).toBe(false);
+      flush();
+      expect(transportQueue.confirmReadiness).not.toHaveBeenCalled();
+    });
+
+    it('does nothing while calls are in flight or a batch is going out', () => {
+      manager.markReady('s1');
+      manager.startMonitoring('c1', log('c1'));
+      expect(manager.resumeIfIdle('test')).toBe(false);
+
+      manager.forget('c1');
+      manager.beginBatch();
+      expect(manager.resumeIfIdle('test')).toBe(false);
+    });
+
+    it('does nothing without an active session', () => {
+      manager.markReady('s1');
+      active = null;
+      expect(manager.resumeIfIdle('test')).toBe(false);
+    });
+
+    it('waits out minIdleMs since the last progress', () => {
+      manager.markReady('s1');
+      expect(manager.resumeIfIdle('watchdog', 60_000)).toBe(false);
+      jest.advanceTimersByTime(60_001);
+      expect(manager.resumeIfIdle('watchdog', 60_000)).toBe(true);
+    });
+
+    it('a finished batch marks its session ready', () => {
+      manager.beginBatch();
+      manager.finishBatch('s1');
+      flush();
+      transportQueue.confirmReadiness.mockClear();
+      expect(manager.resumeIfIdle('test')).toBe(true);
+    });
+  });
+
+  it('forget drops a broadcast without asking for more work', () => {
+    manager.startMonitoring('c1', log('c1'));
+    manager.forget('c1');
+    flush();
+    expect(manager.processingBroadcasts.size).toBe(0);
+    expect(transportQueue.confirmReadiness).not.toHaveBeenCalled();
+  });
 });

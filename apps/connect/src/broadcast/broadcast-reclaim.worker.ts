@@ -195,8 +195,11 @@ export class BroadcastReclaimWorker {
         continue;
       }
 
-      // The lost worker has aged out of the registry by now, so its
-      // reservation is dropped and this picks the next free worker.
+      // A dead worker has aged out of the registry by now, so its reservation
+      // is dropped and this picks the next free worker. A worker that is still
+      // alive keeps its reservation and this is a no-op: it picks the rows up
+      // itself, from its idle watchdog (WORKER_IDLE_RESUME_MS), or releases
+      // the session at its gate timeout.
       await this.sessionAssignment
         .ensureAssignment(sessionCuid, transportType)
         .catch((err) =>

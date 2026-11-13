@@ -28,6 +28,7 @@ import { IVRDialPlan, IVRMenuOption } from './types/ivr.types';
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 2_000;
+const SLOW_ORIGINATE_MS = 2_000;
 
 @Injectable()
 export class IVRService implements OnModuleDestroy {
@@ -41,6 +42,10 @@ export class IVRService implements OnModuleDestroy {
   // the call is dropped — the guard against jumpTo loops.
   private readonly maxConsecutiveJumps =
     +(process.env['IVR_MAX_CONSECUTIVE_JUMPS'] as string) || 10;
+  // How long one originate may wait for ARI's reply before the broadcast is
+  // failed and the batch moves on.
+  private readonly originateTimeoutMs =
+    +(process.env['ARI_ORIGINATE_TIMEOUT_MS'] as string) || 15_000;
 
   constructor(
     private readonly batchManager: BatchManager,
@@ -147,6 +152,11 @@ export class IVRService implements OnModuleDestroy {
       address: broadcast.address,
     });
 
+    // Monitored before dialling: a call the trunk rejects at once can hang up
+    // before the originate reply arrives, and an unmonitored Hangup is
+    // dropped — leaving the broadcast unreported and the batch undrained.
+    this.batchManager.startMonitoring(channelId, broadcastLog);
+
     try {
       await this.originateCall(
         channelId,
@@ -155,12 +165,25 @@ export class IVRService implements OnModuleDestroy {
         [broadcastLog.broadcastLogId, broadcast.session, broadcast.address],
       );
 
-      this.batchManager.startMonitoring(channelId, broadcastLog);
       this.logger.log(
         `Broadcast started for IVR - Channel: ${channelId}, Address: ${broadcast.address}`,
       );
     } catch (error) {
       this.channelStateManager.removeChannel(channelId);
+
+      if (!this.batchManager.getLog(channelId)) {
+        // The Hangup handler already reported this call's real outcome and
+        // released its slot. Throwing would report it a second time as FAIL.
+        this.logger.warn(
+          `Originate for ${channelId} failed after its Hangup was reported: ${
+            (error as Error).message
+          }`,
+        );
+        return;
+      }
+
+      // The caller reports the FAIL and drains the slot.
+      this.batchManager.forget(channelId);
       this.logger.error('Error in sendBroadcast:', error);
       throw error;
     }
@@ -175,17 +198,50 @@ export class IVRService implements OnModuleDestroy {
     if (!this.client) {
       throw new Error('ARI client not available');
     }
+    const client = this.client;
+    const startedAt = Date.now();
+    let timer: NodeJS.Timeout | undefined;
+
+    // ari-client sets no HTTP timeout. A reply lost between us and Asterisk
+    // would otherwise park the serial dispatch loop on this await forever:
+    // no further calls, no reports, no request for the next batch.
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `ORIGINATE_TIMEOUT: no ARI reply within ${this.originateTimeoutMs}ms`,
+            ),
+          ),
+        this.originateTimeoutMs,
+      );
+    });
+
     try {
-      return await this.client.channels.originate({
-        channelId,
-        endpoint: callEndpoint,
-        callerId: callerId || this.config.callerId || 'Rumsan Connect <0000>',
-        app: this.config.appName,
-        appArgs: appArgs.toString(),
-      });
+      return await Promise.race([
+        client.channels.originate({
+          channelId,
+          endpoint: callEndpoint,
+          callerId: callerId || this.config.callerId || 'Rumsan Connect <0000>',
+          app: this.config.appName,
+          appArgs: appArgs.toString(),
+        }),
+        timeout,
+      ]);
     } catch (error) {
       this.logger.error('Error originating call', error);
+      if ((error as Error).message?.startsWith('ORIGINATE_TIMEOUT')) {
+        // The channel may exist after all. Nobody is watching it any more,
+        // so don't leave it ringing.
+        client.channels.hangup({ channelId }).catch(() => undefined);
+      }
       throw error;
+    } finally {
+      clearTimeout(timer);
+      const tookMs = Date.now() - startedAt;
+      if (tookMs > SLOW_ORIGINATE_MS) {
+        this.logger.warn(`Slow ARI originate for ${channelId}: ${tookMs}ms`);
+      }
     }
   }
 
@@ -265,6 +321,9 @@ export class IVRService implements OnModuleDestroy {
       this.logger.log(
         `ARI mid-session reconnect succeeded on attempt ${attempt}`,
       );
+      // Reconnecting only restores events. If the session went idle while
+      // ARI was down, nothing else would ask connect for the rest of it.
+      this.batchManager.resumeIfIdle('ARI reconnect');
     } catch (error) {
       this.logger.error(
         `ARI mid-session reconnect attempt ${attempt} failed:`,

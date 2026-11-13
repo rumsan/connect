@@ -55,6 +55,12 @@ const VOICE_QUEUE = WORKER_ID
 // Only applies while nothing is consuming, so a live worker is never affected.
 const QUEUE_IDLE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
+// How long an active, prepared session may sit with nothing in flight before
+// the worker asks connect for the rest of it again. Well above a normal
+// confirm → claim → BROADCAST round trip, so it never doubles a live batch.
+const IDLE_RESUME_MS =
+  +(process.env['WORKER_IDLE_RESUME_MS'] as string) || 120_000;
+
 @Injectable()
 export class AsteriskWorker extends TransportWorker {
   queueTransport: QUEUES = VOICE_QUEUE;
@@ -189,6 +195,12 @@ export class AsteriskWorker extends TransportWorker {
    */
   @Interval(WORKER_HEARTBEAT_MS)
   async sendHeartbeat() {
+    // Watchdog: a session this worker holds, past preparation, with nothing in
+    // flight and nothing happening for a while means a READINESS_CONFIRM (or
+    // connect's reply to it) went missing. Ask again rather than sit idle
+    // until the gate timeout while connect thinks we are busy.
+    this.batchManager.resumeIfIdle('idle watchdog', IDLE_RESUME_MS);
+
     if (!WORKER_ID) return false;
     return await this.transportQueue.sendHeartbeat({
       workerId: WORKER_ID,
@@ -265,8 +277,12 @@ export class AsteriskWorker extends TransportWorker {
       console.log(e);
       broadcastLog.status = BroadcastStatus.FAIL;
       broadcastLog.details = { error: e.message };
+      return broadcastLog;
     }
-    return broadcastLog;
+    // The call is now the Hangup handler's to report. It mutates this same
+    // object — possibly already, for a call rejected at once — so hand the
+    // dispatch loop a PENDING copy, or it would report that FAIL again.
+    return { ...broadcastLog, status: BroadcastStatus.PENDING };
   }
   async makeTransportReady(sessionCuid: string) {
     try {

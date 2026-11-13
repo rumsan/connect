@@ -256,6 +256,29 @@ publishes the FAIL log and releases the slot. Without that the batch never drain
 and the worker never asks for another one — silently dropping itself from the
 pool for the rest of the session.
 
+**ARI never answers an originate.** `ari-client` sets no HTTP timeout, and the
+dispatch loop dials one number at a time, so a single lost reply used to freeze
+the worker: no more calls, no reports, no request for the next batch, until the
+gate timeout. Each originate is now bounded by `ARI_ORIGINATE_TIMEOUT_MS`
+(default 15000): on timeout the broadcast fails with `ORIGINATE_TIMEOUT`, the
+channel is hung up best-effort and the loop moves on. The call is monitored
+*before* the originate is sent, so a call the trunk rejects at once is reported
+with its real hangup cause even if the hangup beats the originate reply.
+
+**ARI WebSocket drops mid-session.** `IVRService` reconnects and then calls
+`BatchManger.resumeIfIdle`, because reconnecting only restores events. If the
+session is past preparation with nothing in flight, the worker asks connect
+for the rest of it.
+
+**Worker idle on a session it still holds.** A lost `READINESS_CONFIRM`, or rows
+the reclaim sweeper put back to `SCHEDULED` while the worker was still reserved,
+used to leave connect logging "absorbed … no new worker needed" while nobody
+dialled. On every heartbeat tick the worker checks: a prepared, active session
+with nothing in flight and no progress for `WORKER_IDLE_RESUME_MS` (default
+120000) means it asks again. Connect answers with a batch or `SESSION_COMPLETE`.
+This lives on the worker, not connect, because only the worker can tell
+"preparing audio" from "idle".
+
 **Connect restarts.** The roster is empty for up to one heartbeat interval;
 assignment resumes on the next confirm. In-flight claims are untouched — they
 live in the DB.
@@ -274,6 +297,8 @@ scratch directory.
 | `WORKER_PRIORITY` | `1` = primary. Lower fills first. |
 | `BATCH_SIZE` | Capacity — max concurrent calls. Size from `ASTERISK_TRUNK_CHANNELS`. |
 | `WORKER_HEARTBEAT_MS` | Announcement interval (default 15000). |
+| `ARI_ORIGINATE_TIMEOUT_MS` | Max wait for ARI's reply to one originate before that broadcast fails as `ORIGINATE_TIMEOUT` (default 15000). |
+| `WORKER_IDLE_RESUME_MS` | Idle time on a prepared session, with nothing in flight, before the worker re-asks connect for work (default 120000). Keep well above a confirm → BROADCAST round trip. |
 | `PORT` | Health endpoint port; must differ when workers share a host. |
 | `ASTERISK_*` | That worker's own host, trunk, ARI/AMI/SSH credentials. |
 
@@ -350,6 +375,14 @@ SELECT broadcast, count(*) FROM tbl_broadcast_logs
 
 Rows here with more than one *attempt* are legitimate retries; check `attempt`
 before treating it as a duplicate.
+
+**Session stuck: "absorbed by [worker] … no new worker needed" but nothing dials.**
+Check the worker log for `ORIGINATE_TIMEOUT`, `Slow ARI originate`, `ARI WebSocket
+dropped`, `Hangup for untracked channel` and `Resuming session`. Frequent
+WebSocket drops at a regular interval point to a proxy idle timeout between the
+worker and ARI; reach ARI directly over a private network instead. To unblock at
+once, restart the worker: connect drops its reservation after
+`WORKER_RESERVATION_GRACE_MS` and reassigns.
 
 **RabbitMQ.** The exchange `rsconnect.transport` should show one queue per live
 worker, each bound to its own `voice.worker.<id>` plus `voice.control`. A queue

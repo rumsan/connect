@@ -69,6 +69,12 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
    */
   private activeSession: (() => string | null) | null = null;
 
+  /** Last session that finished preparing — see markReady. */
+  private readySession: string | null = null;
+
+  /** Last time a batch moved: dispatched, a call started or ended, or we asked for more. */
+  private lastProgressAt = Date.now();
+
   constructor(
     private readonly transportQueue: TransportQueue,
     @Optional() private readonly broadcastLogQueue?: BroadcastLogQueue,
@@ -132,6 +138,7 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
   /** Call before dispatching a batch to the transport. */
   public beginBatch() {
     this.dispatching = true;
+    this.noteProgress();
   }
 
   /**
@@ -141,6 +148,8 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
    */
   public finishBatch(sessionCuid: string) {
     this.dispatching = false;
+    this.readySession = sessionCuid;
+    this.noteProgress();
     if (this.drained(sessionCuid)) {
       this.scheduleReadinessConfirm(sessionCuid);
     }
@@ -148,11 +157,52 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
 
   public startMonitoring(uniqueId: string, log: QueueBroadcastLog) {
     const now = Date.now();
+    this.lastProgressAt = now;
     this.processingBroadcasts.set(uniqueId, {
       log,
       createdAt: now,
       lastActivityAt: now,
     });
+  }
+
+  /**
+   * Drop a broadcast without the drain check — for a caller that reports and
+   * drains it itself (a failed originate goes through _reportFailure).
+   */
+  public forget(uniqueId: string) {
+    this.processingBroadcasts.delete(uniqueId);
+  }
+
+  /**
+   * Ask connect for more of the active session when this worker has gone idle
+   * on it without asking — e.g. after the transport reconnected. Connect
+   * answers with the next batch, or SESSION_COMPLETE if nothing is left.
+   */
+  public resumeIfIdle(reason: string, minIdleMs = 0): boolean {
+    const sessionCuid = this.activeSession?.();
+    if (!sessionCuid || this.dispatching) return false;
+    // A session still preparing its audio must not be asked for calls early.
+    if (this.readySession !== sessionCuid) return false;
+    if (this.inFlightFor(sessionCuid) > 0) return false;
+    if (Date.now() - this.lastProgressAt < minIdleMs) return false;
+    this.logger.log(
+      `Resuming session ${sessionCuid} after ${reason}: idle with nothing in flight`,
+    );
+    this.scheduleReadinessConfirm(sessionCuid);
+    return true;
+  }
+
+  /**
+   * Record that a session finished preparing and has asked for its first
+   * batch. Until then resumeIfIdle leaves it alone.
+   */
+  public markReady(sessionCuid: string) {
+    this.readySession = sessionCuid;
+    this.noteProgress();
+  }
+
+  private noteProgress() {
+    this.lastProgressAt = Date.now();
   }
 
   public touch(uniqueId: string) {
@@ -206,6 +256,7 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
       return;
     }
     this.processingBroadcasts.delete(broadcastLogId);
+    this.noteProgress();
 
     const sessionCuid = broadcast?.log.sessionId ?? fallback?.sessionCuid;
     if (!sessionCuid) return;
@@ -219,6 +270,7 @@ export class BatchManger implements OnModuleInit, OnModuleDestroy {
   }
 
   private scheduleReadinessConfirm(sessionCuid: string) {
+    this.noteProgress();
     setTimeout(async () => {
       // The gate may have moved on during batchDelay.
       if (this.activeSession && this.activeSession() !== sessionCuid) return;

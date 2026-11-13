@@ -119,6 +119,7 @@ export abstract class TransportWorker implements OnModuleInit {
         maxBatchSize: this.batchManager.batchSize,
         workerId: this.batchManager.workerId,
       });
+      this.batchManager.markReady(sessionCuid);
     }
   }
 

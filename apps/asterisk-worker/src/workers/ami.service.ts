@@ -218,7 +218,9 @@ export class AMIService implements OnModuleDestroy {
         } else {
           this.ivrSequences.delete(evt.uniqueid);
           this.ivrSequenceTimestamps.delete(evt.uniqueid);
-          console.log('=====> Call Received: ', evt.calleridnum);
+          this.logger.warn(
+            `Hangup for untracked channel ${evt.uniqueid} (${evt.calleridnum}) cause=${evt.cause} ${evt['cause-txt'] ?? ''}`,
+          );
         }
       }
 
