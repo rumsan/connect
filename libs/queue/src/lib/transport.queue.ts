@@ -8,6 +8,7 @@ import {
 import {
   QueueJobData,
   QueueReadinessConfirm,
+  QueueReadinessFail,
   QueueSessionComplete,
   QueueSessionTiming,
   QueueWorkerHeartbeat,
@@ -120,6 +121,35 @@ export class TransportQueue {
     } catch (error) {
       this.logger.error(
         `confirmReadiness publish failed for session ${data.sessionCuid}`,
+        error,
+      );
+    }
+    return false;
+  }
+
+  /**
+   * Tell connect this session can never be prepared, so it fails the session
+   * instead of waiting on a worker that will not confirm.
+   */
+  async reportReadinessFailure(data: QueueReadinessFail) {
+    try {
+      const queueJob: QueueJobData<QueueReadinessFail> = {
+        action: QUEUE_ACTIONS.READINESS_FAIL,
+        data,
+      };
+      this.logger.warn(
+        `Reporting readiness failure for session ${data.sessionCuid}${
+          data.workerId ? ` as worker ${data.workerId}` : ''
+        }: ${data.errorTag} — ${data.reason}`,
+      );
+      return await this._channel.sendToQueue(
+        QUEUES.TO_CONNECT,
+        Buffer.from(JSON.stringify(queueJob)),
+        PUBLISH_OPTIONS,
+      );
+    } catch (error) {
+      this.logger.error(
+        `reportReadinessFailure publish failed for session ${data.sessionCuid}`,
         error,
       );
     }

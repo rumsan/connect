@@ -4,5 +4,6 @@ export * from './echo/echo.module';
 export * from './echo/echo.worker';
 export * from './smtp/smtp.module';
 export * from './smtp/smtp.worker';
+export * from './transport-prepare.error';
 export * from './transport.worker';
 export * from './worker.module';

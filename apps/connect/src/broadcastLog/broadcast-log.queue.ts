@@ -201,7 +201,10 @@ export class BroadcastLogQueue {
       // Edge-triggered so a re-check cannot drag endedAt forward. The run is
       // closed on the same tx, which already holds this row's lock.
       const { count } = await tx.session.updateMany({
-        where: { cuid: sessionId, status: { not: SessionStatus.COMPLETED } },
+        where: {
+          cuid: sessionId,
+          status: { notIn: [SessionStatus.COMPLETED, SessionStatus.FAILED] },
+        },
         data: { status: SessionStatus.COMPLETED, endedAt },
       });
 

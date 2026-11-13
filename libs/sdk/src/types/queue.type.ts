@@ -68,6 +68,21 @@ export type QueueReadinessConfirm = {
   workerId?: string;
 };
 
+/**
+ * READINESS_FAIL payload: the worker could not prepare the session and never
+ * will — retrying would fail the same way (e.g. the audio URL answers 4xx).
+ * Connect fails the session's outstanding broadcasts with `errorTag` and
+ * `reason`, and marks the session FAILED.
+ */
+export type QueueReadinessFail = {
+  sessionCuid: string;
+  workerId?: string;
+  /** Machine-readable cause, e.g. `AUDIO_UNAVAILABLE`. */
+  errorTag: string;
+  /** Human-readable cause, recorded on the session and each broadcast. */
+  reason: string;
+};
+
 export type QueueSessionComplete = {
   sessionCuid: string;
   workerId?: string;

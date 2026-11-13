@@ -9,7 +9,11 @@ import {
   WORKER_ID,
   WORKER_PRIORITY,
 } from '@rsconnect/queue';
-import { IDataProvider, TransportWorker } from '@rsconnect/workers';
+import {
+  IDataProvider,
+  TransportPrepareError,
+  TransportWorker,
+} from '@rsconnect/workers';
 import {
   controlRoutingKey,
   EXCHANGES,
@@ -329,6 +333,9 @@ export class AsteriskWorker extends TransportWorker {
       return true;
     } catch (e: any) {
       this.logger.error(e.message);
+      // Unreachable audio fails the session outright (see TransportWorker);
+      // anything else may be temporary and is left to be retried.
+      if (e instanceof TransportPrepareError) throw e;
       return false;
     }
   }

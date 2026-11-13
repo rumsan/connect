@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { workerLabel } from '@rsconnect/queue';
+import { TransportPrepareError } from '@rsconnect/workers';
 import { Session } from '@rumsan/connect/types';
-import axios from 'axios';
 import ffmpeg from 'fluent-ffmpeg';
 import * as fs from 'fs/promises';
 import { dirname } from 'path';
@@ -22,6 +22,28 @@ const sftpConfig = {
  * cuid — each worker uploads to its own Asterisk box.
  */
 const SCRATCH_DIR = `.data/${workerLabel()}`;
+
+/** Per request. `fetch` has no timeout of its own, so a stalled host would hang preparation. */
+const FETCH_TIMEOUT_MS =
+  +(process.env['AUDIO_FETCH_TIMEOUT_MS'] as string) || 30_000;
+/** Total tries for a temporary failure (5xx, 408, 429, network, timeout). */
+const FETCH_ATTEMPTS =
+  +(process.env['AUDIO_FETCH_ATTEMPTS'] as string) || 3;
+const FETCH_RETRY_BASE_MS = 2_000;
+
+/**
+ * The session's media cannot be fetched and retrying will not change that.
+ * Fails the whole session: every number would hear silence anyway.
+ */
+export class AudioUnavailableError extends TransportPrepareError {
+  constructor(url: string, detail: string) {
+    super(`Audio not accessible at ${url}: ${detail}`, 'AUDIO_UNAVAILABLE');
+    this.name = 'AudioUnavailableError';
+  }
+}
+
+const isTemporaryStatus = (status: number) =>
+  status >= 500 || status === 408 || status === 429;
 
 @Injectable()
 export class AudioService {
@@ -54,7 +76,17 @@ export class AudioService {
   }
 
   async makeJSONReady(session: Session) {
-    const { data: record } = await axios(session.message.content);
+    const url = session.message.content;
+    const response = await this.fetchMedia(url);
+    let record: any;
+    try {
+      record = await response.json();
+    } catch (err) {
+      throw new AudioUnavailableError(
+        url,
+        `IVR plan is not valid JSON (${(err as Error).message})`,
+      );
+    }
     const messageContentHash = session.message.content.split('/').pop();
     // TODO: Check if the JSON sample is following the pattern
     const urls = await this.extractAudioURLs(record);
@@ -84,11 +116,7 @@ export class AudioService {
   async downloadFile(url: string, outputPath: string) {
     this.logger.log('Fetching file from media URL.');
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch audio file: ${response.statusText}`);
-    }
-
+    const response = await this.fetchMedia(url);
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
@@ -98,6 +126,43 @@ export class AudioService {
     await fs.writeFile(outputPath, buffer);
     this.logger.log('Audio file fetch complete.');
     return true;
+  }
+
+  /**
+   * GET a session's media, retrying what may be temporary. A 4xx (other than
+   * 408/429) is final at once; anything still failing after FETCH_ATTEMPTS is
+   * final too. Either way it throws AudioUnavailableError, which fails the
+   * session rather than leaving the worker holding it.
+   */
+  async fetchMedia(url: string): Promise<Response> {
+    let lastDetail = '';
+    for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
+      try {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
+        if (response.ok) return response;
+
+        lastDetail = await describeFailedResponse(response);
+        if (!isTemporaryStatus(response.status)) {
+          throw new AudioUnavailableError(url, lastDetail);
+        }
+      } catch (err) {
+        if (err instanceof AudioUnavailableError) throw err;
+        lastDetail = describeFetchError(err);
+      }
+
+      this.logger.warn(
+        `Fetching ${url} failed (attempt ${attempt}/${FETCH_ATTEMPTS}): ${lastDetail}`,
+      );
+      if (attempt < FETCH_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, FETCH_RETRY_BASE_MS * attempt));
+      }
+    }
+    throw new AudioUnavailableError(
+      url,
+      `${lastDetail} (gave up after ${FETCH_ATTEMPTS} attempts)`,
+    );
   }
 
   async convertAudio(inputFilePath: string, outputFilePath: string) {
@@ -182,4 +247,23 @@ export class AudioService {
       }
     }
   }
+}
+
+/** `HTTP 400 Bad Request: <start of body>` — the body is often the only clue. */
+async function describeFailedResponse(response: Response): Promise<string> {
+  let body = '';
+  try {
+    body = (await response.text()).replace(/\s+/g, ' ').trim().slice(0, 200);
+  } catch {
+    // The status line is enough.
+  }
+  return `HTTP ${response.status} ${response.statusText}`.trim() +
+    (body ? `: ${body}` : '');
+}
+
+function describeFetchError(err: unknown): string {
+  const e = err as Error & { cause?: { code?: string; message?: string } };
+  if (e?.name === 'TimeoutError') return `no response within ${FETCH_TIMEOUT_MS}ms`;
+  const cause = e?.cause?.code ?? e?.cause?.message;
+  return cause ? `${e.message} (${cause})` : e?.message ?? String(err);
 }

@@ -279,6 +279,25 @@ with nothing in flight and no progress for `WORKER_IDLE_RESUME_MS` (default
 This lives on the worker, not connect, because only the worker can tell
 "preparing audio" from "idle".
 
+**Session audio is unreachable.** Preparation downloads the session's audio (or
+IVR plan and its prompts). A failed download used to be swallowed: the worker
+sent no `READINESS_CONFIRM`, held its gate until the gate timeout, and the
+assignment sweep, oldest first, handed the same session straight back — so one
+bad URL blocked the worker indefinitely. Now each fetch is bounded by
+`AUDIO_FETCH_TIMEOUT_MS`; 5xx, 408, 429 and network errors are retried
+(`AUDIO_FETCH_ATTEMPTS`, default 3), any other 4xx is final at once. A final
+failure throws `AudioUnavailableError` (a `TransportPrepareError`): the worker
+sends `READINESS_FAIL` and releases its gate immediately. Connect
+(`BroadcastService.failUnpreparableSession`) fails every outstanding broadcast
+with `errorTag: AUDIO_UNAVAILABLE` and the reason, marks the session `FAILED`
+with `stats.failure = { errorTag, reason, workerId, at }`, sends
+`SESSION_COMPLETE` to any other worker on it, and assigns the freed workers.
+Scheduled retries skip a `FAILED` session, and completion checks never relabel
+it `COMPLETED`. If another worker is already dialling the session, the audio is
+evidently reachable, so only the reporting worker is released. Other preparation
+failures (ffmpeg, SFTP upload to Asterisk) may be temporary and still wait for
+the gate timeout.
+
 **Connect restarts.** The roster is empty for up to one heartbeat interval;
 assignment resumes on the next confirm. In-flight claims are untouched — they
 live in the DB.
@@ -299,6 +318,7 @@ scratch directory.
 | `WORKER_HEARTBEAT_MS` | Announcement interval (default 15000). |
 | `ARI_ORIGINATE_TIMEOUT_MS` | Max wait for ARI's reply to one originate before that broadcast fails as `ORIGINATE_TIMEOUT` (default 15000). |
 | `WORKER_IDLE_RESUME_MS` | Idle time on a prepared session, with nothing in flight, before the worker re-asks connect for work (default 120000). Keep well above a confirm → BROADCAST round trip. |
+| `AUDIO_FETCH_TIMEOUT_MS` / `AUDIO_FETCH_ATTEMPTS` | Per-request timeout for downloading session audio (default 30000) and total tries for a temporary failure (default 3). After that the session is failed as `AUDIO_UNAVAILABLE`. |
 | `PORT` | Health endpoint port; must differ when workers share a host. |
 | `ASTERISK_*` | That worker's own host, trunk, ARI/AMI/SSH credentials. |
 
@@ -395,6 +415,12 @@ WebSocket drops at a regular interval point to a proxy idle timeout between the
 worker and ARI; reach ARI directly over a private network instead. To unblock at
 once, restart the worker: connect drops its reservation after
 `WORKER_RESERVATION_GRACE_MS` and reassigns.
+
+**Session FAILED with `AUDIO_UNAVAILABLE`.** `stats.failure.reason` on the
+session (and `disposition.error` on each broadcast) carries the HTTP status and
+the start of the response body, e.g. `HTTP 400 Bad Request: …`. Check the URL
+with `curl -i` from the worker host. The failed broadcasts are final; send a new
+broadcast once the audio is fixed.
 
 **RabbitMQ.** The exchange `rsconnect.transport` should show one queue per live
 worker, each bound to its own `voice.worker.<id>` plus `voice.control`. A queue
